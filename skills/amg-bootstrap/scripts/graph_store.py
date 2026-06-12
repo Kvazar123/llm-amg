@@ -113,6 +113,44 @@ def atomic_delete(path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Store-root resolution (roadmap 4.9: agent dir is a parameter, not `.claude`)
+# --------------------------------------------------------------------------- #
+
+def resolve_amg_root(cli_root: os.PathLike | str | None = None,
+                     start: os.PathLike | str | None = None) -> Path:
+    """Resolve the AMG store root (<agent_dir>/amg). Chain, first hit wins:
+
+      1. explicit --root (the agent dir, e.g. `.claude` or `.agents`);
+      2. the AMG_AGENT_DIR environment variable (same meaning);
+      3. the first ancestor of `start` (default: cwd) holding amg/config.yml —
+         that directory IS the agent dir. The default agent-dir name is also
+         probed one level down (<ancestor>/.claude/amg/config.yml): this is
+         what lets a globally-installed engine find a project's graph from the
+         project's cwd;
+      4. the engine's own location (scripts live at
+         <agent_dir>/skills/amg-bootstrap/scripts -> <agent_dir>/amg), only if
+         that amg/ already exists — covers the dev layout and a local install
+         without letting a global engine hijack a fresh project's default;
+      5. the default: <start>/.claude/amg.
+    """
+    if cli_root:
+        return Path(cli_root).resolve() / "amg"
+    env = os.environ.get("AMG_AGENT_DIR")
+    if env:
+        return Path(env).resolve() / "amg"
+    base = Path(start).resolve() if start else Path.cwd()
+    for d in (base, *base.parents):
+        if (d / "amg" / "config.yml").exists():
+            return d / "amg"
+        if (d / ".claude" / "amg" / "config.yml").exists():
+            return d / ".claude" / "amg"
+    engine_root = Path(__file__).resolve().parents[3] / "amg"
+    if engine_root.is_dir():
+        return engine_root
+    return base / ".claude" / "amg"
+
+
+# --------------------------------------------------------------------------- #
 # The store
 # --------------------------------------------------------------------------- #
 

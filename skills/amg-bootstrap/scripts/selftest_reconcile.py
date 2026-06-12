@@ -32,10 +32,17 @@ Checks:
                 derived_from_hash) onto the new ids, rewrites same-file edge
                 targets and the primary membership, redirects inbound
                 references, and re-derives nothing for current nodes.
+ 12. fences   : a '# ...' line inside a markdown code fence is code, not a
+                heading — it must not create a section.
+ 13. pack     : the retrieval pack renders operational code pointers as
+                path:lineno, never path:None.
+ 14. root     : the store root resolves per the 4.9 chain — explicit root,
+                AMG_AGENT_DIR, config search upward, the default .claude.
 
 Run:  python selftest_reconcile.py
 """
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -44,6 +51,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import extract_structure as ES
 import graph_store as gs
 import reconcile as RC
 
@@ -352,6 +360,63 @@ def case_move_migrates_earned(proj: Path) -> None:
     print("PASS  moved: earned fields migrate, references redirect, no re-derivation")
 
 
+def case_markdown_fences() -> None:
+    tmp = Path(tempfile.mkdtemp(prefix="amg-md-"))
+    try:
+        md = tmp / "doc.md"
+        md.write_text(
+            "# Guide\n\n"
+            "```bash\n# install deps\npip install x\n```\n\n"
+            "~~~text\n# tilde heading\n```\n# nested backticks\n```\n~~~\n\n"
+            "## Real\n\ndone\n",
+            encoding="utf-8")
+        quals = [u["qualname"] for u in ES._markdown_units(md, "doc.md", "mirror")]
+        assert quals == ["guide", "real"], quals
+        print("PASS  fences: headings inside code fences do not create sections")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def case_lineno_in_pack(proj: Path) -> None:
+    sys.path.insert(0, str(HERE.parents[1] / "amg-retrieve" / "scripts"))
+    import retrieve as RT
+    store = proj / ".claude" / "amg"
+    res = RT.retrieve(store, "top code src app", write_pack=False, log_coactivation=False)
+    node = RT.load_nodes(store)["code:src/core/app.py::top"]
+    loc = f"{node['source_path']}:{node['lineno']}"
+    assert ":None" not in res["pack"], res["pack"]
+    assert loc in res["pack"], (loc, res["pack"])
+    print(f"PASS  pack: operational code pointer renders {loc}, no :None anywhere")
+
+
+def case_root_resolution(proj: Path) -> None:
+    # 1. explicit root wins over everything
+    assert gs.resolve_amg_root(cli_root=proj / "custom") == \
+        (proj / "custom" / "amg").resolve()
+    # 2. AMG_AGENT_DIR comes next
+    os.environ["AMG_AGENT_DIR"] = str(proj / "envdir")
+    try:
+        assert gs.resolve_amg_root(start=proj) == (proj / "envdir" / "amg").resolve()
+    finally:
+        del os.environ["AMG_AGENT_DIR"]
+    # 3. config search upward from inside the project finds .claude/amg
+    assert gs.resolve_amg_root(start=proj / "src" / "core") == \
+        (proj / ".claude" / "amg").resolve()
+    # 4/5. with no config anywhere up from a bare dir: the engine's own amg/
+    # wins IF it exists (dev layout), else the default <start>/.claude —
+    # assert whichever state this environment is in (assumes no global AMG
+    # config in the temp dir's ancestors).
+    bare = Path(tempfile.mkdtemp(prefix="amg-bare-"))
+    try:
+        engine_amg = Path(gs.__file__).resolve().parents[3] / "amg"
+        expected = engine_amg if engine_amg.is_dir() else (bare / ".claude" / "amg").resolve()
+        assert gs.resolve_amg_root(start=bare) == expected, \
+            (gs.resolve_amg_root(start=bare), expected)
+    finally:
+        shutil.rmtree(bare, ignore_errors=True)
+    print("PASS  root: cli > env > config-upward > engine dir > default .claude")
+
+
 if __name__ == "__main__":
     proj = setup_project()
     try:
@@ -368,6 +433,9 @@ if __name__ == "__main__":
         case_active_gating(proj)
         case_imports_resolver(proj)
         case_move_migrates_earned(proj)
+        case_markdown_fences()
+        case_lineno_in_pack(proj)
+        case_root_resolution(proj)
         print("\nALL RECONCILE CHECKS PASSED")
     finally:
         shutil.rmtree(proj, ignore_errors=True)

@@ -27,9 +27,14 @@ Crucial safety rules (see ../references/consistency-model.md):
   * All writes go through graph_store transactions, so any interruption recovers.
 
 Commands:
-  python reconcile.py bootstrap [<project_root>]   # build/reconcile from any state
-  python reconcile.py plan      [<project_root>]   # same diff; structural writes + queue
-  python reconcile.py apply <derivation.json>      # apply builder's semantic output
+  python reconcile.py bootstrap [<project_root>] [--root <agent_dir>]
+  python reconcile.py plan      [<project_root>] [--root <agent_dir>]
+  python reconcile.py apply <derivation.json> [<project_root>] [--root <agent_dir>]
+
+The graph root is <agent_dir>/amg, resolved by graph_store.resolve_amg_root:
+--root -> AMG_AGENT_DIR env -> the first ancestor of <project_root> holding
+amg/config.yml (or .claude/amg/config.yml) -> the engine's own location ->
+the default <project_root>/.claude.
 """
 from __future__ import annotations
 
@@ -108,8 +113,8 @@ def _part_of_for(unit: dict) -> List[dict]:
 # Plan / bootstrap
 # --------------------------------------------------------------------------- #
 
-def plan(project_root: Path) -> dict:
-    amg_root = project_root / ".claude" / "amg"
+def plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
+    amg_root = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     store = gs.GraphStore(amg_root)
     store.init()
 
@@ -443,7 +448,8 @@ def _now() -> str:
 # Apply semantic derivation from the builder subagent
 # --------------------------------------------------------------------------- #
 
-def apply_derivation(project_root: Path, derivation_path: Path) -> dict:
+def apply_derivation(project_root: Path, derivation_path: Path,
+                     amg_root: Optional[Path] = None) -> dict:
     """Apply derivation items to the graph. Two item shapes are supported:
 
       * update : {id, summary?, lang?, edges?, part_of?, body?} -> update the node
@@ -461,7 +467,7 @@ def apply_derivation(project_root: Path, derivation_path: Path) -> dict:
     item leaves a stale node stale, so reconcile keeps re-queueing it until a
     summary arrives.
     """
-    amg_root = project_root / ".claude" / "amg"
+    amg_root = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     store = gs.GraphStore(amg_root)
     items = json.loads(Path(derivation_path).read_text(encoding="utf-8"))
     config = load_config(amg_root) or {}
@@ -575,21 +581,29 @@ def _merge_edges(existing: List[dict], incoming: List[dict],
 # --------------------------------------------------------------------------- #
 
 def main(argv: List[str]) -> int:
-    cmd = argv[1] if len(argv) > 1 else "help"
+    args = list(argv[1:])
+    cli_root: Optional[str] = None
+    if "--root" in args:
+        i = args.index("--root")
+        cli_root = args[i + 1]
+        del args[i:i + 2]
+    cmd = args[0] if args else "help"
 
     if cmd in ("plan", "bootstrap"):
-        project_root = Path(argv[2]).resolve() if len(argv) > 2 else Path.cwd()
-        result = plan(project_root)
-        print(json.dumps(result, indent=2))
+        project_root = Path(args[1]).resolve() if len(args) > 1 else Path.cwd()
+        amg_root = gs.resolve_amg_root(cli_root, project_root)
+        print(json.dumps(plan(project_root, amg_root), indent=2))
         return 0
 
     if cmd == "apply":
-        if len(argv) < 3:
-            print("usage: reconcile.py apply <derivation.json> [<project_root>]")
+        if len(args) < 2:
+            print("usage: reconcile.py apply <derivation.json> [<project_root>] "
+                  "[--root <agent_dir>]")
             return 2
-        derivation = Path(argv[2])
-        project_root = Path(argv[3]).resolve() if len(argv) > 3 else Path.cwd()
-        print(json.dumps(apply_derivation(project_root, derivation), indent=2))
+        derivation = Path(args[1])
+        project_root = Path(args[2]).resolve() if len(args) > 2 else Path.cwd()
+        amg_root = gs.resolve_amg_root(cli_root, project_root)
+        print(json.dumps(apply_derivation(project_root, derivation, amg_root), indent=2))
         return 0
 
     print(__doc__)

@@ -26,9 +26,13 @@ All writes go through the graph_store journal, so an interruption at any point
 recovers via `graph_store.py recover` on the next run.
 
 CLI:
-  python consolidate.py weights [<project_root>]
-  python consolidate.py plan    [<project_root>]
-  python consolidate.py apply <actions.json> [<project_root>]
+  python consolidate.py weights [<project_root>] [--root <agent_dir>]
+  python consolidate.py plan    [<project_root>] [--root <agent_dir>]
+  python consolidate.py apply <actions.json> [<project_root>] [--root <agent_dir>]
+
+The graph root is <agent_dir>/amg, resolved by graph_store.resolve_amg_root:
+--root -> AMG_AGENT_DIR env -> config search upward from <project_root> ->
+the engine's own location -> the default <project_root>/.claude.
 """
 from __future__ import annotations
 
@@ -125,8 +129,8 @@ def _toklen(text: str) -> int:
 # weights: Hebbian + decay + prune + renormalize
 # --------------------------------------------------------------------------- #
 
-def fold_weights(project_root: Path) -> dict:
-    amg = project_root / ".claude" / "amg"
+def fold_weights(project_root: Path, amg_root: Optional[Path] = None) -> dict:
+    amg = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     store = gs.GraphStore(amg)
     store.init()
     cfg = load_config(amg)
@@ -266,8 +270,8 @@ def salience(node: dict, degree: int, max_degree: int, cfg: dict) -> float:
                  0.20 * bridge + 0.10 * grounded, 3)
 
 
-def make_plan(project_root: Path) -> dict:
-    amg = project_root / ".claude" / "amg"
+def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
+    amg = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     store = gs.GraphStore(amg)
     store.init()
     cfg = load_config(amg)
@@ -325,8 +329,9 @@ def make_plan(project_root: Path) -> dict:
 # apply: enact the consolidator subagent's actions (transactional + archived)
 # --------------------------------------------------------------------------- #
 
-def apply_actions(project_root: Path, actions_path: Path) -> dict:
-    amg = project_root / ".claude" / "amg"
+def apply_actions(project_root: Path, actions_path: Path,
+                  amg_root: Optional[Path] = None) -> dict:
+    amg = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     store = gs.GraphStore(amg)
     cfg = load_config(amg)
     archive_dir = cfg["compaction"]["archive_dir"]
@@ -476,18 +481,26 @@ def _log(store: gs.GraphStore, msg: str, txid: Optional[str]) -> None:
 
 
 def main(argv: List[str]) -> int:
-    cmd = argv[1] if len(argv) > 1 else "help"
+    args = list(argv[1:])
+    cli_root: Optional[str] = None
+    if "--root" in args:
+        i = args.index("--root")
+        cli_root = args[i + 1]
+        del args[i:i + 2]
+    cmd = args[0] if args else "help"
     if cmd == "weights":
-        root = Path(argv[2]).resolve() if len(argv) > 2 else Path.cwd()
-        print(json.dumps(fold_weights(root), indent=2)); return 0
+        root = Path(args[1]).resolve() if len(args) > 1 else Path.cwd()
+        print(json.dumps(fold_weights(root, gs.resolve_amg_root(cli_root, root)), indent=2)); return 0
     if cmd == "plan":
-        root = Path(argv[2]).resolve() if len(argv) > 2 else Path.cwd()
-        print(json.dumps(make_plan(root), indent=2)); return 0
+        root = Path(args[1]).resolve() if len(args) > 1 else Path.cwd()
+        print(json.dumps(make_plan(root, gs.resolve_amg_root(cli_root, root)), indent=2)); return 0
     if cmd == "apply":
-        if len(argv) < 3:
-            print("usage: consolidate.py apply <actions.json> [<project_root>]"); return 2
-        root = Path(argv[3]).resolve() if len(argv) > 3 else Path.cwd()
-        print(json.dumps(apply_actions(root, Path(argv[2])), indent=2)); return 0
+        if len(args) < 2:
+            print("usage: consolidate.py apply <actions.json> [<project_root>] "
+                  "[--root <agent_dir>]"); return 2
+        root = Path(args[2]).resolve() if len(args) > 2 else Path.cwd()
+        print(json.dumps(apply_actions(root, Path(args[1]),
+                                       gs.resolve_amg_root(cli_root, root)), indent=2)); return 0
     print(__doc__); return 0
 
 

@@ -341,6 +341,9 @@ def _treesitter_units(path: Path, rel: str, policy: str, lang: str) -> Optional[
 
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
+# Code-fence delimiter (CommonMark minimum): ``` or ~~~, 3+ chars, indented up
+# to 3 spaces. A closing fence is the same character, at least as long.
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 
 
 def _slug(title: str) -> str:
@@ -352,8 +355,20 @@ def _markdown_units(path: Path, rel: str, policy: str) -> List[dict]:
     text = path.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines(keepends=True)
     sections, cur_title, cur_start = [], None, 0
+    fence = None                 # opening fence marker while inside a code block
     for i, line in enumerate(lines):
-        m = _HEADING.match(line.rstrip("\n"))
+        raw = line.rstrip("\n")
+        fmatch = _FENCE.match(raw)
+        if fmatch:
+            marker = fmatch.group(1)
+            if fence is None:
+                fence = marker
+            elif marker[0] == fence[0] and len(marker) >= len(fence):
+                fence = None     # a foreign marker inside a block closes nothing
+            continue
+        if fence is not None:
+            continue             # inside a fence: '# ...' is code, not a heading
+        m = _HEADING.match(raw)
         if m:
             if cur_title is not None or i > 0:
                 sections.append((cur_title, cur_start, i))
