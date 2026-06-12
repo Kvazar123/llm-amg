@@ -947,6 +947,7 @@ README.md - английская версия, ссылается на еще о
    - `branch_budget`;
    - `confidence` / `provenance` / `verification` как planned-поля;
    - `origin` на рёбрах как planned или реализуемое поле.
+   Пометка (Этап 0, задача 2): `lineno`/`qualname` уже пишутся при created/changed и тихо обновляются при сдвиге единицы без смены хеша; поле `lang` узла остаётся языком сводки (так его пишет цепочка builder → apply → consolidate); язык источника в схему узла не вводится — потребителя нет, для mirror он восстановим из `source_path`; при будущей нужде это отдельное поле `source_lang` (решение Этапа 1).
 3. Уточнить, что `coact` и `last_used` — поля рёбер.
 4. Нормализовать `source_kind`: `derived_from_file`, `synthesized`, `authored`.
 5. Описать, что `part_of` может:
@@ -998,12 +999,13 @@ README.md - английская версия, ссылается на еще о
 Нужно исправить:
 
 1. Исправить относительные ссылки внутри architecture-директории: `./04-ingest.md`, а не `./architecture/04-ingest.md`.
-2. Описать stale requeue по `derived_from_hash != source_hash`.
+2. Описать stale requeue по `derived_from_hash != source_hash`. — Реализовано на Этапе 0 (задача 1): условие «`derived_from_hash != content_sha` ИЛИ `status: stale`»; файл узла не переписывается, единица лишь возвращается в очередь; в сводке `plan` счётчик `requeued_stale`.
 3. Описать обновление structural edges при `changed`.
-4. Добавить в описание queue поля `qualname`, `lineno`, `lang`.
+4. Добавить в описание queue поля `qualname`, `lineno`, `lang`. — Реализовано на Этапе 0 (задача 2): `lang` в очереди — язык источника (`python`/`markdown`/…), не `working_language`; вход `amg-builder.md` обновлён.
 5. Описать merge-логику `part_of`, если она реализована.
-6. Уточнить, что `queue.json` пишется атомарно, но отдельно от transaction узлов; поэтому requeue по stale-состоянию обязателен.
+6. Уточнить, что `queue.json` пишется атомарно, но отдельно от transaction узлов; поэтому requeue по stale-состоянию обязателен. — Реализовано на Этапе 0: очередь целиком пересоздаётся каждым `plan()` из состояния графа, поэтому сбой между транзакцией узлов и записью очереди самовосстанавливается следующим `bootstrap`.
 7. Уточнить условия перевода в `active`.
+8. (добавлено на Этапе 0) Описать тихое обновление указателя: правка выше по файлу сдвигает единицу без смены её контентного хеша — `plan()` обновляет у узла только `lineno`/`qualname`, без передеривации и смены статуса (счётчик `pointer_refreshed` в сводке).
 
 ---
 
@@ -1045,7 +1047,7 @@ README.md - английская версия, ссылается на еще о
 Нужно исправить:
 
 1. В `amg-synth` указать `type: hub` / `overview`, а не `derived`.
-2. Согласовать prompt `amg-builder` с queue fields: добавить `qualname`, `lineno`, `lang` в queue или убрать обещание из prompt.
+2. Согласовать prompt `amg-builder` с queue fields: добавить `qualname`, `lineno`, `lang` в queue или убрать обещание из prompt. — Снято на Этапе 0 (задача 2): поля добавлены в queue, описание входа в `amg-builder.md` обновлено (`lang` на входе — язык источника, `lang` в выходе билдера — язык сводки); при закрытии пункта сверить описание очереди в § `amg-builder` этого файла.
 3. Описать применение `amg-classifier` через overrides.
 4. Уточнить, что `amg-synth` не редактирует `nodes/`, но может писать `gap-report.md`.
 5. Добавить отдельный safe API для capture notes. До его реализации не описывать notes capture как полностью готовую ручную операцию.
@@ -1617,11 +1619,11 @@ amg/                 # НЕ в репозитории: данные локаль
 
 Задачи:
 
-1. Исправить stale requeue:
+1. Исправить stale requeue — выполнено:
    - учитывать `derived_from_hash != source_hash`;
    - учитывать `status: stale`;
    - повторно писать queue для недовыведенных узлов.
-2. Сохранять `lineno`, `qualname`, `lang`:
+2. Сохранять `lineno`, `qualname`, `lang` — выполнено (`lang` — в queue item как язык источника; поле `lang` узла остаётся языком сводки, см. пометку к 2.3, п. 2):
    - во frontmatter;
    - в queue item;
    - при created/changed.

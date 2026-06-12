@@ -7,6 +7,10 @@ matter when sources change:
 
   * added    : a source unit with no node  -> create a node
   * changed  : node.source_hash != current content hash -> update, mark for re-derive
+  * stale    : hash unchanged but derivation lags (derived_from_hash != source_hash
+               or status == stale) -> re-queue WITHOUT rewriting the node. The queue
+               is rebuilt from graph state on every run, so a crash between the node
+               transaction and the queue write heals on the next bootstrap.
   * deleted  : a mirror node whose source unit is gone -> purge
   * unchanged: same hash -> do nothing (no LLM call; truly idempotent and cheap)
 
@@ -107,7 +111,8 @@ def plan(project_root: Path) -> dict:
 
     config = load_config(amg_root)
     units = {u["id"]: u for u in extract(project_root, config)}
-    summary = {"added": 0, "changed": 0, "deleted": 0, "unchanged": 0}
+    summary = {"added": 0, "changed": 0, "deleted": 0, "unchanged": 0,
+               "requeued_stale": 0, "pointer_refreshed": 0}
     queue: List[dict] = []
 
     with store.lock():
@@ -124,6 +129,7 @@ def plan(project_root: Path) -> dict:
             if node is None:
                 meta = {
                     "id": uid, "type": unit["kind"], "source_path": unit["source_path"],
+                    "qualname": unit.get("qualname", ""), "lineno": unit.get("lineno"),
                     "source_kind": "derived_from_file", "policy": unit["policy"],
                     "source_hash": unit["content_sha"], "derived_from_hash": None,
                     "part_of": _part_of_for(unit),
@@ -141,6 +147,8 @@ def plan(project_root: Path) -> dict:
                 body = node.pop("_body", "")
                 node["source_hash"] = unit["content_sha"]
                 node["type"] = unit["kind"]
+                node["qualname"] = unit.get("qualname", "")
+                node["lineno"] = unit.get("lineno")
                 node["status"] = "stale"
                 node["updated"] = _now()
                 node.setdefault("part_of", _part_of_for(unit))
@@ -148,7 +156,28 @@ def plan(project_root: Path) -> dict:
                 queue.append(_queue_item(unit))
                 summary["changed"] += 1
             else:
-                summary["unchanged"] += 1
+                # Source content unchanged; two kinds of lag may still remain.
+                # Pointer drift: an edit ABOVE this unit shifted it without changing
+                # its content hash -> refresh lineno/qualname only, no re-derivation.
+                drifted = (node.get("lineno") != unit.get("lineno")
+                           or node.get("qualname") != unit.get("qualname", ""))
+                if drifted:
+                    node.pop("_path", None)
+                    body = node.pop("_body", "")
+                    node["qualname"] = unit.get("qualname", "")
+                    node["lineno"] = unit.get("lineno")
+                    node["updated"] = _now()
+                    tx.write(relpath, serialize_node(node, body))
+                    summary["pointer_refreshed"] += 1
+                # Derivation lag: the summary never caught up (e.g. a crash before
+                # the queue write, or apply never ran) -> re-queue; the node file
+                # itself needs no rewrite for this.
+                if (node.get("derived_from_hash") != unit["content_sha"]
+                        or node.get("status") == "stale"):
+                    queue.append(_queue_item(unit))
+                    summary["requeued_stale"] += 1
+                elif not drifted:
+                    summary["unchanged"] += 1
 
         # deleted: mirror nodes whose source unit vanished
         for uid, node in nodes.items():
@@ -190,8 +219,13 @@ def _structural_edges(unit: dict) -> List[dict]:
 
 
 def _queue_item(unit: dict) -> dict:
+    # qualname/lineno let the builder focus on the right slice of the source;
+    # lang here is the SOURCE language/format (python/markdown/...), not the
+    # node's `lang` field (which is the summary's working language).
     item = {"id": unit["id"], "kind": unit["kind"], "source_path": unit["source_path"],
-            "category": unit["category"], "content_sha": unit["content_sha"]}
+            "category": unit["category"], "content_sha": unit["content_sha"],
+            "qualname": unit.get("qualname", ""), "lineno": unit.get("lineno"),
+            "lang": unit.get("lang")}
     if unit.get("text"):                  # pre-extracted (PDF/DOCX/XLSX): summarize from this
         item["text"] = unit["text"]
     return item
