@@ -1,0 +1,70 @@
+# ===== Python bytecode and caches =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ===== Build / packaging artefacts =====
+build/
+dist/
+*.egg-info/
+*.egg
+MANIFEST
+pip-wheel-metadata/
+.eggs/
+
+# ===== Virtual environments =====
+.venv/
+venv/
+env/
+ENV/
+.env
+
+# ===== Testing / coverage =====
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# ===== Type checkers / linters =====
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.pyre/
+.dmypy.json
+
+# ===== Jupyter =====
+.ipynb_checkpoints/
+
+# ===== LLM / IDE / editor files =====
+.idea/
+.vscode/
+.claude/
+.llm/
+*.swp
+*.swo
+*~
+.spyderproject
+.spyproject
+BASE-PROMPT.md
+
+# ===== Project-specific =====
+amg/
+
+# ===== OS-specific =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== Secrets =====
+# Never commit. Per-environment overrides should live outside the repo
+# (env vars, secrets manager) or in *.local files which are ignored.
+.env.local
+*.local.py
+secrets/
+*.key
+*.pem

@@ -1,0 +1,116 @@
+# =============================================================================
+# AMG - Associative Memory Graph.  Store configuration + activation state.
+# (.claude/amg/config.yml)  Control-plane file: keep it in English.
+#
+# Presence of this file with `active: true` turns AMG on for this project.
+# =============================================================================
+
+active: true
+schema_version: 2
+
+# Human-facing memory language for doc/notes summaries. Structural metadata,
+# edge-type names, and code identifiers stay English regardless. ISO 639-1.
+working_language: ru
+
+# -----------------------------------------------------------------------------
+# Input. One unified entry: list any folders; each file's TYPE is detected
+# automatically (code / doc / data) and routed to the right chunker. You do NOT
+# name folders "code" or "docs" - a folder may hold a mix of .py, .md, .json, etc.
+#
+#   mirror_path : the graph is a LIVE PROJECTION of these paths. Reconcile keeps
+#                 them equal: file added -> node; changed -> updated; deleted -> purged.
+#                 Use for what you edit (code, the guides you maintain).
+#   absorb_path : ingested ONCE into independent notes. Deleting the source later
+#                 changes nothing. Use for raw input you mine (chat logs, data dumps).
+#
+# Each key is a single path (string) OR a YAML list of paths. Either may be omitted.
+#
+# PDF/DOCX/XLSX are extracted only if their (pure-Python) libraries are installed:
+#   pip install pypdf python-docx openpyxl
+# Without them those files are simply skipped. Run `extract_structure.py . --stats`
+# to see which extractors are active.
+# -----------------------------------------------------------------------------
+mirror_path:
+  - src
+  - doc
+
+# absorb_path:
+#   - data
+
+# Extra ignore globs on top of the built-in defaults (.git, node_modules, .venv,
+# __pycache__, dist, build, target, binaries, ...). The repo's .gitignore is also
+# honoured automatically. Usually leave empty.
+exclude: []
+
+# -----------------------------------------------------------------------------
+# Optional, for the most out of non-Python code. If `tree-sitter-language-pack`
+# is installed, other languages get function-level units + call edges; if not,
+# Python still works fully (stdlib ast) and other code becomes one unit per file.
+#   pip install tree-sitter tree-sitter-language-pack
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# Model tiering for subagents. Strongest model only for foundational synthesis.
+# -----------------------------------------------------------------------------
+models:
+  structural_extraction: none      # extract_structure.py - exact, reproducible
+  discovery:            haiku       # read-only file discovery / search
+  module_summary:       sonnet      # per-file / per-section summaries (bulk)
+  synthesis:            opus        # architecture overview, cross-domain edges, gaps
+
+# -----------------------------------------------------------------------------
+# Spreading-activation retrieval (amg-retrieve). Query-biased Personalized PageRank.
+# -----------------------------------------------------------------------------
+retrieval:
+  damping: 0.85                   # how far activation spreads
+  max_hops: 30                    # power-iteration cap
+  activation_threshold: 0.02      # ignore nodes below this final activation
+  token_budget:
+    strategic: 4000               # hubs / overviews
+    tactical: 10000                # modules
+    operational: 24000             # code pointers + doc/notes bodies in focus
+    periphery_links: 60           # link-only references to the next ring
+  relation_priors:                # how strongly each edge type conducts (beta)
+    documents: 0.9
+    implements: 0.9
+    specifies: 0.9
+    calls: 0.8
+    depends_on: 0.8
+    defines: 0.7
+    part_of: 0.7
+    imports: 0.6
+    relates_to: 0.5
+    contradicts: 0.3
+  # Optional semantic seed enrichment (Stage 1.5). Improves recall on paraphrased
+  # queries by blending embedding similarity into the seed; the PPR spread is
+  # unchanged. OPTIONAL: with no backend installed, retrieval stays pure-BM25.
+  #   pip install model2vec            (light, CPU, recommended)  -- or --
+  #   pip install sentence-transformers (heavier, needs torch)
+  embeddings:
+    enabled: off        # auto = use if a backend is installed | on | off
+    backend: auto       # auto | model2vec | sentence-transformers
+    model: ""           # "" = backend default
+    blend: 0.5          # 0 = pure BM25 .. 1 = pure semantic
+
+# -----------------------------------------------------------------------------
+# Weight maintenance (Hebbian reinforcement + decay), applied during consolidation.
+# -----------------------------------------------------------------------------
+weights:
+  default_edge_weight: 0.5
+  hebbian_rate: 0.10
+  decay_rate: 0.02
+  prune_below: 0.05
+  part_of_renormalize: true
+
+# -----------------------------------------------------------------------------
+# Compaction (amg-consolidate). Off by default; a branch is compressed only when
+# it exceeds its budget, minimally, archiving originals (reversible).
+# -----------------------------------------------------------------------------
+compaction:
+  enabled: true
+  default_branch_budget_nodes: 400
+  default_branch_budget_tokens: 200000
+  protect_types: [decision, adr]
+  protect_min_centrality: 0.7
+  archive_dir: archive
+  steps: [summarize_episodes, merge_near_duplicates, introduce_subhub, lossy_shorten]

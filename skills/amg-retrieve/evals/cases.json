@@ -1,0 +1,34 @@
+[
+  {
+    "id": "controller-task",
+    "query": "как добавить новый контроллер во fastMVC",
+    "gold_ids": [
+      "doc:doc/guides/controllers.md::контроллеры",
+      "doc:doc/guides/controllers.md::классовый-контроллер",
+      "hub:controllers-routing",
+      "code:src/app/controllers/products.py"
+    ],
+    "note": "List the node ids that SHOULD appear in the pack for this query."
+  },
+  {
+    "id": "config-task",
+    "query": "что можно конфигурировать в fastmvc",
+    "gold_ids": [
+      "doc:doc/guides/config.md::конфигурация",
+      "doc:doc/guides/config.md::собственные-ключи",
+      "doc:doc/guides/config.md::компонентные-конфиги"
+    ],
+    "note": "List the node ids that SHOULD appear in the pack for this query."
+  },
+  {
+    "id": "routing-task",
+    "query": "роутинг и префиксы в контроллерах",
+    "gold_ids": [
+      "doc:doc/guides/controllers.md::роутинг",
+      "hub:controllers-routing",
+      "doc:doc/guides/routing-cookbook.md::slug-параметры-динамические-сегменты",
+      "doc:doc/guides/routing-cookbook.md::path-параметры-статические-сегменты"
+    ],
+    "note": "List the node ids that SHOULD appear in the pack for this query."
+  }
+]
