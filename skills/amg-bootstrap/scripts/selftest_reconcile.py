@@ -26,6 +26,12 @@ Checks:
                 renormalized (part_of_renormalize).
   9. gating   : an edges-/part_of-only item leaves a derived_from_file node
                 stale (and re-queued); only a new summary flips it active.
+ 10. imports  : an in-project import resolves to the module node id (the
+                dotted-name map); stdlib imports stay dangling dotted names.
+ 11. moved    : a file move migrates earned fields (summary, semantic edges,
+                derived_from_hash) onto the new ids, rewrites same-file edge
+                targets and the primary membership, redirects inbound
+                references, and re-derives nothing for current nodes.
 
 Run:  python selftest_reconcile.py
 """
@@ -301,6 +307,51 @@ def case_active_gating(proj: Path) -> None:
     print("PASS  gating: edges-only keeps stale and queued; a summary flips active")
 
 
+def case_imports_resolver(proj: Path) -> None:
+    (proj / "src" / "util.py").write_text("def helper2(x):\n    return x\n",
+                                          encoding="utf-8")
+    app = proj / "src" / "app.py"
+    app.write_text("import util\n" + app.read_text(encoding="utf-8"), encoding="utf-8")
+    s = RC.plan(proj)
+    assert s["added"] == 2, s                      # util module + helper2
+    imports = {e["to"]: e for e in graph_nodes(proj)[MODULE]["edges"]
+               if e["rel"] == "imports"}
+    assert "code:src/util.py" in imports, imports  # in-project import resolved
+    assert imports["code:src/util.py"].get("origin") == "structural", imports
+    assert "code:json" in imports, imports         # stdlib stays a dangling name
+    print("PASS  imports: in-project import resolves to the module node id")
+
+
+def case_move_migrates_earned(proj: Path) -> None:
+    (proj / "src" / "core").mkdir()
+    (proj / "src" / "app.py").rename(proj / "src" / "core" / "app.py")
+    s = RC.plan(proj)
+    assert s["moved"] == 5 and s["added"] == 0 and s["deleted"] == 0, s
+
+    nodes = graph_nodes(proj)
+    new_top = "code:src/core/app.py::top"
+    new_get = "code:src/core/app.py::Box.get"
+    assert TOP not in nodes and GET not in nodes, "old ids must be gone"
+    t = nodes[new_top]
+    assert t["summary"] == f"S {TOP}" and t["status"] == "active", t
+    assert t["source_path"] == "src/core/app.py" and t["part_of"][0]["topic"] == "src/core", t
+
+    tos = {(e["rel"], e["to"]): e for e in nodes[new_get]["edges"]}
+    assert ("calls", "code:src/core/app.py::helper") in tos, tos   # same-file target rewritten
+    assert ("relates_to", ROUTING) in tos and ("relates_to", GUIDE) in tos, tos
+    assert ("imports", "code:src/util.py") in {(e["rel"], e["to"])
+            for e in nodes["code:src/core/app.py"]["edges"]}       # resolver after move
+
+    hub = nodes["hub:test"]
+    assert any(e.get("to") == "code:src/core/app.py" for e in hub["edges"]), \
+        "inbound edge must be redirected to the moved id"
+
+    q = queue_items(proj)
+    assert new_top not in q and new_get not in q, \
+        "a pure move of derived nodes must not cost model calls"
+    print("PASS  moved: earned fields migrate, references redirect, no re-derivation")
+
+
 if __name__ == "__main__":
     proj = setup_project()
     try:
@@ -315,6 +366,8 @@ if __name__ == "__main__":
         case_origin_stamps(proj)
         case_multi_item_part_of(proj)
         case_active_gating(proj)
+        case_imports_resolver(proj)
+        case_move_migrates_earned(proj)
         print("\nALL RECONCILE CHECKS PASSED")
     finally:
         shutil.rmtree(proj, ignore_errors=True)

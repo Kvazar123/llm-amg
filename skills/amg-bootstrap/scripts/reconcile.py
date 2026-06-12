@@ -7,6 +7,10 @@ matter when sources change:
 
   * added    : a source unit with no node  -> create a node
   * changed  : node.source_hash != current content hash -> update, mark for re-derive
+  * moved    : a deleted+added pair with the SAME content hash is the same unit at
+               a new path/name -> migrate earned fields (summary, semantic edges
+               with their coact, derived_from_hash, extra memberships) onto the new
+               id and redirect inbound references; a pure move costs zero model calls
   * stale    : hash unchanged but derivation lags (derived_from_hash != source_hash
                or status == stale) -> re-queue WITHOUT rewriting the node. The queue
                is rebuilt from graph state on every run, so a crash between the node
@@ -35,7 +39,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import graph_store as gs
 from extract_structure import extract, load_config
@@ -111,7 +115,7 @@ def plan(project_root: Path) -> dict:
 
     config = load_config(amg_root)
     units = {u["id"]: u for u in extract(project_root, config)}
-    summary = {"added": 0, "changed": 0, "deleted": 0, "unchanged": 0,
+    summary = {"added": 0, "changed": 0, "moved": 0, "deleted": 0, "unchanged": 0,
                "requeued_stale": 0, "pointer_refreshed": 0}
     queue: List[dict] = []
 
@@ -120,8 +124,55 @@ def plan(project_root: Path) -> dict:
         nodes = load_nodes(store)
         tx = store.transaction()
 
+        module_map = _module_map(units)
+        default_lang = config.get("working_language", "en")
+
+        # moved: an added unit whose content matches a node that would be purged
+        # is the same source at a new path/name. Migrate earned fields instead of
+        # purge+create — otherwise every mirror refactoring erases earned memory.
+        pairs = _detect_moves(units, nodes)
+        moves = {old["id"]: unit["id"] for old, unit in pairs}
+        migrated = [(_migrate_node(old, unit, module_map, default_lang), old, unit)
+                    for old, unit in pairs]
+        for (meta, needs_queue), old, unit in migrated:
+            # second pass over the move map: an edge to ANOTHER simultaneously
+            # moved file is translated here (same-file targets were already
+            # rewritten inside _migrate_node)
+            for e in meta["edges"]:
+                if isinstance(e, dict) and e.get("to") in moves:
+                    e["to"] = moves[e["to"]]
+            tx.write(node_relpath(unit["id"], _dir_for(unit["category"])),
+                     serialize_node(meta, old.get("_body", "")))
+            tx.delete(old["_path"])
+            if needs_queue:
+                queue.append(_queue_item(unit))
+            summary["moved"] += 1
+
+        # Redirect inbound references (edges, part_of) to the moved ids. Dicts
+        # are mutated in place and the transaction stages by path, so a node
+        # later rewritten by the changed/drift branches keeps the redirect.
+        if moves:
+            for nid, node in nodes.items():
+                if nid in moves:
+                    continue
+                redirected = False
+                for e in node.get("edges") or []:
+                    if isinstance(e, dict) and e.get("to") in moves:
+                        e["to"] = moves[e["to"]]
+                        redirected = True
+                for p in node.get("part_of") or []:
+                    if isinstance(p, dict) and p.get("topic") in moves:
+                        p["topic"] = moves[p["topic"]]
+                        redirected = True
+                if redirected:
+                    meta = {k: v for k, v in node.items() if not k.startswith("_")}
+                    tx.write(node["_path"], serialize_node(meta, node.get("_body", "")))
+
         # added / changed / unchanged
+        moved_new = set(moves.values())
         for uid, unit in units.items():
+            if uid in moved_new:
+                continue                   # already written by the migration above
             node = nodes.get(uid)
             kind_dir = _dir_for(unit["category"])
             relpath = node["_path"] if node else node_relpath(uid, kind_dir)
@@ -133,7 +184,7 @@ def plan(project_root: Path) -> dict:
                     "source_kind": "derived_from_file", "policy": unit["policy"],
                     "source_hash": unit["content_sha"], "derived_from_hash": None,
                     "part_of": _part_of_for(unit),
-                    "edges": _structural_edges(unit),
+                    "edges": _structural_edges(unit, module_map),
                     "lang": config.get("working_language", "en"),
                     "status": "stale", "summary": "", "updated": _now(),
                 }
@@ -154,7 +205,8 @@ def plan(project_root: Path) -> dict:
                 node["policy"] = unit["policy"]
                 node["qualname"] = unit.get("qualname", "")
                 node["lineno"] = unit.get("lineno")
-                node["edges"] = _refresh_structural_edges(node.get("edges") or [], unit)
+                node["edges"] = _refresh_structural_edges(node.get("edges") or [],
+                                                          unit, module_map)
                 node["status"] = "stale"
                 node["updated"] = _now()
                 node.setdefault("part_of", _part_of_for(unit))
@@ -193,7 +245,7 @@ def plan(project_root: Path) -> dict:
 
         # deleted: mirror nodes whose source unit vanished
         for uid, node in nodes.items():
-            if uid in units:
+            if uid in units or uid in moves:    # moved old ids are already deleted
                 continue
             if node.get("source_kind") == "derived_from_file" and node.get("policy") == "mirror":
                 tx.delete(node["_path"])
@@ -212,10 +264,39 @@ def plan(project_root: Path) -> dict:
     return summary
 
 
-def _structural_edges(unit: dict) -> List[dict]:
+def _module_map(units: Dict[str, dict]) -> Dict[str, str]:
+    """Dotted module name -> source_path for the project's Python modules.
+
+    `src/billing.py` registers `src.billing` and the suffix `billing`;
+    `pkg/__init__.py` registers `pkg`. An ambiguous suffix (two billing.py in
+    different dirs) resolves to nothing — a wrong edge is worse than a dangling
+    one, and the full dotted path always stays unambiguous.
+    """
+    out: Dict[str, Optional[str]] = {}
+    for u in units.values():
+        if u.get("kind") != "module" or u.get("lang") != "python":
+            continue
+        rel = u["source_path"]
+        parts = [s for s in rel[:-3].split("/") if s] if rel.endswith(".py") else []
+        if parts and parts[-1] == "__init__":
+            parts = parts[:-1]
+        for i in range(len(parts)):
+            name = ".".join(parts[i:])
+            if name in out and out[name] != rel:
+                out[name] = None               # ambiguous suffix: refuse to guess
+            elif name not in out:
+                out[name] = rel
+    return {k: v for k, v in out.items() if v}
+
+
+def _structural_edges(unit: dict, module_map: Optional[Dict[str, str]] = None) -> List[dict]:
     edges = []
     for mod in unit.get("imports", []) or []:
-        edges.append({"rel": "imports", "to": f"code:{mod}", "w": 0.6, "coact": 0,
+        # in-project imports resolve to the module node id; stdlib/third-party
+        # stay as the dotted name (a dangling target retrieval simply drops)
+        target = (module_map or {}).get(mod)
+        to = f"code:{target}" if target else f"code:{mod}"
+        edges.append({"rel": "imports", "to": to, "w": 0.6, "coact": 0,
                       "origin": "structural"})
     rel = unit.get("source_path", "")
     for callee in unit.get("calls", []) or []:
@@ -232,7 +313,8 @@ def _structural_edges(unit: dict) -> List[dict]:
     return out
 
 
-def _refresh_structural_edges(existing: List[dict], unit: dict) -> List[dict]:
+def _refresh_structural_edges(existing: List[dict], unit: dict,
+                              module_map: Optional[Dict[str, str]] = None) -> List[dict]:
     """Re-extract deterministic edges for a changed unit, keeping earned ones.
 
     Old structural edges — marked `origin: structural`, or legacy-unmarked
@@ -252,7 +334,7 @@ def _refresh_structural_edges(existing: List[dict], unit: dict) -> List[dict]:
             kept.append(e)
     kept_keys = {(e.get("rel"), e.get("to")) for e in kept if isinstance(e, dict)}
     fresh: List[dict] = []
-    for e in _structural_edges(unit):
+    for e in _structural_edges(unit, module_map):
         old = old_structural.get((e["rel"], e["to"]))
         if old:                                  # survived the change: keep earned signal
             e["w"] = max(e["w"], float(old.get("w", 0)))
@@ -260,6 +342,84 @@ def _refresh_structural_edges(existing: List[dict], unit: dict) -> List[dict]:
         if (e["rel"], e["to"]) not in kept_keys:  # semantic layer already asserts it
             fresh.append(e)
     return kept + fresh
+
+
+def _detect_moves(units: Dict[str, dict], nodes: Dict[str, dict]
+                  ) -> List[Tuple[dict, dict]]:
+    """Pair would-be-purged nodes with would-be-created units by content hash.
+
+    Only nodes the diff would otherwise delete (derived_from_file + mirror with
+    a vanished source) are candidates: absorb nodes are never purged, so a
+    moved absorb source keeps its orphan and grows a fresh node — consolidation
+    merges such near-duplicates. Identical twins (same content at several
+    paths) pair deterministically by sorted ids; a move combined with an edit
+    (different hash) stays a plain delete+add.
+    """
+    gone: Dict[str, List[dict]] = {}
+    for nid, node in nodes.items():
+        if nid in units:
+            continue
+        if (node.get("source_kind") == "derived_from_file"
+                and node.get("policy") == "mirror" and node.get("source_hash")):
+            gone.setdefault(node["source_hash"], []).append(node)
+    for cands in gone.values():
+        cands.sort(key=lambda n: n["id"])
+    pairs: List[Tuple[dict, dict]] = []
+    for uid in sorted(units):
+        if uid in nodes:
+            continue
+        cands = gone.get(units[uid]["content_sha"])
+        if cands:
+            pairs.append((cands.pop(0), units[uid]))
+    return pairs
+
+
+def _migrate_node(old: dict, unit: dict, module_map: Dict[str, str],
+                  default_lang: str) -> Tuple[dict, bool]:
+    """Node for a moved/renamed source unit: structural fields from the new
+    unit, earned fields (summary, lang, semantic edges with their coact,
+    derived_from_hash, extra memberships) from the old node. Same-file edge
+    targets and the path-based primary membership are rewritten to the new
+    path. Returns (meta, needs_requeue): a node whose derivation was current
+    arrives active — a pure move costs zero model calls.
+    """
+    old_rel, new_rel = old.get("source_path", ""), unit["source_path"]
+    edges = []
+    for e in old.get("edges") or []:
+        if isinstance(e, dict) and isinstance(e.get("to"), str) and old_rel:
+            if e["to"] == f"code:{old_rel}":
+                e = dict(e, to=f"code:{new_rel}")
+            elif e["to"].startswith(f"code:{old_rel}::"):
+                e = dict(e, to=f"code:{new_rel}::" + e["to"][len(f"code:{old_rel}::"):])
+        edges.append(e)
+    edges = _refresh_structural_edges(edges, unit, module_map)
+
+    old_parent = str(Path(old_rel).parent).replace("\\", "/")
+    old_primary = old_parent if old_parent not in (".", "") else unit["category"]
+    new_primary = _part_of_for(unit)[0]["topic"]
+    part_of, seen = [], set()
+    for p in old.get("part_of") or []:
+        if isinstance(p, dict) and p.get("topic"):
+            topic = new_primary if p["topic"] == old_primary else p["topic"]
+            if topic not in seen:
+                part_of.append(dict(p, topic=topic))
+                seen.add(topic)
+    if not part_of:
+        part_of = _part_of_for(unit)
+
+    derived = old.get("derived_from_hash")
+    fresh = derived == unit["content_sha"]
+    status = (old.get("status") or "active") if fresh else "stale"
+    meta = {
+        "id": unit["id"], "type": unit["kind"], "source_path": new_rel,
+        "qualname": unit.get("qualname", ""), "lineno": unit.get("lineno"),
+        "source_kind": "derived_from_file", "policy": unit["policy"],
+        "source_hash": unit["content_sha"], "derived_from_hash": derived,
+        "part_of": part_of, "edges": edges,
+        "lang": old.get("lang") or default_lang,
+        "status": status, "summary": old.get("summary", ""), "updated": _now(),
+    }
+    return meta, (not fresh) or status == "stale"
 
 
 def _queue_item(unit: dict) -> dict:
