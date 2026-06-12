@@ -23,10 +23,12 @@ files. Work in your own context and return a concise report.
 
 ## Produce
 
-1. **Overview / hub nodes** (`type: derived`, placed under `nodes/_hubs/`). Create
-   a short architecture overview and one hub per significant cross-cutting topic
-   (e.g. a subsystem, a data store, a concern like "auth"). Each hub summary is in
-   `working_language` and links to its members.
+1. **Overview / hub nodes** (placed under `nodes/_hubs/`). Create a short
+   architecture overview (`type: overview`) and one hub per significant
+   cross-cutting topic (`type: hub`; e.g. a subsystem, a data store, a concern
+   like "auth"). Never use `type` for provenance — the apply driver records it
+   as `source_kind: synthesized`. Each hub summary is in `working_language` and
+   links to its members.
 
 2. **Cross-domain and cross-cutting edges**:
    - `documents` — connect each doc section to the code id(s) it describes.
