@@ -110,9 +110,11 @@ flowchart LR
 
 | Команда | Действие | Лок |
 |---|---|---|
-| `python consolidate.py weights [<project_root>]` | свернуть журнал ко-активаций в веса | под локом |
-| `python consolidate.py plan [<project_root>]` | разметить план для субагента | — (только чтение + запись плана) |
-| `python consolidate.py apply <actions.json> [<project_root>]` | внести действия субагента | под локом |
+| `python consolidate.py weights [<project_root>] [--root <agent_dir>]` | свернуть журнал ко-активаций в веса | под локом |
+| `python consolidate.py plan [<project_root>] [--root <agent_dir>]` | разметить план для субагента | — (только чтение + запись плана) |
+| `python consolidate.py apply <actions.json> [<project_root>] [--root <agent_dir>]` | внести действия субагента | под локом |
+
+Корень графа разрешается цепочкой `graph_store.resolve_amg_root` (`--root` → `AMG_AGENT_DIR` → поиск конфига вверх → каталог движка → умолчание `.claude`; см. [Хранилище и транзакции](./03-storage.md)) — литерал `.claude` в коде не зашит.
 
 ## Дальше
 

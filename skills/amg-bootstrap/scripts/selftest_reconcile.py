@@ -386,7 +386,7 @@ def case_lineno_in_pack(proj: Path) -> None:
     loc = f"{node['source_path']}:{node['lineno']}"
     assert ":None" not in res["pack"], res["pack"]
     assert loc in res["pack"], (loc, res["pack"])
-    print(f"PASS  pack: operational code pointer renders {loc}, no :None anywhere")
+    print(f"PASS  pack: operational code pointer renders {loc} (tmp fixture), no :None")
 
 
 def case_root_resolution(proj: Path) -> None:
