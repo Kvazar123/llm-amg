@@ -424,7 +424,9 @@ def apply_actions(project_root: Path, actions_path: Path) -> dict:
                 nid = act["new_id"]
                 meta = {"id": nid, "type": act.get("type", "section"),
                         "source_kind": "derived", "summary": act.get("summary", ""),
-                        "part_of": act.get("part_of", []), "edges": act.get("edges", []),
+                        "part_of": act.get("part_of", []),
+                        "edges": [dict(e, origin=e.get("origin", "consolidation"))
+                                  for e in act.get("edges", [])],
                         "lang": act.get("lang", "en"), "status": "active", "updated": _now()}
                 tx.write(newpath(nid), serialize(meta, act.get("body", "")))
                 arch_ids = set(act.get("archive_ids", []))

@@ -164,6 +164,8 @@ edges:
 
 **Результат:** граф остаётся структурно равен коду после правок.
 
+Уточнение по итогам Этапа 0 (задачи 3–4): `lang` узла при `changed` намеренно не обновляется — это язык прежней сводки, он самокорректируется при передеривации через `apply`; `policy` обновляется и на `changed`, и при дрейфе без смены контента (правило удаления читает policy узла — устаревший `mirror` стёр бы знание, которое пользователь перевёл в absorb); `source_path` и первичное `part_of` для того же id неизменны по построению (путь зашит в id; переносы файлов — задача 7 Этапа 0).
+
 ---
 
 ### 1.4. Типы хабов должны быть `hub` / `overview`, а не `derived`
@@ -947,7 +949,7 @@ README.md - английская версия, ссылается на еще о
    - `branch_budget`;
    - `confidence` / `provenance` / `verification` как planned-поля;
    - `origin` на рёбрах как planned или реализуемое поле.
-   Пометка (Этап 0, задача 2): `lineno`/`qualname` уже пишутся при created/changed и тихо обновляются при сдвиге единицы без смены хеша; поле `lang` узла остаётся языком сводки (так его пишет цепочка builder → apply → consolidate); язык источника в схему узла не вводится — потребителя нет, для mirror он восстановим из `source_path`; при будущей нужде это отдельное поле `source_lang` (решение Этапа 1).
+   Пометка (Этап 0, задача 2): `lineno`/`qualname` уже пишутся при created/changed и тихо обновляются при сдвиге единицы без смены хеша; поле `lang` узла остаётся языком сводки (так его пишет цепочка builder → apply → consolidate); язык источника в схему узла не вводится — потребителя нет, для mirror он восстановим из `source_path`; при будущей нужде это отдельное поле `source_lang` (решение Этапа 1). Поле `origin` рёбер реализовано (задачи 3–4): `structural | semantic | synthesized | consolidation`; legacy-рёбра без origin размечает миграция Этапа 1 (задача 7).
 3. Уточнить, что `coact` и `last_used` — поля рёбер.
 4. Нормализовать `source_kind`: `derived_from_file`, `synthesized`, `authored`.
 5. Описать, что `part_of` может:
@@ -1000,7 +1002,7 @@ README.md - английская версия, ссылается на еще о
 
 1. Исправить относительные ссылки внутри architecture-директории: `./04-ingest.md`, а не `./architecture/04-ingest.md`.
 2. Описать stale requeue по `derived_from_hash != source_hash`. — Реализовано на Этапе 0 (задача 1): условие «`derived_from_hash != content_sha` ИЛИ `status: stale`»; файл узла не переписывается, единица лишь возвращается в очередь; в сводке `plan` счётчик `requeued_stale`.
-3. Описать обновление structural edges при `changed`.
+3. Описать обновление structural edges при `changed`. — Реализовано на Этапе 0 (задачи 3–4): `_refresh_structural_edges` заменяет рёбра `origin: structural` (и legacy-`imports`/`calls` без origin; `defines` в fallback не входит — извлечение его не порождает, удаление было бы потерей без замены) свежим извлечением; пережившее правку ребро наследует заработанные `w`/`coact`; смысловые рёбра не трогаются; на `changed` также обновляются `policy` и `source_path`.
 4. Добавить в описание queue поля `qualname`, `lineno`, `lang`. — Реализовано на Этапе 0 (задача 2): `lang` в очереди — язык источника (`python`/`markdown`/…), не `working_language`; вход `amg-builder.md` обновлён.
 5. Описать merge-логику `part_of`, если она реализована.
 6. Уточнить, что `queue.json` пишется атомарно, но отдельно от transaction узлов; поэтому requeue по stale-состоянию обязателен. — Реализовано на Этапе 0: очередь целиком пересоздаётся каждым `plan()` из состояния графа, поэтому сбой между транзакцией узлов и записью очереди самовосстанавливается следующим `bootstrap`.
@@ -1036,7 +1038,7 @@ README.md - английская версия, ссылается на еще о
 2. Не называть `weights` идемпотентным, если decay остаётся time/action-based.
 3. Описать idempotent archive для `shorten`.
 4. Защиту `decision` / `adr` описывать как enforced в коде после реализации.
-5. Привести создаваемые консолидацией узлы к data model: `source_kind`, `policy`, `source_hash`, `derived_from_hash`, `lang`.
+5. Привести создаваемые консолидацией узлы к data model: `source_kind`, `policy`, `source_hash`, `derived_from_hash`, `lang`. — Частично: с Этапа 0 (задача 4) рёбра из `summarize_episodes` штампуются `origin: consolidation`; остальное — на Этапе 3.
 6. Grounded/salience должен учитывать не только outgoing, но и inbound `documents` / `implements` / `specifies`.
 7. Автоматический eval-gate: закрывается на Этапе 4 — сверить описание с реализованным механизмом.
 
@@ -1627,8 +1629,8 @@ amg/                 # НЕ в репозитории: данные локаль
    - во frontmatter;
    - в queue item;
    - при created/changed.
-3. Пересчитывать structural edges при изменении source unit.
-4. Ввести `origin: structural | semantic | synthesized | consolidation` для рёбер или эквивалентный механизм.
+3. Пересчитывать structural edges при изменении source unit — выполнено (`_refresh_structural_edges`; см. пометки к 1.3 и к 2.6, п. 3).
+4. Ввести `origin: structural | semantic | synthesized | consolidation` для рёбер или эквивалентный механизм — выполнено: штампы на всех местах записи рёбер (извлечение → `structural`; apply-обновления → `semantic`; создаваемые хабы → `synthesized`; `summarize_episodes` консолидации → `consolidation`; при `merge` origin переезжает вместе с ребром).
 5. Нормализовать `source_kind`.
 6. Исправить `apply_derivation()`:
    - merge `part_of`;
@@ -1699,7 +1701,8 @@ Definition of done:
 7. Сделать миграционный скрипт для старых узлов:
    - `source_kind: derived` → `synthesized`;
    - `type: derived` у хабов → `hub` или `overview`;
-   - при возможности восстановить `lineno`.
+   - при возможности восстановить `lineno`;
+   - проставить `origin` рёбрам без него: `imports`/`calls` → `structural`, прочие → `semantic` (поле введено на Этапе 0, задача 4).
 8. Канонизировать `kind` tree-sitter-единиц при извлечении (`function_definition` → `function`, `class_declaration` → `class` и т. п.) либо расширить `TIER_OF_TYPE`/`CODE_TYPES` — см. 1.25; иначе не-Python код выпадает из ярусов и формата указателей.
 
 Definition of done:

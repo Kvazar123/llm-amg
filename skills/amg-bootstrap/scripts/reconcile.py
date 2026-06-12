@@ -142,13 +142,19 @@ def plan(project_root: Path) -> dict:
                 summary["added"] += 1
 
             elif node.get("source_hash") != unit["content_sha"]:
-                # Update structural fields; KEEP earned summary/edges until re-derived.
+                # Update structural fields; KEEP the earned summary and semantic
+                # edges until re-derived. Structural edges are re-extracted so the
+                # graph stays structurally equal to the source (a new call gets
+                # its edge, a dropped call loses it).
                 node.pop("_path", None)
                 body = node.pop("_body", "")
                 node["source_hash"] = unit["content_sha"]
                 node["type"] = unit["kind"]
+                node["source_path"] = unit["source_path"]
+                node["policy"] = unit["policy"]
                 node["qualname"] = unit.get("qualname", "")
                 node["lineno"] = unit.get("lineno")
+                node["edges"] = _refresh_structural_edges(node.get("edges") or [], unit)
                 node["status"] = "stale"
                 node["updated"] = _now()
                 node.setdefault("part_of", _part_of_for(unit))
@@ -159,13 +165,19 @@ def plan(project_root: Path) -> dict:
                 # Source content unchanged; two kinds of lag may still remain.
                 # Pointer drift: an edit ABOVE this unit shifted it without changing
                 # its content hash -> refresh lineno/qualname only, no re-derivation.
+                # Policy rides along: a folder moved between mirror_path/absorb_path
+                # must not wait for a content change — the deletion rule reads the
+                # node's policy, and a stale `mirror` there would purge knowledge
+                # the user explicitly chose to absorb.
                 drifted = (node.get("lineno") != unit.get("lineno")
-                           or node.get("qualname") != unit.get("qualname", ""))
+                           or node.get("qualname") != unit.get("qualname", "")
+                           or node.get("policy") != unit["policy"])
                 if drifted:
                     node.pop("_path", None)
                     body = node.pop("_body", "")
                     node["qualname"] = unit.get("qualname", "")
                     node["lineno"] = unit.get("lineno")
+                    node["policy"] = unit["policy"]
                     node["updated"] = _now()
                     tx.write(relpath, serialize_node(node, body))
                     summary["pointer_refreshed"] += 1
@@ -203,12 +215,14 @@ def plan(project_root: Path) -> dict:
 def _structural_edges(unit: dict) -> List[dict]:
     edges = []
     for mod in unit.get("imports", []) or []:
-        edges.append({"rel": "imports", "to": f"code:{mod}", "w": 0.6, "coact": 0})
+        edges.append({"rel": "imports", "to": f"code:{mod}", "w": 0.6, "coact": 0,
+                      "origin": "structural"})
     rel = unit.get("source_path", "")
     for callee in unit.get("calls", []) or []:
         # best-effort same-file target; retrieval drops edges whose target node
         # does not exist, so cross-file calls are simply ignored until resolved.
-        edges.append({"rel": "calls", "to": f"code:{rel}::{callee}", "w": 0.7, "coact": 0})
+        edges.append({"rel": "calls", "to": f"code:{rel}::{callee}", "w": 0.7, "coact": 0,
+                      "origin": "structural"})
     seen, out = set(), []
     for e in edges:
         k = (e["rel"], e["to"])
@@ -216,6 +230,36 @@ def _structural_edges(unit: dict) -> List[dict]:
             seen.add(k)
             out.append(e)
     return out
+
+
+def _refresh_structural_edges(existing: List[dict], unit: dict) -> List[dict]:
+    """Re-extract deterministic edges for a changed unit, keeping earned ones.
+
+    Old structural edges — marked `origin: structural`, or legacy-unmarked
+    `imports`/`calls` (the only rels _structural_edges has ever produced) — are
+    replaced by a fresh extraction; an edge that persists across the change
+    inherits its earned weight and coact count. Edges of any other origin
+    (semantic / synthesized / consolidation) are kept untouched.
+    """
+    old_structural: Dict[tuple, dict] = {}
+    kept: List[dict] = []
+    for e in existing:
+        if isinstance(e, dict) and (
+                e.get("origin") == "structural"
+                or (e.get("origin") is None and e.get("rel") in ("imports", "calls"))):
+            old_structural[(e.get("rel"), e.get("to"))] = e
+        else:
+            kept.append(e)
+    kept_keys = {(e.get("rel"), e.get("to")) for e in kept if isinstance(e, dict)}
+    fresh: List[dict] = []
+    for e in _structural_edges(unit):
+        old = old_structural.get((e["rel"], e["to"]))
+        if old:                                  # survived the change: keep earned signal
+            e["w"] = max(e["w"], float(old.get("w", 0)))
+            e["coact"] = int(old.get("coact", 0))
+        if (e["rel"], e["to"]) not in kept_keys:  # semantic layer already asserts it
+            fresh.append(e)
+    return kept + fresh
 
 
 def _queue_item(unit: dict) -> dict:
@@ -273,7 +317,9 @@ def apply_derivation(project_root: Path, derivation_path: Path) -> dict:
                         "source_kind": "synthesized", "policy": "authored",
                         "source_hash": None, "derived_from_hash": None,
                         "part_of": item.get("part_of", []),
-                        "edges": [dict(e, coact=e.get("coact", 0)) for e in item.get("edges", [])],
+                        "edges": [dict(e, coact=e.get("coact", 0),
+                                       origin=e.get("origin", "synthesized"))
+                                  for e in item.get("edges", [])],
                         "lang": item.get("lang", default_lang),
                         "status": "active", "summary": item.get("summary", ""),
                         "updated": _now(),
@@ -307,16 +353,24 @@ def apply_derivation(project_root: Path, derivation_path: Path) -> dict:
     return {"applied": applied, "created": created, "skipped_missing": skipped}
 
 
-def _merge_edges(existing: List[dict], incoming: List[dict]) -> List[dict]:
-    """Merge by (rel, to); keep the higher weight and accumulated coact count."""
+def _merge_edges(existing: List[dict], incoming: List[dict],
+                 default_origin: str = "semantic") -> List[dict]:
+    """Merge by (rel, to); keep the higher weight and accumulated coact count.
+
+    An existing edge keeps its origin (a structural edge confirmed by the
+    judgment layer stays structural — it is still re-extractable); a new or
+    unmarked one takes the incoming origin, defaulting to `default_origin`.
+    """
     index = {(e.get("rel"), e.get("to")): dict(e) for e in existing}
     for e in incoming:
         key = (e.get("rel"), e.get("to"))
         if key in index:
             index[key]["w"] = max(index[key].get("w", 0), e.get("w", 0))
+            index[key].setdefault("origin", e.get("origin", default_origin))
         else:
             index[key] = {"rel": e.get("rel"), "to": e.get("to"),
-                          "w": e.get("w", 0.5), "coact": 0}
+                          "w": e.get("w", 0.5), "coact": 0,
+                          "origin": e.get("origin", default_origin)}
     return list(index.values())
 
 

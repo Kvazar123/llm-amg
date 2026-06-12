@@ -15,6 +15,12 @@ Checks:
                 lineno is refreshed quietly, without re-derivation.
   5. changed  : a content change updates lineno/qualname and keeps the earned
                 summary (status flips to stale until re-derived).
+  6. edges    : changed re-extracts structural edges (a new call appears, a
+                dropped call disappears), a persisting edge inherits its earned
+                w/coact, legacy edges without `origin` are treated as structural
+                when their rel is imports/calls, and semantic edges survive.
+  7. origin   : edges are stamped structural at extraction, semantic at apply
+                (update items), synthesized on created hub nodes.
 
 Run:  python selftest_reconcile.py
 """
@@ -55,6 +61,7 @@ MODULE = "code:src/app.py"
 TOP = "code:src/app.py::top"
 BOX = "code:src/app.py::Box"
 GET = "code:src/app.py::Box.get"
+HELPER = "code:src/app.py::helper"
 GUIDE = "doc:src/guide.md::guide"
 ROUTING = "doc:src/guide.md::routing"
 ALL_IDS = {MODULE, TOP, BOX, GET, GUIDE, ROUTING}
@@ -166,6 +173,74 @@ def case_changed_updates_pointer_keeps_summary(proj: Path) -> None:
     print("PASS  changed: pointer fields updated, earned summary kept (stale)")
 
 
+def case_structural_edges_on_change(proj: Path) -> None:
+    derive_all(proj, [MODULE, TOP])                   # clean slate: everything active
+
+    # A semantic edge earned by the judgment layer must survive re-extraction.
+    work = proj / ".claude" / "amg" / "work"
+    out = work / "derived-sem.json"
+    out.write_text(json.dumps([{"id": GET, "edges": [
+        {"rel": "relates_to", "to": ROUTING, "w": 0.4}]}]), encoding="utf-8")
+    RC.apply_derivation(proj, out)
+    n = graph_nodes(proj)[GET]
+    sem = [e for e in n["edges"] if e["rel"] == "relates_to"]
+    assert sem and sem[0].get("origin") == "semantic", n["edges"]
+
+    # Simulate an EARNED structural edge (Hebbian w/coact) in the legacy form
+    # without `origin` — the refresh must treat it as structural and re-stamp it.
+    store = gs.GraphStore(proj / ".claude" / "amg")
+    n = RC.load_nodes(store)[GET]
+    path, body = n.pop("_path"), n.pop("_body", "")
+    for e in n["edges"]:
+        if e["rel"] == "calls":
+            e["w"], e["coact"] = 0.9, 5
+            e.pop("origin", None)
+    gs.atomic_write_text(store.abspath(path), RC.serialize_node(n, body))
+
+    # Box.get now ALSO calls helper (a new function appended to the file).
+    app = proj / "src" / "app.py"
+    app.write_text(app.read_text(encoding="utf-8").replace(
+        "        return top(1)", "        return helper(top(1))")
+        + "\n\ndef helper(x):\n    return x\n", encoding="utf-8")
+    s = RC.plan(proj)
+    assert s["added"] == 1 and s["changed"] == 3, s   # helper; module + Box + Box.get
+
+    edges = {(e["rel"], e["to"]): e for e in graph_nodes(proj)[GET]["edges"]}
+    kept = edges[("calls", TOP)]
+    assert kept["w"] == 0.9 and kept["coact"] == 5, kept       # earned signal inherited
+    assert kept.get("origin") == "structural", kept            # legacy edge re-stamped
+    assert edges[("calls", HELPER)].get("origin") == "structural", edges
+    assert ("relates_to", ROUTING) in edges, edges             # semantic edge survived
+    print("PASS  edges: changed re-extracts structural (earned w/coact kept), semantic kept")
+
+
+def case_structural_edge_removed(proj: Path) -> None:
+    app = proj / "src" / "app.py"
+    app.write_text(app.read_text(encoding="utf-8").replace(
+        "        return helper(top(1))", "        return helper(1)"), encoding="utf-8")
+    RC.plan(proj)
+    edges = {(e["rel"], e["to"]) for e in graph_nodes(proj)[GET]["edges"]}
+    assert ("calls", TOP) not in edges, edges          # dropped call loses its edge
+    assert ("calls", HELPER) in edges
+    assert ("relates_to", ROUTING) in edges
+    print("PASS  edges: a dropped call removes its structural edge")
+
+
+def case_origin_stamps(proj: Path) -> None:
+    imports = [e for e in graph_nodes(proj)[MODULE]["edges"] if e["rel"] == "imports"]
+    assert imports and all(e.get("origin") == "structural" for e in imports), imports
+
+    work = proj / ".claude" / "amg" / "work"
+    out = work / "derived-hub.json"
+    out.write_text(json.dumps([{"id": "hub:test", "type": "hub", "summary": "T",
+                                "edges": [{"rel": "relates_to", "to": MODULE, "w": 0.5}]}]),
+                   encoding="utf-8")
+    RC.apply_derivation(proj, out)
+    h = graph_nodes(proj)["hub:test"]
+    assert h["edges"][0].get("origin") == "synthesized", h["edges"]
+    print("PASS  origin: structural at extraction, semantic at apply, synthesized on hubs")
+
+
 if __name__ == "__main__":
     proj = setup_project()
     try:
@@ -175,6 +250,9 @@ if __name__ == "__main__":
         case_derived_not_requeued(proj)
         case_pointer_drift(proj)
         case_changed_updates_pointer_keeps_summary(proj)
+        case_structural_edges_on_change(proj)
+        case_structural_edge_removed(proj)
+        case_origin_stamps(proj)
         print("\nALL RECONCILE CHECKS PASSED")
     finally:
         shutil.rmtree(proj, ignore_errors=True)
