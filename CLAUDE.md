@@ -22,6 +22,8 @@ docs/ru/architecture/01–11   architecture; 11-roadmap.md is the main working d
 docs/en/                     translations (Stage 18)
 amg/                         data from local runs; gitignored, never commit
 STATUS.md                    short work-state bridge between sessions
+VERSION                      current SemVer version (bumped only at releases)
+CHANGELOG.md                 release history (Keep a Changelog format)
 ../amg-testbed/              sandbox for integration checks (outside the repo)
 ```
 
@@ -127,3 +129,11 @@ Process when reworking docs:
 - Talk to the user in the user's language — Russian by default in this project.
 - Code comments and docstrings — English only (rule 6.10).
 - Project documentation is Russian-first (`docs/ru`); English appears at Stage 18. This file and `entrypoint/CLAUDE.md` are English as part of the control layer.
+
+## 10. Git, commits, and versioning
+
+- **Commit messages — Conventional Commits.** `type(scope): summary`; types: `feat | fix | docs | refactor | test | perf | chore`; scope = area (`store`, `reconcile`, `retrieve`, `consolidate`, `ingest`, `skills`, `agents`, `docs`, `install`). Reference the stage and task where relevant, e.g. `feat(retrieve): status prior with stale note in pack (stage 2, task 1)`. English, imperative mood, one logical change per commit.
+- **SemVer over a wide contract.** AMG's public contract is more than the CLI: the on-disk node schema and edge format, storage/journal layout, config keys, the entrypoint activation block, and skill/agent interfaces. MAJOR = breaking any of these without an automatic migration; MINOR = backward-compatible additions (new optional fields, chunkers, commands); PATCH = fixes and docs.
+- **Pre-1.0 mode (current): `0.y.z`.** A closed stage bumps `y` (in its closure session, after docs sync and roadmap compaction); standalone fixes between closures bump `z`. The version changes only at these release points — ordinary commits never bump it, they only follow the message convention: per-commit bumps create noise and merge conflicts, while tags map commits to versions.
+- **Release ritual** (step 4 of stage closure): update `VERSION`; add the stage summary to `CHANGELOG.md` (Added / Changed / Fixed); commit `chore(release): v0.y.0 — stage N closed`; create an annotated tag `v0.y.0`; push with `--tags`.
+- **v1.0.0** ships with the closure of Stage 10 (stable data schema + working installation). After 1.0, stage closures bump MINOR unless the contract breaks.
