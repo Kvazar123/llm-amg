@@ -716,14 +716,7 @@ README.md - английская версия, ссылается на еще о
 
 Нужно исправить:
 
-1. Расширить список `type`:
-   - `hub`;
-   - `overview`;
-   - `note`;
-   - `decision`;
-   - `adr`;
-   - tree-sitter node types;
-   - `module`, `class`, `function`, `section`, `block`, `page`, `record`, `sheet`, `file`.
+1. Закрыт на Этапе 1 (задачи 1–2): канон `type` — раздел «Типы узлов» 02-data-model.md; tree-sitter-типы — допустимое расширение до канонизации (задача 8 Этапа 1).
 2. Добавить поля:
    - `lineno`;
    - `qualname`;
@@ -732,7 +725,7 @@ README.md - английская версия, ссылается на еще о
    - `origin` на рёбрах как planned или реализуемое поле.
    Пометка (Этап 0, задача 2): `lineno`/`qualname` уже пишутся при created/changed и тихо обновляются при сдвиге единицы без смены хеша; поле `lang` узла остаётся языком сводки (так его пишет цепочка builder → apply → consolidate); язык источника в схему узла не вводится — потребителя нет, для mirror он восстановим из `source_path`; при будущей нужде это отдельное поле `source_lang` (решение Этапа 1). Поле `origin` рёбер реализовано (задачи 3–4): `structural | semantic | synthesized | consolidation`; legacy-рёбра без origin размечает миграция Этапа 1 (задача 7).
 3. Уточнить, что `coact` и `last_used` — поля рёбер.
-4. Нормализовать `source_kind`: `derived_from_file`, `synthesized`, `authored`.
+4. Закрыт на Этапе 1 (задача 4; код — Этап 0, задача 5): канон — разделы «Классы узлов и `source_kind`» и «Типы узлов» 02-data-model.md; миграция старых узлов — задача 7 Этапа 1.
 5. Описать, что `part_of` может:
    - создаваться детерминированно по пути;
    - уточняться `amg-synth`;
@@ -824,7 +817,7 @@ README.md - английская версия, ссылается на еще о
 
 Нужно исправить:
 
-1. В `amg-synth` указать `type: hub` / `overview`, а не `derived`.
+1. Закрыт на Этапе 1 (задача 3): `agents/amg-synth.md` и § `amg-synth` в 08-agents-skills.md задают `type: overview` для обзора и `type: hub` для хабов; происхождение — `source_kind: synthesized`, проставляется при `apply`.
 2. Закрыт на Этапе 0: поля `qualname`/`lineno`/`lang` добавлены в очередь; вход синхронизирован и в промпте `amg-builder.md`, и в § `amg-builder` файла 08-agents-skills.md (`lang` на входе — язык источника, в выходе — язык сводки).
 3. Описать применение `amg-classifier` через overrides.
 4. Уточнить, что `amg-synth` не редактирует `nodes/`, но может писать `gap-report.md`.
@@ -1403,8 +1396,8 @@ amg/                 # НЕ в репозитории: данные локаль
 
 Задачи:
 
-1. Обновить `02-data-model.md`.
-2. Закрепить `type`:
+1. Обновить `02-data-model.md`. — выполнено в объёме задач 2–4 (раздел «Типы узлов», строка `type` таблицы полей); поля задач 5–6 допишутся при их выполнении.
+2. Закрепить `type` — выполнено (раздел «Типы узлов» в 02-data-model.md):
    - `hub`;
    - `overview`;
    - `module`;
@@ -1420,8 +1413,8 @@ amg/                 # НЕ в репозитории: данные локаль
    - `decision`;
    - `adr`;
    - tree-sitter-specific types как допустимое расширение.
-3. Убрать использование `type: derived`.
-4. Закрепить `source_kind`:
+3. Убрать использование `type: derived`. — выполнено (`agents/amg-synth.md`, § `amg-synth` в 08-agents-skills.md; код и демо-граф значение не использовали; устаревший класс `derived` в consistency-model.md — пункт 2.14, Этап 7).
+4. Закрепить `source_kind` — выполнено (раздел «Классы узлов и `source_kind`» в 02-data-model.md был каноничен; код нормализован на Этапе 0, задача 5; миграция старых узлов — задача 7):
    - `derived_from_file`;
    - `synthesized`;
    - `authored`.
