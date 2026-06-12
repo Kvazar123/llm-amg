@@ -423,7 +423,7 @@ def apply_actions(project_root: Path, actions_path: Path) -> dict:
             elif kind == "summarize_episodes":
                 nid = act["new_id"]
                 meta = {"id": nid, "type": act.get("type", "section"),
-                        "source_kind": "derived", "summary": act.get("summary", ""),
+                        "source_kind": "synthesized", "summary": act.get("summary", ""),
                         "part_of": act.get("part_of", []),
                         "edges": [dict(e, origin=e.get("origin", "consolidation"))
                                   for e in act.get("edges", [])],
@@ -437,7 +437,7 @@ def apply_actions(project_root: Path, actions_path: Path) -> dict:
 
             elif kind == "introduce_subhub":
                 hub_id = act["hub_id"]
-                meta = {"id": hub_id, "type": "hub", "source_kind": "derived",
+                meta = {"id": hub_id, "type": "hub", "source_kind": "synthesized",
                         "summary": act.get("summary", ""),
                         "part_of": ([{"topic": act["parent_topic"], "w": 1.0}]
                                     if act.get("parent_topic") else []),

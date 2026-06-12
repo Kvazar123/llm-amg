@@ -294,13 +294,19 @@ def apply_derivation(project_root: Path, derivation_path: Path) -> dict:
         overview nodes. Created with source_kind 'synthesized' (not derived_from_file)
         so a later reconcile never purges it as a vanished source.
 
-    Updating sets derived_from_hash = source_hash and status 'active', so a unit
-    counts as 'derived' only once its summary/edges are durably committed.
+    Updating sets derived_from_hash = source_hash and flips status to 'active'
+    ONLY when the item carries a new `summary` (or the node is not
+    derived_from_file — synthesized/authored nodes live active): a unit counts
+    as 'derived' once its summary is durably committed. An edges-/part_of-only
+    item leaves a stale node stale, so reconcile keeps re-queueing it until a
+    summary arrives.
     """
     amg_root = project_root / ".claude" / "amg"
     store = gs.GraphStore(amg_root)
     items = json.loads(Path(derivation_path).read_text(encoding="utf-8"))
-    default_lang = (load_config(amg_root) or {}).get("working_language", "en")
+    config = load_config(amg_root) or {}
+    default_lang = config.get("working_language", "en")
+    renormalize = bool((config.get("weights") or {}).get("part_of_renormalize", True))
     applied, created, skipped = 0, 0, 0
 
     with store.lock():
@@ -337,11 +343,13 @@ def apply_derivation(project_root: Path, derivation_path: Path) -> dict:
             if "lang" in item:
                 node["lang"] = item["lang"]
             if "part_of" in item:
-                node["part_of"] = item["part_of"]
+                node["part_of"] = _merge_part_of(node.get("part_of") or [],
+                                                 item["part_of"], renormalize)
             if item.get("edges"):
                 node["edges"] = _merge_edges(node.get("edges", []), item["edges"])
-            node["derived_from_hash"] = node.get("source_hash")
-            node["status"] = "active"
+            if "summary" in item or node.get("source_kind") != "derived_from_file":
+                node["derived_from_hash"] = node.get("source_hash")
+                node["status"] = "active"
             node["updated"] = _now()
             if "body" in item:
                 node["_body"] = item["body"]
@@ -351,6 +359,34 @@ def apply_derivation(project_root: Path, derivation_path: Path) -> dict:
         tx.commit()
 
     return {"applied": applied, "created": created, "skipped_missing": skipped}
+
+
+def _merge_part_of(existing: List[dict], incoming: List[dict],
+                   renormalize: bool) -> List[dict]:
+    """Accumulate memberships by topic: a later item must not erase a membership
+    an earlier one added. Same topic -> the incoming weight wins (the judgment
+    layer's latest statement; taking the max would only ratchet weights upward
+    and block rebalancing); different topics are appended. If the merged weights
+    sum above 1, they are scaled back to the simplex (part_of_renormalize), the
+    same rule consolidation applies.
+    """
+    out = {p["topic"]: dict(p) for p in existing
+           if isinstance(p, dict) and p.get("topic")}
+    for p in incoming:
+        if not (isinstance(p, dict) and p.get("topic")):
+            continue
+        cur = out.get(p["topic"])
+        if cur is not None:
+            cur["w"] = p.get("w", cur.get("w", 1.0))
+        else:
+            out[p["topic"]] = dict(p)
+    merged = list(out.values())
+    if renormalize:
+        s = sum(float(p.get("w", 0)) for p in merged)
+        if s > 1.0:
+            for p in merged:
+                p["w"] = round(float(p.get("w", 0)) / s, 4)
+    return merged
 
 
 def _merge_edges(existing: List[dict], incoming: List[dict],

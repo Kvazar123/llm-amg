@@ -158,8 +158,11 @@ def test_apply_and_recall(proj):
     arch = {p.name for p in (store.root / "archive").iterdir()}
     assert any("dup-b" in a for a in arch) and any("refunds" in a for a in arch)
     assert any("ep_1" in a or "ep/1" in a or "1-" in a for a in arch)  # episode archived
-    # survivors / new nodes
+    # survivors / new nodes; created nodes use the normalized source_kind
+    # taxonomy (derived_from_file / synthesized / authored — never `derived`)
     assert "notes:summary/eps" in nodes and "hub:misc" in nodes
+    assert nodes["notes:summary/eps"]["source_kind"] == "synthesized"
+    assert nodes["hub:misc"]["source_kind"] == "synthesized"
     # inbound edge redirected to the summary node
     ref = nodes["notes:tmp/ref"]
     assert any(e.get("to") == "notes:summary/eps" for e in ref["edges"]), "edge redirected"

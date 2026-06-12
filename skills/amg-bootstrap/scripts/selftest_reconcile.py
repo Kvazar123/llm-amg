@@ -21,6 +21,11 @@ Checks:
                 when their rel is imports/calls, and semantic edges survive.
   7. origin   : edges are stamped structural at extraction, semantic at apply
                 (update items), synthesized on created hub nodes.
+  8. part_of  : multiple derivation items on one node accumulate memberships;
+                the same topic takes the newest weight; an over-simplex sum is
+                renormalized (part_of_renormalize).
+  9. gating   : an edges-/part_of-only item leaves a derived_from_file node
+                stale (and re-queued); only a new summary flips it active.
 
 Run:  python selftest_reconcile.py
 """
@@ -241,6 +246,61 @@ def case_origin_stamps(proj: Path) -> None:
     print("PASS  origin: structural at extraction, semantic at apply, synthesized on hubs")
 
 
+def case_multi_item_part_of(proj: Path) -> None:
+    work = proj / ".claude" / "amg" / "work"
+    out = work / "derived-po.json"
+    # A create item plus two update items on the SAME node in one derivation:
+    # memberships must accumulate, not overwrite each other (audit 1.6).
+    out.write_text(json.dumps([
+        {"id": "hub:po", "type": "hub", "summary": "membership testbed"},
+        {"id": "hub:po", "part_of": [{"topic": "hub:a", "w": 0.6}]},
+        {"id": "hub:po", "part_of": [{"topic": "hub:b", "w": 0.3}]},
+    ]), encoding="utf-8")
+    RC.apply_derivation(proj, out)
+    po = {p["topic"]: p["w"] for p in graph_nodes(proj)["hub:po"]["part_of"]}
+    assert po == {"hub:a": 0.6, "hub:b": 0.3}, po
+
+    # Same topic again -> the newest weight wins; the other membership stays.
+    out.write_text(json.dumps([{"id": "hub:po",
+                                "part_of": [{"topic": "hub:a", "w": 0.2}]}]),
+                   encoding="utf-8")
+    RC.apply_derivation(proj, out)
+    po = {p["topic"]: p["w"] for p in graph_nodes(proj)["hub:po"]["part_of"]}
+    assert po == {"hub:a": 0.2, "hub:b": 0.3}, po
+
+    # Over-simplex sum (0.9 + 0.3) is scaled back, ratios preserved.
+    out.write_text(json.dumps([{"id": "hub:po",
+                                "part_of": [{"topic": "hub:a", "w": 0.9}]}]),
+                   encoding="utf-8")
+    RC.apply_derivation(proj, out)
+    po = {p["topic"]: p["w"] for p in graph_nodes(proj)["hub:po"]["part_of"]}
+    assert abs(sum(po.values()) - 1.0) < 0.001, po
+    assert abs(po["hub:a"] / po["hub:b"] - 3.0) < 0.01, po
+    print("PASS  part_of: items accumulate, same topic updates, simplex renormalized")
+
+
+def case_active_gating(proj: Path) -> None:
+    n = graph_nodes(proj)[GET]
+    assert n["status"] == "stale", "precondition: GET is stale after the edits above"
+
+    work = proj / ".claude" / "amg" / "work"
+    out = work / "derived-gate.json"
+    out.write_text(json.dumps([{"id": GET, "edges": [
+        {"rel": "relates_to", "to": GUIDE, "w": 0.3}]}]), encoding="utf-8")
+    RC.apply_derivation(proj, out)
+    n = graph_nodes(proj)[GET]
+    assert n["status"] == "stale", "edges-only item must not flip a node active"
+    assert n["derived_from_hash"] != n["source_hash"], n
+    RC.plan(proj)
+    assert GET in queue_items(proj), "still under-derived -> must stay queued"
+
+    out.write_text(json.dumps([{"id": GET, "summary": "S get"}]), encoding="utf-8")
+    RC.apply_derivation(proj, out)
+    n = graph_nodes(proj)[GET]
+    assert n["status"] == "active" and n["derived_from_hash"] == n["source_hash"], n
+    print("PASS  gating: edges-only keeps stale and queued; a summary flips active")
+
+
 if __name__ == "__main__":
     proj = setup_project()
     try:
@@ -253,6 +313,8 @@ if __name__ == "__main__":
         case_structural_edges_on_change(proj)
         case_structural_edge_removed(proj)
         case_origin_stamps(proj)
+        case_multi_item_part_of(proj)
+        case_active_gating(proj)
         print("\nALL RECONCILE CHECKS PASSED")
     finally:
         shutil.rmtree(proj, ignore_errors=True)
