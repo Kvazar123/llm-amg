@@ -140,10 +140,14 @@ def _deep_merge(base: dict, over: dict) -> dict:
 
 def load_config(store_root: Path) -> dict:
     f = store_root / "config.yml"
-    user: dict = {}
+    raw: dict = {}
     if f.exists():
-        user = (yaml.safe_load(f.read_text(encoding="utf-8")) or {}).get("retrieval", {}) or {}
-    return _deep_merge(DEFAULTS, user)
+        raw = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+    cfg = _deep_merge(DEFAULTS, (raw.get("retrieval") or {}))
+    # Surface top-level working_language into the retrieval cfg so embedding backend
+    # selection can default to a multilingual model for non-English projects.
+    cfg["working_language"] = raw.get("working_language", "en")
+    return cfg
 
 
 def _parse(text: str) -> Optional[Tuple[dict, str]]:

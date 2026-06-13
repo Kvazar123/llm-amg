@@ -95,10 +95,13 @@ retrieval:
   # unchanged. OPTIONAL: with no backend installed, retrieval stays pure-BM25.
   #   pip install model2vec            (light, CPU, recommended)  -- or --
   #   pip install sentence-transformers (heavier, needs torch)
+  # For a non-English working_language the default model is MULTILINGUAL (model2vec:
+  # potion-multilingual-128M; sentence-transformers: paraphrase-multilingual-MiniLM-
+  # L12-v2), so an English query lights up Russian summaries by meaning.
   embeddings:
     enabled: off        # auto = use if a backend is installed | on | off
     backend: auto       # auto | model2vec | sentence-transformers
-    model: ""           # "" = backend default
+    model: ""           # "" = per-backend default (multilingual when working_language != en)
     blend: 0.5          # 0 = pure BM25 .. 1 = pure semantic
 
 # -----------------------------------------------------------------------------

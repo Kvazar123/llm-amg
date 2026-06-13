@@ -15,6 +15,8 @@ Checks:
   3. cache    : node embeddings are cached and recomputed only when a node's text
                 changes (hash-gated), not on every query.
   4. gate     : embeddings.enabled = off is respected even when a backend is loadable.
+  5. multiling: a non-English working_language defaults to the multilingual model.
+  6. off-vs-on: eval_retrieval.run threads the cfg; cross-language recall lifts on->1.
 
 Run:  python selftest_embed.py
 """
@@ -92,6 +94,76 @@ def recall_at_gold(root: Path) -> float:
     return 1.0 if GOLD in top else 0.0
 
 
+def test_multilingual_default() -> None:
+    """get_embedder picks the multilingual default for a non-English working_language,
+    the English default for English, and an explicit model always wins."""
+    picked = {}
+
+    class RecModel:
+        name = "rec"
+        def __init__(self, model): picked["model"] = model
+        def encode(self, texts): return [[1.0, 0.0] for _ in texts]
+
+    saved = embed._BACKENDS.copy()
+    embed._BACKENDS["model2vec"] = RecModel
+    try:
+        embed.get_embedder({"embeddings": {"enabled": "on", "backend": "model2vec"},
+                            "working_language": "en"})
+        assert picked["model"] == embed._DEFAULT_MODEL["model2vec"], picked
+        embed.get_embedder({"embeddings": {"enabled": "on", "backend": "model2vec"},
+                            "working_language": "ru"})
+        assert picked["model"] == embed._DEFAULT_MODEL_MULTILINGUAL["model2vec"], picked
+        embed.get_embedder({"embeddings": {"enabled": "on", "backend": "model2vec",
+                                           "model": "custom/x"}, "working_language": "ru"})
+        assert picked["model"] == "custom/x", picked
+    finally:
+        embed._BACKENDS.clear(); embed._BACKENDS.update(saved)
+    print("PASS  multilingual default: ru->multilingual, en->english, explicit model wins")
+
+
+def test_eval_compare_offon() -> None:
+    """eval_retrieval.run threads the cfg's embeddings setting: an EN query over a RU
+    summary is missed off and recovered on — the off-vs-on harness (tasks 5/8)."""
+    import eval_retrieval as EV
+    root = Path(tempfile.mkdtemp(prefix="amg-xlang-"))
+    saved = embed._BACKENDS.copy()
+    try:
+        (root / "nodes" / "code").mkdir(parents=True)
+        (root / "config.yml").write_text("active: true\nworking_language: ru\n", encoding="utf-8")
+        for nid, summ in (("code:src/g.py::gw", "Списание средств во внешний платёжный шлюз"),
+                          ("code:src/u.py::u", "External helper utility for logging output")):
+            meta = {"id": nid, "type": "function", "summary": summ, "status": "active",
+                    "edges": [], "part_of": []}
+            slug = nid.split(":", 1)[-1].replace("/", "_").replace("::", "__")
+            (root / "nodes" / "code" / f"{slug}.md").write_text(
+                "---\n" + yaml.safe_dump(meta, allow_unicode=True, sort_keys=False) + "---\n",
+                encoding="utf-8")
+        cases = [{"id": "x", "query": "charge the external payment gateway",
+                  "gold_ids": ["code:src/g.py::gw"]}]
+
+        class GatewayStub:                 # bridges EN<->RU on the gateway/charge concept
+            name = "gw"
+            CONCEPT = re.compile(r"gateway|шлюз|charge|списан|payment|плат")
+            def __init__(self, model=None): pass
+            def encode(self, texts):
+                return [[1.0, 0.0] if self.CONCEPT.search(t.lower()) else [0.0, 1.0]
+                        for t in texts]
+        embed._BACKENDS["model2vec"] = GatewayStub
+
+        base = R.load_config(root)
+        off = {**base, "embeddings": {**(base.get("embeddings") or {}), "enabled": "off"}}
+        on = {**base, "embeddings": {**(base.get("embeddings") or {}), "enabled": "on",
+                                     "backend": "model2vec", "blend": 0.9}}
+        r_off = EV.run(root, cases, off)["aggregate"]["amg"]["recall"]
+        r_on = EV.run(root, cases, on)["aggregate"]["amg"]["recall"]
+        assert r_off == 0.0, f"EN query must miss the RU gold without embeddings, got {r_off}"
+        assert r_on == 1.0, f"multilingual seed must recover the RU gold, got {r_on}"
+        print(f"PASS  eval off-vs-on: cross-language recall {r_off:.0f} -> {r_on:.0f}")
+    finally:
+        embed._BACKENDS.clear(); embed._BACKENDS.update(saved)
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def main() -> int:
     root = build_store()
     orig = embed.get_embedder
@@ -138,6 +210,9 @@ def main() -> int:
         finally:
             embed._BACKENDS.clear(); embed._BACKENDS.update(saved)
         print("PASS  gate: enabled=off disables embeddings; auto uses an installed backend")
+
+        test_multilingual_default()
+        test_eval_compare_offon()
 
         print("\nALL EMBEDDING-SEEDING CHECKS PASSED")
     finally:

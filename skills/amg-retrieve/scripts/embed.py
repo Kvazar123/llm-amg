@@ -45,6 +45,14 @@ _DEFAULT_MODEL = {
     "model2vec": "minishlab/potion-base-8M",
     "sentence-transformers": "sentence-transformers/all-MiniLM-L6-v2",
 }
+# For a non-English working_language, default to a MULTILINGUAL model per backend so
+# cross-language seeding (e.g. an English query over Russian summaries) works without
+# the user naming a model. If the model can't load (offline / not cached), get_embedder
+# falls through to the next backend and finally to None (pure BM25) — no hard failure.
+_DEFAULT_MODEL_MULTILINGUAL = {
+    "model2vec": "minishlab/potion-multilingual-128M",
+    "sentence-transformers": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+}
 
 
 def _unit(vec: List[float]) -> List[float]:
@@ -91,7 +99,9 @@ _ORDER = ["model2vec", "sentence-transformers"]
 def get_embedder(cfg: dict):
     """Return an embedder (object with .encode(list[str]) -> list[list[float]]),
     or None if embeddings are disabled or no backend is installed/loadable.
-    `cfg` is the retrieval config; reads cfg['embeddings'] = {enabled, backend, model}."""
+    `cfg` is the retrieval config; reads cfg['embeddings'] = {enabled, backend, model}
+    and cfg['working_language'] — a non-English project defaults to a multilingual
+    model per backend, so cross-language seeding works without naming a model."""
     emb = (cfg or {}).get("embeddings") or {}
     enabled = emb.get("enabled", "auto")
     # YAML parses bare `off`/`on` as booleans, not strings, so accept both forms.
@@ -100,12 +110,14 @@ def get_embedder(cfg: dict):
     want = str(emb.get("backend", "auto")).lower()
     order = _ORDER if want in ("auto", "", None) else [want]
     model_override = emb.get("model") or ""
+    lang = str((cfg or {}).get("working_language") or "en").strip().lower()
+    defaults = _DEFAULT_MODEL if lang.startswith("en") else _DEFAULT_MODEL_MULTILINGUAL
     for backend in order:
         cls = _BACKENDS.get(backend)
         if cls is None:
             continue
         try:
-            return cls(model_override or _DEFAULT_MODEL[backend])
+            return cls(model_override or defaults[backend])
         except Exception:
             continue                       # not installed, or model unavailable offline
     return None

@@ -143,9 +143,9 @@ def test_apply_and_recall(proj):
          "archive_ids": ["notes:ep/1", "notes:ep/2", "notes:ep/3"]},
         {"action": "introduce_subhub", "hub_id": "hub:misc", "summary": "misc notes",
          "member_ids": ["notes:tmp/dup-a"]},
-        {"action": "shorten", "id": "docs:doc/faq.md::payments",
+        {"action": "shorten", "id": "doc:doc/faq.md::payments",
          "summary": "FAQ (condensed)", "body": "See support docs."},
-        {"action": "retire", "id": "docs:doc/refunds.md::overview"},
+        {"action": "retire", "id": "doc:doc/refunds.md::overview"},
     ]
     (amg / "work").mkdir(exist_ok=True)
     (amg / "work" / "actions.json").write_text(json.dumps(actions))
@@ -153,7 +153,7 @@ def test_apply_and_recall(proj):
 
     nodes = C.load_nodes(store)
     # archived + removed
-    assert "notes:tmp/dup-b" not in nodes and "docs:doc/refunds.md::overview" not in nodes
+    assert "notes:tmp/dup-b" not in nodes and "doc:doc/refunds.md::overview" not in nodes
     assert all(f"notes:ep/{i}" not in nodes for i in (1, 2, 3))
     arch = {p.name for p in (store.root / "archive").iterdir()}
     assert any("dup-b" in a for a in arch) and any("refunds" in a for a in arch)

@@ -20,9 +20,11 @@ Usage:
   python eval_retrieval.py --make-demo /tmp/amg-demo     # build labeled graph + run
   python eval_retrieval.py --store <.../.claude/amg> --cases cases.json
   python eval_retrieval.py --store <...> --cases cases.json --out results.json
+  python eval_retrieval.py --compare-embeddings /tmp/amg-xlang   # off vs on (xlang demo)
+  python eval_retrieval.py --compare-embeddings --store <...> --cases cases.json
 
 cases.json format:
-  [ {"id": "...", "query": "...", "gold_ids": ["code:...", "docs:..."], "note": "..."} ]
+  [ {"id": "...", "query": "...", "gold_ids": ["code:...", "doc:..."], "note": "..."} ]
 """
 from __future__ import annotations
 
@@ -93,8 +95,8 @@ def evaluate_case(store_root: Path, case: dict, cfg: dict) -> dict:
     }
 
 
-def run(store_root: Path, cases: List[dict]) -> dict:
-    cfg = R.load_config(store_root)
+def run(store_root: Path, cases: List[dict], cfg: dict = None) -> dict:
+    cfg = cfg or R.load_config(store_root)
     rows = [evaluate_case(store_root, c, cfg) for c in cases]
 
     def mean(getter, where=lambda r: True):
@@ -145,9 +147,9 @@ def print_report(report: dict) -> None:
 # --------------------------------------------------------------------------- #
 
 def _node(nid, typ, summary, body="", edges=None, part_of=None,
-          source_path=None, lineno=None) -> str:
+          source_path=None, lineno=None, status="active") -> str:
     meta = {"id": nid, "type": typ, "summary": summary,
-            "edges": edges or [], "part_of": part_of or [], "status": "active"}
+            "edges": edges or [], "part_of": part_of or [], "status": status}
     if source_path:
         meta["source_path"] = source_path
         meta["lineno"] = lineno or 1
@@ -155,14 +157,20 @@ def _node(nid, typ, summary, body="", edges=None, part_of=None,
     return f"---\n{fm}\n---\n{body}".rstrip() + "\n"
 
 
-def build_demo_store(root: Path) -> List[dict]:
+def build_demo_store(root: Path, xlang: bool = False) -> List[dict]:
     """A two-subsystem graph designed so two billing gold nodes are reachable
     ONLY via edges (no lexical overlap with the query) — a clean multi-hop test.
-    The auth subsystem is a distractor that must NOT be retrieved (precision)."""
+    The auth subsystem is a distractor that must NOT be retrieved (precision). A
+    superseded older policy exercises the status prior, and (when xlang=True) an
+    isolated Russian-summary node reachable from an English query only by meaning
+    exercises the embeddings off-vs-on comparison."""
     nd = root / "nodes"
-    for sub in ("code", "docs", "notes", "_hubs"):
+    for sub in ("code", "doc", "notes", "_hubs"):
         (nd / sub).mkdir(parents=True, exist_ok=True)
-    (root / "config.yml").write_text("active: true\nretrieval: {}\n")
+    # embeddings off by default so --make-demo is deterministic and offline; the
+    # --compare-embeddings mode flips this on via a cfg override at run time.
+    (root / "config.yml").write_text(
+        "active: true\nworking_language: ru\nretrieval:\n  embeddings:\n    enabled: off\n")
 
     def w(rel_dir, fname, text):
         (nd / rel_dir / fname).write_text(text, encoding="utf-8")
@@ -190,30 +198,39 @@ def build_demo_store(root: Path) -> List[dict]:
         "Aggregates line items into the amount owed.",
         source_path="src/billing.py", lineno=40,
         part_of=[{"topic": "hub:billing", "w": 1.0}]))
-    w("docs", "billing_doc.md", _node(
-        "docs:doc/billing.md::overview", "section",
+    w("doc", "billing_doc.md", _node(
+        "doc:doc/billing.md::overview", "section",
         "How billing charges customers and handles declined cards.",
         body="Charging flow and what happens when a card is declined.",
         edges=[{"rel": "documents", "to": "code:src/billing.py", "w": 0.9},
                {"rel": "relates_to", "to": "notes:decisions/retry-policy", "w": 0.7}]))
-    # multi-hop gold #2: a decision note, no query words; reached via relates_to.
+    # multi-hop gold #2: a decision, no query words; reached via relates_to.
     w("notes", "retry_policy.md", _node(
-        "notes:decisions/retry-policy", "section",
-        "Transient failures are re-attempted three times with backoff before surfacing an error.",
-        body="Decision: wrap the gateway call in a 3x retry with exponential backoff."))
+        "notes:decisions/retry-policy", "decision",
+        "Retry policy: three attempts with exponential backoff before surfacing an error.",
+        body="Decision: wrap the gateway call in a 3x retry with exponential backoff.",
+        edges=[{"rel": "supersedes", "to": "notes:decisions/retry-policy-v1", "w": 0.9}]))
+    # superseded near-duplicate, deliberately the STRONGER lexical match for the
+    # 'failed charge' query: a naive lexical ranker picks it; only the status prior
+    # (x0.2) keeps the active decision above it. This is what makes the case sharp.
+    w("notes", "retry_policy_v1.md", _node(
+        "notes:decisions/retry-policy-v1", "decision",
+        "Retry policy for a failed charge: re-attempt the failed charge twice with "
+        "backoff, then surface the error.",
+        body="Superseded: two retries, no backoff.", status="superseded"))
 
     # --- lexical distractors: match the query's words but are NOT connected to the
     # charge flow and are NOT gold. A pure lexical/RAG ranker is fooled by these and
     # spends its budget on them, pushing the true multi-hop nodes out of top-K.
-    w("docs", "refunds_doc.md", _node(
-        "docs:doc/refunds.md::overview", "section",
+    w("doc", "refunds_doc.md", _node(
+        "doc:doc/refunds.md::overview", "section",
         "Refunding a customer's card payment after a declined charge dispute."))
     w("code", "card_validator.md", _node(
         "code:src/payments/validate.py::check_card", "function",
         "Validates a customer's card number and payment details before checkout.",
         source_path="src/payments/validate.py", lineno=5))
-    w("docs", "payments_faq.md", _node(
-        "docs:doc/faq.md::payments", "section",
+    w("doc", "payments_faq.md", _node(
+        "doc:doc/faq.md::payments", "section",
         "Customer FAQ about declined cards, card payments, and what to do."))
 
     # --- auth subsystem (distractor, must stay out of the pack) ---
@@ -226,8 +243,8 @@ def build_demo_store(root: Path) -> List[dict]:
     w("code", "login.md", _node(
         "code:src/auth.py::login", "function", "Authenticates a user via password.",
         source_path="src/auth.py", lineno=10, part_of=[{"topic": "hub:auth", "w": 1.0}]))
-    w("docs", "auth_doc.md", _node(
-        "docs:doc/auth.md::overview", "section", "User authentication and session lifetime.",
+    w("doc", "auth_doc.md", _node(
+        "doc:doc/auth.md::overview", "section", "User authentication and session lifetime.",
         edges=[{"rel": "documents", "to": "code:src/auth.py", "w": 0.9}]))
 
     cases = [{
@@ -237,13 +254,34 @@ def build_demo_store(root: Path) -> List[dict]:
             "hub:billing",
             "code:src/billing.py",
             "code:src/billing.py::charge_card",
-            "docs:doc/billing.md::overview",
+            "doc:doc/billing.md::overview",
             "notes:decisions/retry-policy",        # multi-hop (via relates_to)
             "code:src/billing.py::compute_total",  # multi-hop (via calls)
         ],
         "note": "2 gold nodes share no words with the query (reached only via edges); "
                 "3 disconnected distractors share words but are not gold.",
+    }, {
+        "id": "retry-policy-current",
+        "query": "retry policy for a failed charge with backoff",
+        "gold_ids": ["notes:decisions/retry-policy"],
+        "note": "retry-policy-v1 is a SUPERSEDED near-duplicate and the STRONGER lexical "
+                "match; lexical top-1 picks it, only the status prior keeps the active "
+                "decision on top (AMG recall 1 vs lexical 0).",
     }]
+    if xlang:
+        # English query, Russian summary, zero lexical overlap, and isolated (no edges)
+        # so it activates ONLY via the seed: missed with BM25, found with a multilingual
+        # embedding. Reached only when embeddings are on -> the off-vs-on comparison.
+        w("code", "gateway_ru.md", _node(
+            "code:src/billing.py::call_gateway", "function",
+            "Отправляет запрос на списание средств во внешний платёжный шлюз и разбирает ответ."))
+        cases.append({
+            "id": "xlang-gateway",
+            "query": "send the charge request to the external payment gateway",
+            "gold_ids": ["code:src/billing.py::call_gateway"],
+            "note": "EN query over a RU summary, no shared words — recovered only with a "
+                    "multilingual embedding seed (run --compare-embeddings).",
+        })
     (root / "cases.json").write_text(json.dumps(cases, indent=2))
     return cases
 
@@ -258,9 +296,29 @@ def main(argv: List[str]) -> int:
         root = Path(args[args.index("--make-demo") + 1]).resolve()
         root.mkdir(parents=True, exist_ok=True)
         cases = build_demo_store(root)
-        print(f"built demo graph at {root}  ({len(cases)} case)\n")
+        print(f"built demo graph at {root}  ({len(cases)} cases)\n")
         report = run(root, cases)
         print_report(report)
+        return 0
+
+    if "--compare-embeddings" in args:
+        # Size the embedding uplift: run the cases with embeddings OFF then ON.
+        if "--store" in args and "--cases" in args:
+            store = Path(args[args.index("--store") + 1]).resolve()
+            cases = json.loads(Path(args[args.index("--cases") + 1]).read_text(encoding="utf-8"))
+        else:
+            j = args.index("--compare-embeddings")
+            path = args[j + 1] if j + 1 < len(args) and not args[j + 1].startswith("-") else None
+            store = Path(path).resolve() if path else Path(tempfile.mkdtemp(prefix="amg-xlang-"))
+            store.mkdir(parents=True, exist_ok=True)
+            cases = build_demo_store(store, xlang=True)
+            print(f"built xlang demo graph at {store}\n")
+        base = R.load_config(store)
+        for label, enabled in (("OFF", "off"), ("ON", "on")):
+            cfg = {**base, "embeddings": {**(base.get("embeddings") or {}), "enabled": enabled}}
+            print(f"=== embeddings {label} ===")
+            print_report(run(store, cases, cfg))
+            print()
         return 0
 
     if "--store" not in args or "--cases" not in args:

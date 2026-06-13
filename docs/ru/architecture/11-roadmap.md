@@ -784,6 +784,7 @@ README.md - английская версия, ссылается на еще о
    - template `config.yml`;
    - `INSTALL.md`;
    - `GUIDE.md`.
+   (Этап 2, задача 5) дефолт модели теперь **зависит от `working_language`**: `en` → `_DEFAULT_MODEL` (potion-base-8M / all-MiniLM-L6-v2), иначе → `_DEFAULT_MODEL_MULTILINGUAL` (potion-multilingual-128M / paraphrase-multilingual-MiniLM-L12-v2). Описать это в 09-config (блок `retrieval.embeddings`), 06-retrieval (раздел эмбеддингов) и в INSTALL/GUIDE; `config.yml` уже снабжён комментарием.
 2. Уточнить, что `models` пока declarative/planned, если нет механизма проброса.
 3. `compaction.enabled` описывать как рабочий переключатель только после реализации.
 4. Разделить:
@@ -1366,16 +1367,18 @@ amg/                 # НЕ в репозитории: данные локаль
    Решение: `decision`/`adr` → **strategic** (§9: высшая значимость, `protect_types`). **Расширение задачи:** тело `decision`/`adr` разворачивается в пакете **независимо от яруса** (`DOC_BODY_TYPES` в `_render`) — их payload в мотивировке, в отличие от хаба. Регрессия — `selftest_retrieve.py`. Сверка 06 — на закрытии (2.7.2).
 3. Согласовать `relation_priors` между `retrieve.py`, `config.yml`, `THEORY.md`, `09-config.md`. — **код/конфиг выполнено**, сверка THEORY/09-config — на закрытии. Корень рассогласования снят: `retrieve.load_config` теперь сливает конфиг **по-ключево** (`_deep_merge`), поэтому неполный `relation_priors` не теряет умолчания (раньше блок заменялся целиком — 09-config стр. 9 и 06-retrieval стр. 83 это утверждают и подлежат правке на закрытии). `config.yml` дополнен недостающими типами.
 4. Добавить `refines`, `exemplifies`, `supersedes` в справочник или убрать из defaults. — **код/конфиг выполнено** (оставлены все три). `refines` эмитит `amg-builder`, `supersedes` — `amg-synth`; `exemplifies` сделан реальным — добавлен в меню рёбер `amg-builder`. **β `supersedes` 0.5 → 0.3** (паритет с `contradicts`: ведут к снятому/конфликтному узлу, проводят слабо; статусный множитель — основной предохранитель). Внесены в `config.yml`; THEORY §4 / 09-config — на закрытии (2.1.4, 2.10).
-5. Проверить multilingual embeddings:
+5. Проверить multilingual embeddings: — **выполнено**.
    - `model2vec` для лёгкого режима;
    - `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` для русскоязычных проектов;
    - eval `embeddings.enabled: off` против `on`.
-6. Исправить demo ids `docs:` → `doc:`, если это не ломает tests.
-7. Расширить eval cases:
+   Подтверждено: дефолтная `model2vec` (`potion-base-8M`) **англоязычна** (sim(routing,роутинг) = −0.056), поэтому `embed.get_embedder` теперь выбирает **мультиязычный** дефолт при `working_language != en` (`_DEFAULT_MODEL_MULTILINGUAL`: model2vec `potion-multilingual-128M`, st `paraphrase-multilingual-MiniLM-L12-v2`); `working_language` проброшен через `retrieve.load_config`. Мягкий откат при недоступности модели сохранён. off-vs-on — режим `eval_retrieval.py --compare-embeddings`. Регрессия (стабом, без скачивания): `selftest_embed.py` (`test_multilingual_default`, `test_eval_compare_offon`). Сверка 09/06/INSTALL/GUIDE дефолтов — на закрытии (2.10.1).
+6. Исправить demo ids `docs:` → `doc:`, если это не ломает tests. — **выполнено**. `eval_retrieval.build_demo_store`: id `docs:`→`doc:`, бакет `docs/`→`doc/`. Дочерний эффект: `selftest_consolidate.py` хардкодил старые id в действиях shorten/retire — синхронизирован.
+7. Расширить eval cases: — **выполнено**.
    - stale/superseded task;
    - cross-language semantic task;
    - multi-hop task.
-8. Настроить retrieval по eval, а не вручную.
+   В демо: кейс `retry-policy-current` — superseded near-duplicate сделан **сильнее по лексике**, так что статусный prior решает (AMG recall 1.00 vs лексика 0.00); кейс `xlang-gateway` (только при `--compare-embeddings`) — EN-запрос над RU-сводкой, изолированный узел, находится лишь мультиязычным эмбеддингом; multi-hop кейс сохранён. `stale` покрыт пометкой пакета (задача 1) и `selftest_retrieve`.
+8. Настроить retrieval по eval, а не вручную. — **выполнено**. Режим `--compare-embeddings` измеряет вклад эмбеддингов числом (off vs on); на демо умолчания eval-обоснованы (recall не деградирует, hop-recall 1.00). Практика «крутить по числам, не на глаз» закреплена в `SKILL.md`; ручных правок коэффициентов под демо не потребовалось.
 9. Добавить режим `--explain` в `retrieve.py`: для верхних узлов показать 2–3 ребра с наибольшим вкладом перетёкшей массы — закрывает переобещание объяснимости в THEORY (§14.2) и упрощает разметку `cases.json`. — **выполнено**. `retrieve(explain=N)` + флаг CLI `--explain`: декомпозиция притока на **сыром** PPR (до статусного множителя) — `inflow(u→v)=d·π[u]·c(u,v)/outsum[u]`, метка ребра восстанавливается из `edges`/`part_of` (`_explain_inflow`, `_edge_label`). Регрессия — `selftest_retrieve.py` (`test_explain`). Сверка §14.2 (переобещание снимается — формулировка остаётся, став истинной) — на закрытии (2.1.7).
 10. Лёгкое правило верификации перед ответом (поведенческое, в скилле `amg-retrieve`): любое утверждение о коде, взятое из памяти, перед ответом подтверждается существованием файла, совпадением `source_hash` или grep'ом символа. Это дешёвый предшественник полного слоя verification (Этап 13): уверенно-ложная память опаснее отсутствующей. — **выполнено** (промпты). Раздел «Verify a code claim before you answer» в `skills/amg-retrieve/SKILL.md` (поведение потребителя пакета: путь резолвится → grep символа → при `⟨stale⟩` перечитать источник, источник побеждает сводку); `agents/amg-retriever.md` — пометка stale-указателей в брифе. Опирается на `_STALE_MARK` из задачи 1.
 11. Починить `inspect_graph.py --bucket notes` (см. 1.26). — **выполнено**. Фильтр идёт по реальному каталогу файла узла: `retrieve.load_nodes` теперь отдаёт `_path` (`nodes/<бакет>/…`), а `inspect_graph._in_bucket` сверяет бакет по нему (работает для `notes`/`_hubs`, у которых нет id-префикса). Регрессия — `selftest_retrieve.py`.
