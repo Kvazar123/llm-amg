@@ -29,6 +29,14 @@ def _arg(flag: str, default=None):
     return sys.argv[sys.argv.index(flag) + 1] if flag in sys.argv else default
 
 
+def _in_bucket(node: dict, bucket: str) -> bool:
+    """True if the node's file lives in nodes/<bucket>/. Filters by the REAL on-disk
+    bucket directory (code / doc / data / notes / _hubs) taken from the node's path,
+    not a guessed id prefix — so notes/_hubs (which have no id-prefix) also match."""
+    parts = (node.get("_path") or "").split("/")     # nodes/<bucket>/<file>.md
+    return len(parts) > 1 and parts[1] == bucket
+
+
 def main() -> int:
     store = Path(_arg("--store", R._default_store()))
     grep = (_arg("--grep") or "").lower()
@@ -42,11 +50,8 @@ def main() -> int:
     rows = []
     for nid in sorted(nodes):
         n = nodes[nid]
-        if bucket and not nid.startswith(bucket.rstrip("s") + ":") \
-                and f"/{bucket}/" not in (n.get("source_path") or ""):
-            # match by id prefix (code:/doc:/data:) or, for notes/_hubs, by type
-            if not (bucket in ("notes", "_hubs") and n.get("type") in ("hub", "overview", "note")):
-                continue
+        if bucket and not _in_bucket(n, bucket):
+            continue
         summary = (n.get("summary") or "").replace("\n", " ").strip()
         if grep and grep not in nid.lower() and grep not in summary.lower():
             continue

@@ -79,8 +79,17 @@ retrieval:
     defines: 0.7
     part_of: 0.7
     imports: 0.6
+    refines: 0.6                  # a sharpening/refinement link (builder)
+    exemplifies: 0.6              # an example-of link: concrete -> concept (builder)
     relates_to: 0.5
+    supersedes: 0.3              # like contradicts: links a retired claim; conducts weakly
     contradicts: 0.3
+  # Per-status multiplier on the FINAL activation (re-ranks by node validity).
+  # Merged key-by-key over the built-ins, so listing a subset is safe.
+  status_prior:
+    active: 1.0
+    stale: 1.0                    # not penalized — flagged in the pack instead
+    superseded: 0.2               # a retired claim must not compete as an active fact
   # Optional semantic seed enrichment (Stage 1.5). Improves recall on paraphrased
   # queries by blending embedding similarity into the seed; the PPR spread is
   # unchanged. OPTIONAL: with no backend installed, retrieval stays pure-BM25.

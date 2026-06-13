@@ -228,6 +228,8 @@ if n.get("type") in protect_types:
 
 ### 1.12. `status: superseded` должен влиять на retrieval
 
+> Реализовано на Этапе 2 (задача 1): `retrieve._apply_status_prior` — множитель на финальной активации (`superseded` 0.2, `stale` 1.0 + пометка `_STALE_MARK`); ключ `status_prior`. Сворачивание и сверка 02/THEORY/06 — на закрытии этапа.
+
 **Файлы:**
 
 - `docs/ru/architecture/02-data-model.md`
@@ -538,6 +540,8 @@ mn["part_of"] = [{"topic": hub_id, "w": 1.0}]
 
 ### 1.26. `inspect_graph.py --bucket notes` не работает
 
+> Реализовано на Этапе 2 (задача 11): фильтр по реальному каталогу узла через `_path` из `load_nodes` (`_in_bucket`). Сворачивание и сверка GUIDE/10-eval-tools — на закрытии этапа.
+
 **Файлы:**
 
 - `inspect_graph.py`
@@ -634,7 +638,7 @@ README.md - английская версия, ссылается на еще о
 1. **Разрешение противоречий.** Сейчас теория описывает `contradicts` / `supersedes` / `status` как почти готовый цикл. Закрывается на Этапах 13–14: сверить описание с реализованными provenance/verification и арбитражем; до того текст остаётся опережающим (текущий минимум в коде — рёбра и статусы существуют).
 2. **Лог решений памяти.** Утверждение, что каждое решение памяти логируется с оценкой и причиной, оставить только после реализации такого журнала. Пока это planned.
 3. **`absorb`.** Описать как «переживает удаление источника», а не как строго one-shot.
-4. **Типы рёбер.** Добавить `refines`, `exemplifies`, `supersedes`, если они остаются в `retrieve.py`.
+4. **Типы рёбер.** Добавить `refines`, `exemplifies`, `supersedes`, если они остаются в `retrieve.py`. — (Этап 2, задача 4) остаются все три: β `refines` 0.6, `exemplifies` 0.6, `supersedes` **0.3** (понижен с 0.5 до паритета с `contradicts`). `refines` эмитит `amg-builder`, `supersedes` — `amg-synth`, `exemplifies` добавлен в меню `amg-builder`. Список §4 пополнить этими тремя при сверке на закрытии.
 5. **Веса.** Заменить конфликтующую формулировку «веса не выучиваются» на:
    > веса не обучаются градиентным спуском; они обновляются эвристическими правилами Хебба, затухания и суждением модели.
 6. **Термины.** Убрать кальки и неуместные англицизмы:
@@ -728,12 +732,12 @@ README.md - английская версия, ссылается на еще о
 
 Нужно исправить:
 
-1. Добавить влияние `status` на retrieval после реализации.
-2. Описать tier mapping полностью:
+1. Добавить влияние `status` на retrieval после реализации. — (Этап 2, задача 1) реализовано: `status_prior` — множитель на финальной активации (`active`/`stale` 1.0, `superseded` 0.2, `disputed` 0.5 forward); `stale` не штрафуется, а помечается в пакете (`_STALE_MARK`). Описать раздел «Сборка пакета» + ключ `status_prior` в таблице ключей.
+2. Описать tier mapping полностью: — (Этап 2, задача 2) добавить `decision`/`adr` → strategic; уточнить, что тело `decision`/`adr` рендерится **в любом ярусе** (authored rulings), а не только в operational.
    - `hub` / `overview` → strategic;
    - `module` / `class` / `package` → tactical;
    - остальные → operational по умолчанию.
-3. Добавить relation priors для:
+3. Добавить relation priors для: — (Этап 2, задача 4) внесены в `config.yml`/`DEFAULTS`: `refines` 0.6, `exemplifies` 0.6, `supersedes` 0.3. Также: формулировку «для token_budget и embeddings — по-ключево, остальное заменяется целиком» (стр. ~83) поправить — слияние теперь **по-ключево целиком** (`_deep_merge`).
    - `refines`;
    - `exemplifies`;
    - `supersedes`.
@@ -785,6 +789,7 @@ README.md - английская версия, ссылается на еще о
 4. Разделить:
    - built-in fallback defaults;
    - template defaults из `config.yml`.
+   (Этап 2) к рассогласованию `token_budget` (код 1200/2500/6000/40 ≠ шаблон 4000/10000/24000/60) добавилось такое же по бюджетам веток: `consolidate.py` DEFAULTS `default_branch_budget_nodes` 150 / `default_branch_budget_tokens` 60000, а шаблон и 07/THEORY — 400 / 200000. Развести «код-fallback ≠ шаблон» и для этих ключей. Также (стр. 9): `retrieval.relation_priors` теперь сливается **по-ключево** (`_deep_merge`), а не «заменяется целиком» — переформулировать.
 5. Для `near_duplicate_sim`, `episodic_types`, `stale_age_days` либо реализовать чтение из config, либо оставить как internal defaults.
 6. Добавить planned-поля:
    - `automation`;
@@ -793,7 +798,7 @@ README.md - английская версия, ссылается на еще о
    - `absorb_freeze` или `absorb_once`, если вводится;
    - `agent_dir` / `entrypoint` (пишет installer, см. 4.9: `entrypoint` читается кодом из конфига, `agent_dir` фиксирует выбор декларативно — корень ищется по расположению самого конфига);
    - `confidence`/`verification` config, если появится.
-7. Добавить отсутствующие ключи `retrieval.convergence_tol` (1e-6) и `retrieval.seed_floor` (0.0): раздел заявляет буквальную полноту, а этих ключей в нём нет (в 06 они описаны).
+7. Добавить отсутствующие ключи `retrieval.convergence_tol` (1e-6) и `retrieval.seed_floor` (0.0): раздел заявляет буквальную полноту, а этих ключей в нём нет (в 06 они описаны). — (Этап 2) добавился новый ключ `retrieval.status_prior` (`active`/`stale` 1.0, `superseded` 0.2, `disputed` 0.5) — внести в таблицу `retrieval`; в `relation_priors` таблицы дописать `refines` 0.6, `exemplifies` 0.6, `supersedes` 0.3.
 8. `weights.default_edge_weight` — мёртвый ключ (см. 1.23): пробросить в код либо убрать из шаблона и справочника.
 
 ---
@@ -1347,18 +1352,20 @@ amg/                 # НЕ в репозитории: данные локаль
 
 Задачи:
 
-1. Ввести статусный prior (с учётом исправленного 1.12):
+1. Ввести статусный prior (с учётом исправленного 1.12): — **выполнено** (код).
    - `active` — 1.0;
    - `stale` — не штрафовать (≈1.0): это часто самые релевантные узлы; вместо штрафа — пометка «сводка устарела, открой источник» в рендере пакета;
    - `superseded` — сильное понижение (0.15–0.3);
    - planned: `disputed`.
-2. Исправить tier mapping:
+   Реализация: `retrieve._apply_status_prior` — множитель на **финальной** активации (после PPR; не гейт телепортации), значения в `DEFAULTS["status_prior"]` (`active`/`stale` 1.0, `superseded` 0.2, `disputed` 0.5 — опережающий, Этап 14) и в шаблоне `config.yml` (`retrieval.status_prior`); `_STALE_MARK` в `_render`. Регрессия — `selftest_retrieve.py`. Сверка 06/09/THEORY — на закрытии (пометки в 2.7.1, 2.10).
+2. Исправить tier mapping: — **выполнено** (код).
    - `hub`/`overview` → strategic;
    - `module`/`class`/`package` → tactical;
    - `decision`/`adr` — strategic или tactical по правилу;
    - остальные → operational.
-3. Согласовать `relation_priors` между `retrieve.py`, `config.yml`, `THEORY.md`, `09-config.md`.
-4. Добавить `refines`, `exemplifies`, `supersedes` в справочник или убрать из defaults.
+   Решение: `decision`/`adr` → **strategic** (§9: высшая значимость, `protect_types`). **Расширение задачи:** тело `decision`/`adr` разворачивается в пакете **независимо от яруса** (`DOC_BODY_TYPES` в `_render`) — их payload в мотивировке, в отличие от хаба. Регрессия — `selftest_retrieve.py`. Сверка 06 — на закрытии (2.7.2).
+3. Согласовать `relation_priors` между `retrieve.py`, `config.yml`, `THEORY.md`, `09-config.md`. — **код/конфиг выполнено**, сверка THEORY/09-config — на закрытии. Корень рассогласования снят: `retrieve.load_config` теперь сливает конфиг **по-ключево** (`_deep_merge`), поэтому неполный `relation_priors` не теряет умолчания (раньше блок заменялся целиком — 09-config стр. 9 и 06-retrieval стр. 83 это утверждают и подлежат правке на закрытии). `config.yml` дополнен недостающими типами.
+4. Добавить `refines`, `exemplifies`, `supersedes` в справочник или убрать из defaults. — **код/конфиг выполнено** (оставлены все три). `refines` эмитит `amg-builder`, `supersedes` — `amg-synth`; `exemplifies` сделан реальным — добавлен в меню рёбер `amg-builder`. **β `supersedes` 0.5 → 0.3** (паритет с `contradicts`: ведут к снятому/конфликтному узлу, проводят слабо; статусный множитель — основной предохранитель). Внесены в `config.yml`; THEORY §4 / 09-config — на закрытии (2.1.4, 2.10).
 5. Проверить multilingual embeddings:
    - `model2vec` для лёгкого режима;
    - `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` для русскоязычных проектов;
@@ -1371,7 +1378,7 @@ amg/                 # НЕ в репозитории: данные локаль
 8. Настроить retrieval по eval, а не вручную.
 9. Добавить режим `--explain` в `retrieve.py`: для верхних узлов показать 2–3 ребра с наибольшим вкладом перетёкшей массы — закрывает переобещание объяснимости в THEORY (§14.2) и упрощает разметку `cases.json`.
 10. Лёгкое правило верификации перед ответом (поведенческое, в скилле `amg-retrieve`): любое утверждение о коде, взятое из памяти, перед ответом подтверждается существованием файла, совпадением `source_hash` или grep'ом символа. Это дешёвый предшественник полного слоя verification (Этап 13): уверенно-ложная память опаснее отсутствующей.
-11. Починить `inspect_graph.py --bucket notes` (см. 1.26).
+11. Починить `inspect_graph.py --bucket notes` (см. 1.26). — **выполнено**. Фильтр идёт по реальному каталогу файла узла: `retrieve.load_nodes` теперь отдаёт `_path` (`nodes/<бакет>/…`), а `inspect_graph._in_bucket` сверяет бакет по нему (работает для `notes`/`_hubs`, у которых нет id-префикса). Регрессия — `selftest_retrieve.py`.
 
 Definition of done:
 
@@ -1896,9 +1903,10 @@ Definition of done:
    - `disputed`;
    - `rejected`.
 6. Retrieval:
-   - `superseded` понижается;
-   - `disputed` surfaced как конфликт;
-   - query «покажи противоречия» активирует conflict subgraph.
+   - `superseded` понижается (статусный множитель Этапа 2 уже это делает);
+   - `disputed` surfaced как конфликт (значение `status_prior.disputed` уже заведено);
+   - query «покажи противоречия» активирует conflict subgraph;
+   - запросы про историю/аудит/противоречия должны **снимать** понижение `superseded` (surfaced по намерению запроса) — исключение из статусного множителя Этапа 2 (см. 1.12); требует детекции намерения запроса.
 7. Audit log:
    - что решено;
    - почему;

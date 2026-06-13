@@ -37,7 +37,9 @@ For each unit:
 3. Propose **edges** you can justify from what you read:
    - `calls` / `depends_on` — to other code units this one uses (use the `code:<path>::<qual>` id form).
    - `documents` — on doc units, pointing to the code/data id they describe.
-   - `refines` / `relates_to` — softer conceptual links.
+   - `refines` / `exemplifies` / `relates_to` — softer conceptual links (`refines`
+     sharpens another claim; `exemplifies` points from a concrete case to the
+     concept it illustrates).
    - `contradicts` — only if you see a real conflict; note it, low weight.
    Give each edge a weight in (0,1]: strong/direct ~0.8–1.0, incidental ~0.3–0.5.
    Only assert edges whose target id plausibly exists; do not invent targets.

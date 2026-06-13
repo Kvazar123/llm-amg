@@ -81,9 +81,15 @@ DEFAULTS = {
         "documents": 0.9, "specifies": 0.9, "implements": 0.9,
         "calls": 0.8, "depends_on": 0.8, "defines": 0.7, "part_of": 0.7,
         "imports": 0.6, "refines": 0.6, "exemplifies": 0.6, "relates_to": 0.5,
-        "supersedes": 0.5, "contradicts": 0.3,
+        "supersedes": 0.3, "contradicts": 0.3,
     },
     "relation_prior_default": 0.5,
+    # Per-status activation prior, applied AFTER PPR (re-ranking by node validity,
+    # NOT a teleport gate). stale is NOT penalized — a just-changed node is often the
+    # hottest; it is flagged in the pack instead. superseded is pushed down so a
+    # retired claim never competes as an active fact. disputed is forward-looking
+    # (Stage 14 arbitration): kept here so the knob is ready when the status exists.
+    "status_prior": {"active": 1.0, "stale": 1.0, "superseded": 0.2, "disputed": 0.5},
     # Optional semantic seed enrichment (Stage 1.5). enabled: auto|on|off;
     # blend: 0=pure BM25 .. 1=pure semantic. Falls back to BM25 if no backend.
     "embeddings": {"enabled": "auto", "backend": "auto", "model": "", "blend": 0.5},
@@ -92,11 +98,17 @@ DEFAULTS = {
 # Which node types land in which abstraction tier of the pack.
 TIER_OF_TYPE = {
     "hub": "strategic", "overview": "strategic",
+    "decision": "strategic", "adr": "strategic",   # authored rulings: surface early
     "module": "tactical", "class": "tactical", "package": "tactical",
     "function": "operational", "section": "operational",
     "file": "operational", "method": "operational",
 }
 CODE_TYPES = {"module", "class", "function", "method", "file"}
+# Authored rulings carry their payload in the body (the rationale), so render it
+# inline whatever tier they land in — unlike a hub, whose body is a long overview.
+DOC_BODY_TYPES = {"decision", "adr"}
+# Appended to a stale node in the pack: its summary may lag the just-changed source.
+_STALE_MARK = "  ⟨stale: summary may lag — open the source to verify⟩"
 
 
 # --------------------------------------------------------------------------- #
@@ -108,19 +120,29 @@ def _default_store() -> Path:
     return here.parents[3] / "amg"        # .../.claude/amg
 
 
+def _deep_merge(base: dict, over: dict) -> dict:
+    """Per-key overlay: nested dicts merge key-by-key, scalars/lists replace whole.
+
+    Config must never silently drop a built-in default. An incomplete
+    `relation_priors` / `token_budget` / `status_prior` in config.yml overlays the
+    defaults instead of replacing the whole block — otherwise a prior the user did
+    not restate would fall back to relation_prior_default and quietly mis-conduct.
+    """
+    out = dict(base)
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
 def load_config(store_root: Path) -> dict:
-    cfg = dict(DEFAULTS)
     f = store_root / "config.yml"
+    user: dict = {}
     if f.exists():
         user = (yaml.safe_load(f.read_text(encoding="utf-8")) or {}).get("retrieval", {}) or {}
-        for k, v in user.items():
-            if k == "token_budget" and isinstance(v, dict):
-                cfg["token_budget"] = {**DEFAULTS["token_budget"], **v}
-            elif k == "embeddings" and isinstance(v, dict):
-                cfg["embeddings"] = {**DEFAULTS["embeddings"], **v}
-            else:
-                cfg[k] = v
-    return cfg
+    return _deep_merge(DEFAULTS, user)
 
 
 def _parse(text: str) -> Optional[Tuple[dict, str]]:
@@ -157,6 +179,7 @@ def load_nodes(store_root: Path) -> Dict[str, dict]:
             "summary": meta.get("summary", ""), "status": meta.get("status"),
             "edges": meta.get("edges") or [], "part_of": meta.get("part_of") or [],
             "body": body, "text": text, "tokens": [w.lower() for w in WORD_RE.findall(text)],
+            "_path": p.relative_to(store_root).as_posix(),   # nodes/<bucket>/<file>.md
         }
     return nodes
 
@@ -287,6 +310,23 @@ def personalized_pagerank(teleport: Dict[str, float],
 
 
 # --------------------------------------------------------------------------- #
+# Status prior (re-rank by node validity, after spreading)
+# --------------------------------------------------------------------------- #
+
+def _apply_status_prior(activation: Dict[str, float], nodes: Dict[str, dict],
+                        cfg: dict) -> Dict[str, float]:
+    """Scale final activation by a per-status prior so a superseded claim never
+    competes as an active fact. Applied AFTER PPR, so it re-ranks by node validity
+    without gating multi-hop flow (which already happened). stale stays at 1.0 — it
+    is flagged in the pack (`_STALE_MARK`), not penalized."""
+    prior = cfg.get("status_prior") or {}
+    if not prior:
+        return activation
+    return {nid: a * float(prior.get(nodes[nid].get("status") or "active", 1.0))
+            for nid, a in activation.items()}
+
+
+# --------------------------------------------------------------------------- #
 # Pack assembly (budgeted, tiered)
 # --------------------------------------------------------------------------- #
 
@@ -322,13 +362,16 @@ def assemble_pack(activation: Dict[str, float], nodes: Dict[str, dict], cfg: dic
 
 def _render(node: dict, tier: str) -> str:
     nid, summ = node["id"], (node["summary"] or "").strip()
+    mark = _STALE_MARK if node.get("status") == "stale" else ""
     if tier == "operational" and node["type"] in CODE_TYPES:
         loc = f"{node['source_path']}:{node['lineno']}" if node.get("source_path") else nid
-        return f"- `{loc}` — {nid.split('::')[-1]} — {summ}"
-    if tier == "operational":            # docs / notes: include the text we own
+        return f"- `{loc}` — {nid.split('::')[-1]} — {summ}{mark}"
+    if tier == "operational" or node["type"] in DOC_BODY_TYPES:
+        # operational docs/notes, and authored rulings in any tier: include the body
         body = node["body"].strip()
-        return f"### {nid}\n{summ}\n\n{body}" if body else f"### {nid}\n{summ}"
-    return f"- {nid} — {summ}"
+        head = f"### {nid}{mark}\n{summ}"
+        return f"{head}\n\n{body}" if body else head
+    return f"- {nid} — {summ}{mark}"
 
 
 def _render_pack(tiers, nodes, activation) -> str:
@@ -390,6 +433,7 @@ def retrieve(store_root: os.PathLike | str, query: str,
 
     adj = build_adjacency(nodes, cfg)
     activation = personalized_pagerank(teleport, adj, all_ids, cfg)
+    activation = _apply_status_prior(activation, nodes, cfg)
 
     pack, tiers = assemble_pack(activation, nodes, cfg)
     ranked = sorted(((nid, activation[nid]) for nid in all_ids),
