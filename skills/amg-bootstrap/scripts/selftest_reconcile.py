@@ -163,6 +163,12 @@ def case_derived_not_requeued(proj: Path) -> None:
 
 
 def case_pointer_drift(proj: Path) -> None:
+    # a legacy grammar kind must converge to the extraction kind on drift
+    box = graph_nodes(proj)[BOX]
+    meta = {k: v for k, v in box.items() if not k.startswith("_")}
+    meta["type"] = "class_declaration"
+    gs.atomic_write_text(proj / ".claude" / "amg" / box["_path"],
+                         RC.serialize_node(meta, ""))
     app = proj / "src" / "app.py"
     app.write_text("import os\n" + app.read_text(encoding="utf-8"), encoding="utf-8")
     s = RC.plan(proj)
@@ -174,7 +180,8 @@ def case_pointer_drift(proj: Path) -> None:
     assert n["lineno"] == 5, n["lineno"]
     assert n["status"] == "active" and n["summary"] == f"S {TOP}", \
         "drift refresh must not touch status or summary"
-    print("PASS  drift: shift without content change refreshes lineno only")
+    assert graph_nodes(proj)[BOX]["type"] == "class", "type must follow extraction"
+    print("PASS  drift: shift refreshes lineno only; type follows extraction")
 
 
 def case_changed_updates_pointer_keeps_summary(proj: Path) -> None:

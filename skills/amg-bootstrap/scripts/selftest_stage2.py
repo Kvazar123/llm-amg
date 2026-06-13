@@ -106,6 +106,21 @@ def main() -> int:
     else:
         print("SKIP  xlsx (need: pip install openpyxl)")
 
+    # ---- tree-sitter (canonical kinds for non-Python code; stage 1, task 8) --
+    if _have("tree_sitter_language_pack"):
+        p = tmp / "app.js"
+        p.write_text("function foo(a) { return bar(a); }\n"
+                     "class Baz { run() { return foo(1); } }\n", encoding="utf-8")
+        units = es._treesitter_units(p, "app.js", "absorb", "javascript")
+        assert units is not None, "javascript grammar failed to load"
+        kinds = {u["qualname"]: u["kind"] for u in units if u["qualname"]}
+        assert kinds.get("foo") == "function" and kinds.get("Baz") == "class", kinds
+        assert all(u["kind"] in ("module", "function", "class") for u in units), units
+        print("PASS  treesitter: grammar kinds canonicalized to function/class")
+        tested.append("treesitter")
+    else:
+        print("SKIP  treesitter (need: pip install tree-sitter tree-sitter-language-pack)")
+
     print(f"\nSTAGE 2 CHECKS PASSED (formats exercised: {', '.join(tested) or 'none — install libs'})")
     return 0
 

@@ -271,19 +271,33 @@ def _python_units(path: Path, rel: str, policy: str) -> List[dict]:
     return units
 
 
-# tree-sitter node-type families (vary by grammar; matched broadly)
-_TS_DEF = {"function_definition", "function_declaration", "method_definition",
-           "method_declaration", "function_item", "constructor_declaration",
-           "class_definition", "class_declaration", "class_specifier",
-           "struct_specifier", "struct_item", "impl_item", "trait_item",
-           "interface_declaration", "enum_declaration"}
+# tree-sitter node-type families (vary by grammar; matched broadly), mapped to
+# the canonical node types so non-Python code gets the same retrieval tiers and
+# path:line pointers as Python (roadmap 1.25; stage 1, task 8). Type-level
+# containers (struct/impl/trait/interface/enum) canonicalize to `class`.
+_TS_DEF = {
+    "function_definition": "function", "function_declaration": "function",
+    "method_definition": "function", "method_declaration": "function",
+    "function_item": "function", "constructor_declaration": "function",
+    "class_definition": "class", "class_declaration": "class",
+    "class_specifier": "class", "struct_specifier": "class", "struct_item": "class",
+    "impl_item": "class", "trait_item": "class",
+    "interface_declaration": "class", "enum_declaration": "class",
+}
 _TS_CALL = {"call", "call_expression", "function_call_expression",
             "method_invocation", "invocation_expression"}
 
 
 def _treesitter_units(path: Path, rel: str, policy: str, lang: str) -> Optional[List[dict]]:
     """Function/class granularity + calls via tree-sitter. Returns None to signal
-    'unavailable -> fall back to a single file unit'."""
+    'unavailable -> fall back to a single file unit'.
+
+    Two binding generations ship under the same package name: the classic pack
+    mirrors py-tree-sitter (parse(bytes); node.type/.children/.text properties;
+    start_point), the alef rewrite (>= 1.8) exposes a method-based API
+    (parse(str); node.kind()/child(i); byte offsets; start_position()). The
+    grammar node-type strings are identical, so only access is feature-detected.
+    """
     try:
         from tree_sitter_language_pack import get_parser
         parser = get_parser(lang)
@@ -291,9 +305,36 @@ def _treesitter_units(path: Path, rel: str, policy: str, lang: str) -> Optional[
         return None
     try:
         data = path.read_bytes()
-        tree = parser.parse(data)
+        try:
+            tree = parser.parse(data)
+        except TypeError:                     # alef binding wants str, not bytes
+            tree = parser.parse(data.decode("utf-8", "replace"))
     except Exception:
         return None
+
+    def _call(v):
+        return v() if callable(v) else v
+
+    def kind_of(node) -> str:
+        t = getattr(node, "type", None)
+        return t if isinstance(t, str) else _call(node.kind)
+
+    def children_of(node) -> list:
+        ch = getattr(node, "children", None)
+        if isinstance(ch, list):
+            return ch
+        return [node.child(i) for i in range(_call(node.child_count))]
+
+    def text_of(node) -> str:
+        raw = getattr(node, "text", None)
+        if isinstance(raw, bytes):
+            return raw.decode("utf-8", "replace")
+        return data[_call(node.start_byte):_call(node.end_byte)].decode("utf-8", "replace")
+
+    def line_of(node) -> int:
+        pt = _call(node.start_point if hasattr(node, "start_point")
+                   else node.start_position)
+        return (pt[0] if isinstance(pt, tuple) else _call(pt.row)) + 1
 
     text = data.decode("utf-8", "replace")
     units = [_file_unit(rel, "code", policy, text, lang)]
@@ -302,10 +343,10 @@ def _treesitter_units(path: Path, rel: str, policy: str, lang: str) -> Optional[
     def name_of(node) -> Optional[str]:
         n = node.child_by_field_name("name")
         if n is not None:
-            return n.text.decode("utf-8", "replace")
-        for c in node.children:
-            if c.type in ("name", "identifier", "type_identifier", "field_identifier"):
-                return c.text.decode("utf-8", "replace")
+            return text_of(n)
+        for c in children_of(node):
+            if kind_of(c) in ("name", "identifier", "type_identifier", "field_identifier"):
+                return text_of(c)
         return None
 
     def calls_in(node) -> List[str]:
@@ -313,30 +354,35 @@ def _treesitter_units(path: Path, rel: str, policy: str, lang: str) -> Optional[
         stack = [node]
         while stack:
             n = stack.pop()
-            if n.type in _TS_CALL:
+            ch = children_of(n)
+            if kind_of(n) in _TS_CALL:
                 f = n.child_by_field_name("function")
-                if f is None and n.children:
-                    f = n.children[0]
+                if f is None and ch:
+                    f = ch[0]
                 if f is not None:
-                    t = f.text.decode("utf-8", "replace")
+                    t = text_of(f)
                     out.append(t.replace("(", " ").split()[0].split(".")[-1].split("::")[-1])
-            stack.extend(n.children)
+            stack.extend(ch)
         return sorted({c for c in out if c.isidentifier()})
 
     def walk(node):
-        for child in node.children:
-            if child.type in _TS_DEF:
+        for child in children_of(node):
+            k = kind_of(child)
+            if k in _TS_DEF:
                 nm = name_of(child)
                 if nm:
-                    src = data[child.start_byte:child.end_byte].decode("utf-8", "replace")
+                    src = data[_call(child.start_byte):_call(child.end_byte)] \
+                        .decode("utf-8", "replace")
                     units.append({
-                        "id": f"code:{rel}::{nm}", "kind": child.type, "source_path": rel,
+                        "id": f"code:{rel}::{nm}", "kind": _TS_DEF[k],
+                        "source_path": rel,
                         "category": "code", "policy": policy, "qualname": nm,
-                        "lineno": child.start_point[0] + 1, "lang": lang,
+                        "lineno": line_of(child), "lang": lang,
                         "content_sha": _sha(src), "calls": calls_in(child)})
             walk(child)
 
-    walk(tree.root_node)
+    root = tree.root_node
+    walk(_call(root))
     return units
 
 

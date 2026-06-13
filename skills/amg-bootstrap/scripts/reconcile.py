@@ -226,15 +226,20 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
                 # must not wait for a content change — the deletion rule reads the
                 # node's policy, and a stale `mirror` there would purge knowledge
                 # the user explicitly chose to absorb.
+                # `type` is extraction-owned for mirror nodes (the changed branch
+                # already overwrites it), so a kind-canon change (e.g. tree-sitter
+                # grammar kinds -> function/class) converges without re-derivation.
                 drifted = (node.get("lineno") != unit.get("lineno")
                            or node.get("qualname") != unit.get("qualname", "")
-                           or node.get("policy") != unit["policy"])
+                           or node.get("policy") != unit["policy"]
+                           or node.get("type") != unit["kind"])
                 if drifted:
                     node.pop("_path", None)
                     body = node.pop("_body", "")
                     node["qualname"] = unit.get("qualname", "")
                     node["lineno"] = unit.get("lineno")
                     node["policy"] = unit["policy"]
+                    node["type"] = unit["kind"]
                     node["updated"] = _now()
                     tx.write(relpath, serialize_node(node, body))
                     summary["pointer_refreshed"] += 1
