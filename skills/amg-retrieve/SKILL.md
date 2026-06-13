@@ -60,6 +60,24 @@ summary.
    and re-run, or follow a *Related* link. (If misses are systematic, measure and
    tune — see below.)
 
+## Verify a code claim before you answer (cheap, mandatory)
+
+The pack is **memory, not ground truth**: a summary can lag the source it points to
+(refactors happen between consolidations). Confidently-wrong memory is worse than no
+memory — the model answers convincingly and incorrectly. So before you state anything
+about code on the strength of the pack, confirm it against the live source; it costs
+one cheap check:
+
+- **the pointer resolves** — the `path:line` file exists;
+- **the symbol is real** — `grep` the function/class name at that path;
+- **stale wins from source** — if a node is flagged `⟨stale …⟩` in the pack, its
+  summary may lag; re-read the source slice before relying on it. On any conflict the
+  source wins over the summary (current code > a stale summary).
+
+Use the pack to know *where to look and what matters*, then verify the specific claim
+you are about to make — only the claims you actually use, not the whole pack. This is
+the lightweight precursor to the full provenance/verification layer (roadmap Stage 13).
+
 ## Measuring and tuning recall
 
 Retrieval quality is not a matter of taste — measure it. The eval harness compares

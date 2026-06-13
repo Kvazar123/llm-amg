@@ -39,6 +39,9 @@ context; return only a short summary plus the pack path.
 - The pack path: `.claude/amg/cache/pack.md`.
 - A 3–5 line summary: which subsystem(s) activated, the top 4–6 nodes by activation,
   and anything notable (e.g. a relevant decision note or a contradiction surfaced).
+- **Flag stale pointers.** If a top node is marked `⟨stale …⟩` in the pack, its
+  summary may lag the source — say so, so the caller re-checks it against the live
+  file before relying on it (cheap verify-before-answer; SKILL.md).
 - Do NOT paste the whole pack back; the caller reads it from the file.
 
 ## Rules

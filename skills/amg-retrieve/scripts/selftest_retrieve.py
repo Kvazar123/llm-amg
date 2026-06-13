@@ -14,6 +14,8 @@ check is pure BM25 + PPR with no model download. Covers:
                       relation_priors / status_prior / token_budget keeps the rest).
   5. inspect bucket : --bucket filters by the real on-disk directory (notes/_hubs
                       too), not a guessed id prefix (roadmap 1.26).
+  6. explain        : --explain attributes a multi-hop node's activation to the
+                      incoming edge that carried the mass (grounds explainability).
 
 Run:  python selftest_retrieve.py
 """
@@ -145,6 +147,28 @@ def test_inspect_bucket(tmp: Path) -> None:
     print("PASS  inspect --bucket filters by real directory (notes/_hubs/code)")
 
 
+def test_explain(tmp: Path) -> None:
+    store = tmp / "explain"
+    # A seeds (matches query); B shares no query words, reached only via A--calls-->B.
+    _write(store, "code", "a.md",
+           _node("code:src/m.py::a", "function", "charge the customer card payment",
+                 source_path="src/m.py", lineno=10,
+                 edges=[{"rel": "calls", "to": "code:src/m.py::b", "w": 0.9}]))
+    _write(store, "code", "b.md",
+           _node("code:src/m.py::b", "function", "aggregate line items into a total",
+                 source_path="src/m.py", lineno=30))
+    res = R.retrieve(store, "charge customer card payment",
+                     write_pack=False, log_coactivation=False, explain=5)
+    contribs = res.get("explain", {}).get("code:src/m.py::b", [])
+    assert contribs, "explain must report inflow edges for the multi-hop node"
+    top = contribs[0]
+    assert top["from"] == "code:src/m.py::a", f"top contributor should be the seed: {top}"
+    assert "calls" in top["rel"], f"edge label should name the relation: {top['rel']}"
+    assert top["share"] > 0.0, "share must be positive"
+    print(f"PASS  --explain: b's activation attributed to a via '{top['rel']}' "
+          f"({top['share'] * 100:.0f}%)")
+
+
 def main() -> int:
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -160,6 +184,7 @@ def main() -> int:
         test_decision_strategic_with_body(tmp)
         test_config_deep_merge(tmp)
         test_inspect_bucket(tmp)
+        test_explain(tmp)
         print("\nALL RETRIEVAL CHECKS PASSED")
     finally:
         embed.get_embedder = orig

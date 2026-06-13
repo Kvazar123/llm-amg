@@ -35,6 +35,7 @@ together"); both are optional and lock-free.
 CLI:
     python retrieve.py "how do we handle a declined card charge"
     python retrieve.py "<query>" --store /path/to/.claude/amg --top 12 --no-pack
+    python retrieve.py "<query>" --explain      # show the edges that drove the top nodes
 """
 from __future__ import annotations
 
@@ -326,6 +327,47 @@ def _apply_status_prior(activation: Dict[str, float], nodes: Dict[str, dict],
             for nid, a in activation.items()}
 
 
+def _edge_label(nodes: Dict[str, dict], u: str, v: str) -> str:
+    """Relation type(s) on the edge between u and v, either direction. Adjacency is
+    symmetrized and rel-merged, so the label is recovered from the stored edges."""
+    seen: List[str] = []
+    for a, b in ((u, v), (v, u)):
+        n = nodes.get(a) or {}
+        for e in n.get("edges", []):
+            if isinstance(e, dict) and e.get("to") == b and e.get("rel") and e["rel"] not in seen:
+                seen.append(e["rel"])
+        for pm in n.get("part_of", []):
+            if isinstance(pm, dict) and pm.get("topic") == b and "part_of" not in seen:
+                seen.append("part_of")
+    return "+".join(seen) or "edge"
+
+
+def _explain_inflow(ppr: Dict[str, float], adj: Dict[str, List[Tuple[str, float]]],
+                    nodes: Dict[str, dict], cfg: dict, top_ids: List[str],
+                    k: int = 3) -> Dict[str, List[dict]]:
+    """For each node in top_ids, the k incoming edges that contributed the most
+    activation mass. In PPR the inflow to v from u is d·pi[u]·c(u,v)/outsum[u]; the
+    largest terms say which edges drove the node's activation — this grounds the
+    'inspect the activation path' claim and makes eval cases easier to label."""
+    d = float(cfg["damping"])
+    outsum = {u: sum(c for _, c in nb) for u, nb in adj.items()}
+    inflow: Dict[str, List[Tuple[str, float]]] = defaultdict(list)
+    for u, nb in adj.items():
+        su, pu = outsum.get(u, 0.0), ppr.get(u, 0.0)
+        if su <= 0 or pu <= 0:
+            continue
+        contrib = d * pu / su
+        for v, c in nb:
+            inflow[v].append((u, contrib * c))
+    out: Dict[str, List[dict]] = {}
+    for v in top_ids:
+        top = sorted(inflow.get(v, []), key=lambda x: x[1], reverse=True)[:k]
+        denom = ppr.get(v, 0.0) or 1.0
+        out[v] = [{"from": u, "rel": _edge_label(nodes, u, v),
+                   "mass": round(m, 6), "share": round(m / denom, 3)} for u, m in top]
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # Pack assembly (budgeted, tiered)
 # --------------------------------------------------------------------------- #
@@ -400,7 +442,7 @@ def _render_pack(tiers, nodes, activation) -> str:
 
 def retrieve(store_root: os.PathLike | str, query: str,
              config: Optional[dict] = None, write_pack: bool = True,
-             log_coactivation: bool = True) -> dict:
+             log_coactivation: bool = True, explain: int = 0) -> dict:
     store_root = Path(store_root)
     cfg = config or load_config(store_root)
     nodes = load_nodes(store_root)
@@ -432,8 +474,8 @@ def retrieve(store_root: os.PathLike | str, query: str,
     teleport = {nid: seed.get(nid, 0.0) + floor for nid in all_ids}
 
     adj = build_adjacency(nodes, cfg)
-    activation = personalized_pagerank(teleport, adj, all_ids, cfg)
-    activation = _apply_status_prior(activation, nodes, cfg)
+    ppr = personalized_pagerank(teleport, adj, all_ids, cfg)
+    activation = _apply_status_prior(ppr, nodes, cfg)
 
     pack, tiers = assemble_pack(activation, nodes, cfg)
     ranked = sorted(((nid, activation[nid]) for nid in all_ids),
@@ -446,8 +488,12 @@ def retrieve(store_root: os.PathLike | str, query: str,
     if log_coactivation:
         _log_coactivation(store_root, query, tiers, adj)
 
-    return {"ranked": ranked, "pack": pack, "tiers": tiers,
-            "seeds": seeds, "relevance": rel, "n_nodes": len(nodes)}
+    result = {"ranked": ranked, "pack": pack, "tiers": tiers,
+              "seeds": seeds, "relevance": rel, "n_nodes": len(nodes)}
+    if explain:                           # decompose inflow on the RAW ppr (pre-prior)
+        result["explain"] = _explain_inflow(ppr, adj, nodes, cfg,
+                                            [nid for nid, _ in ranked[:explain]])
+    return result
 
 
 def _atomic_write(path: Path, text: str) -> None:
@@ -491,6 +537,7 @@ def main(argv: List[str]) -> int:
     query = argv[1]
     store = Path(_default_store())
     write_pack = True
+    explain = False
     top = 15
     i = 2
     while i < len(argv):
@@ -500,14 +547,26 @@ def main(argv: List[str]) -> int:
             top = int(argv[i + 1]); i += 2
         elif argv[i] == "--no-pack":
             write_pack = False; i += 1
+        elif argv[i] == "--explain":
+            explain = True; i += 1
         else:
             i += 1
 
-    res = retrieve(store, query, write_pack=write_pack, log_coactivation=write_pack)
+    n_explain = min(top, 10) if explain else 0
+    res = retrieve(store, query, write_pack=write_pack,
+                   log_coactivation=write_pack, explain=n_explain)
     print(res["pack"])
     print("\n--- ranked (top {}) ---".format(top))
     for nid, a in res["ranked"][:top]:
         print(f"{a:8.4f}  {nid}")
+    if n_explain:
+        print("\n--- explain: top edges that drove each node "
+              "(share = % of its activation) ---")
+        ex = res.get("explain", {})
+        for nid, _ in res["ranked"][:n_explain]:
+            print(nid)
+            for c in ex.get(nid, []):
+                print(f"    <- {c['share'] * 100:5.1f}%  {c['rel']:<14} {c['from']}")
     return 0
 
 
