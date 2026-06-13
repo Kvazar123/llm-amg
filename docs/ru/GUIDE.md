@@ -137,14 +137,13 @@ models:
 | Семантический засев эмбеддингами (лёгкий) | `pip install model2vec` |
 | Семантический засев (полные трансформеры) | `pip install sentence-transformers` |
 
-**Особый случай — кириллица и другие неанглийские языки.** Модель эмбеддингов по умолчанию ориентирована на английский, поэтому для русскоязычного содержимого семантическая близость между языками будет низкой. В этом случае поставьте `sentence-transformers` и **вручную укажите многоязычную модель** в `config.yml`:
+**Кириллица и другие неанглийские языки.** Для не-английского `working_language` движок **сам выбирает многоязычную модель по умолчанию** (`model2vec` → `potion-multilingual-128M`; `sentence-transformers` → `paraphrase-multilingual-MiniLM-L12-v2`) — достаточно установить бэкенд и включить засев, иначе кросс-язычная близость будет низкой. Для английских проектов берётся retrieval-настроенная `potion-retrieval-32M` (или `all-MiniLM-L6-v2`). Эмбеддинг — намеренно *лёгкое* обогащение поверх BM25, поэтому в умолчания идут лёгкие модели, а не тяжёлые лидеры рейтингов. Конкретную модель (в т. ч. более качественную) можно задать явно:
 
 ```
 retrieval:
   embeddings:
     enabled: on
-    backend: sentence-transformers
-    model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+    model: Alibaba-NLP/gte-multilingual-base   # "" = многоязычный дефолт по working_language
 ```
 
 Для этого случая удобно держать `requirements.txt`:
@@ -158,7 +157,7 @@ tree-sitter
 tree-sitter-language-pack
 ```
 
-и установить всё разом: `pip install -r requirements.txt`. Проверить кросс-язычность можно командой `python .claude/skills/amg-retrieve/scripts/embed.py`.
+и установить всё разом: `pip install -r requirements.txt`. Проверить кросс-язычность модели можно командой `python .claude/skills/amg-retrieve/scripts/embed.py`, а измерить, что даёт семантический засев на вашем графе, — `eval_retrieval.py --compare-embeddings` (выдача с эмбеддингами против чисто-лексической).
 
 ## Настройка по числам
 

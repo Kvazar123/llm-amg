@@ -6,8 +6,8 @@
 
 Скрипты несут собственные значения по умолчанию (`DEFAULTS`), а `config.yml` их **переопределяет** — поблочно. Важны нюансы слияния:
 
-- **Извлечение** (`retrieve.py`): блок `retrieval` накладывается на умолчания так, что `token_budget` и `embeddings` сливаются **по-ключево** (можно задать только часть подключей), а остальные ключи, включая `relation_priors`, **заменяются целиком**. Поэтому если в `config.yml` задан `relation_priors`, он полностью замещает встроенный список (типы, которых в нём нет, получают `relation_prior_default` 0.5). Встроенные умолчания бюджетов в коде иные, чем в шаблоне (`token_budget` в коде — 1200/2500/6000/40), но **побеждают значения из `config.yml`** — действующие значения те, что в файле.
-- **Консолидация** (`consolidate.py`): из блока `weights` берутся заданные ключи, блок `compaction` сливается по-ключево. Параметры `near_duplicate_sim`, `episodic_types`, `stale_age_days` — это умолчания скрипта (0.82, `[section, note]`, 30), в шаблоне `config.yml` их нет; чтобы изменить, их нужно добавить в обработку конфигурации.
+- **Извлечение** (`retrieve.py`): блок `retrieval` накладывается на умолчания **по-ключево и рекурсивно** (`_deep_merge`): вложенные блоки `relation_priors`, `token_budget`, `status_prior`, `embeddings` сливаются по отдельным ключам, поэтому неполный блок **не теряет умолчаний** — тип ребра, не названный в `config.yml`, сохраняет встроенный приоритет, а не падает до `relation_prior_default`. Встроенные умолчания в коде местами иные, чем в шаблоне (`token_budget` в коде — 1200/2500/6000/40), но значения из `config.yml` **побеждают** — действующие те, что в файле.
+- **Консолидация** (`consolidate.py`): из блока `weights` берутся заданные ключи, блок `compaction` сливается по-ключево. Здесь та же разница «код ≠ шаблон»: встроенные бюджеты веток в коде — `default_branch_budget_nodes` 150 / `default_branch_budget_tokens` 60000, тогда как шаблон `config.yml` задаёт 400 / 200000 (действуют значения шаблона). Параметры `near_duplicate_sim`, `episodic_types`, `stale_age_days` — это умолчания скрипта (0.82, `[section, note]`, 30), в шаблоне `config.yml` их нет; чтобы изменить, их нужно добавить в обработку конфигурации.
 
 ## Активация и базовое
 
@@ -62,11 +62,14 @@ models:
 | `retrieval.token_budget.tactical` | 10000 | бюджет яруса модулей |
 | `retrieval.token_budget.operational` | 24000 | бюджет яруса указателей на код и тел документов/заметок в фокусе |
 | `retrieval.token_budget.periphery_links` | 60 | предел числа ссылок-периферии |
-| `retrieval.relation_priors` | словарь | приоритет проводимости `β` по типу ребра: `documents`/`implements`/`specifies` 0.9, `calls`/`depends_on` 0.8, `defines`/`part_of` 0.7, `imports` 0.6, `relates_to` 0.5, `contradicts` 0.3 |
+| `retrieval.relation_priors` | словарь | приоритет проводимости `β` по типу ребра: `documents`/`implements`/`specifies` 0.9, `calls`/`depends_on` 0.8, `defines`/`part_of` 0.7, `imports`/`refines`/`exemplifies` 0.6, `relates_to` 0.5, `supersedes`/`contradicts` 0.3 |
 | `retrieval.relation_prior_default` | 0.5 | приоритет для типов, не перечисленных выше |
+| `retrieval.status_prior` | словарь | множитель итоговой активации по статусу узла: `active`/`stale` 1.0, `superseded` 0.2, `disputed` 0.5 (запланирован, Этап 14); `stale` не штрафуется, а помечается в пакете |
+| `retrieval.convergence_tol` | 1e-6 | порог сходимости степенного метода (по сумме модулей изменений) |
+| `retrieval.seed_floor` | 0.0 | базовая масса каждому узлу (0 = чистая релевантность) |
 | `retrieval.embeddings.enabled` | `auto` | `auto` (включить, если бэкенд установлен) / `on` / `off` |
 | `retrieval.embeddings.backend` | `auto` | `auto` / `model2vec` / `sentence-transformers` |
-| `retrieval.embeddings.model` | `""` | `""` = модель бэкенда по умолчанию |
+| `retrieval.embeddings.model` | `""` | `""` = дефолт бэкенда по `working_language`: en → model2vec `potion-retrieval-32M` / st `all-MiniLM-L6-v2`; не-en → `potion-multilingual-128M` / `paraphrase-multilingual-MiniLM-L12-v2`. Любой HF-id переопределяет (апгрейд: `Alibaba-NLP/gte-multilingual-base`) |
 | `retrieval.embeddings.blend` | 0.5 | 0 = чистый BM25 … 1 = чистая семантика |
 
 ## Веса (`weights`)
