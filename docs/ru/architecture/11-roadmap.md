@@ -93,136 +93,25 @@
 
 ### 1.8. `compaction.enabled` должен реально выключать компрессию
 
-**Файлы:**
-
-- `consolidate.py`
-- `docs/ru/architecture/07-consolidation.md`
-- `docs/ru/architecture/09-config.md`
-- `config.yml`
-
-В `config.yml` есть:
-
-```yaml
-compaction:
-  enabled: true
-```
-
-Документация называет это переключателем. Но `make_plan()` не проверяет `enabled` и всё равно формирует `over_budget_branches`.
-
-В `07-consolidation.md` есть фраза, что скрипт опирается на бюджет, а не на флаг, но тогда `enabled` не переключатель, а декоративный ключ.
-
-Нужно в `make_plan()`:
-
-```py
-if not cmp_cfg.get("enabled", True):
-    over_budget = []
-else:
-    ...
-```
-
-И в `apply_actions()` необходимо тоже иметь защиту: если действие компрессии пришло при `enabled: false`, не применять `shorten`, `summarize_episodes`, `introduce_subhub` без явного override.
-
-К действиям компрессии относятся:
-
-- `summarize_episodes`;
-- `merge`;
-- `introduce_subhub`;
-- `shorten`;
-- `retire`.
-
-Для ручного override можно использовать:
-
-```json
-{"action": "shorten", "id": "...", "force": true}
-```
-
-**Результат:** пользовательский выключатель компрессии работает предсказуемо.
+Исправлено на Этапе 3 (задача 1): `make_plan` не помечает `over_budget` при `enabled:false`, `apply_actions` пропускает компрессионные действия (`COMPACTION_ACTIONS`) без `force:true`. Детали → `07-consolidation.md` («Применение», «Компрессия»), `09-config.md`; regression — `selftest_consolidate.py` (`test_enabled_gate`).
 
 ---
 
 ### 1.9. Консолидация должна быть описана как crash-safe, но не полностью идемпотентная
 
-**Файлы:**
-
-- `skills/amg-consolidate/SKILL.md`
-- `consolidate.py`
-- `docs/ru/architecture/07-consolidation.md`
-
-`fold_weights()` каждый запуск делает пассивное затухание:
-
-```py
-w = w - lam
-```
-
-Даже если нет новых ко-активаций.
-
-Значит повторный запуск `consolidate.py weights .` изменяет граф повторно. Это может быть нормальной моделью времени, но тогда нельзя писать «идемпотентно».
-
-Нужно выбрать одно из решений:
-
-1. Документировать честно: `weights` устойчив к сбоям, но не является semantic-idempotent.
-2. Применять decay только при наличии нового журнала ко-активаций.
-3. Сделать decay зависящим от времени и `last_decay_at`.
-4. Хранить идентификатор обработанного журнала, чтобы один и тот же сигнал не применялся дважды.
-
-**Результат:** гарантии консолидации описаны точно.
+Исправлено на Этапе 3 (задачи 5–6): decay/Хебб/обрезка применяются только при наличии нового журнала ко-активаций (вариант 2), поэтому повторный `weights` без журнала не меняет `w`; `last_decay_at`/календарное затухание отвергнуты (Хебб про использование, не календарь). Детали → `07-consolidation.md` («Веса»), `THEORY.md` §8.1; regression — `selftest_consolidate.py` (`test_weights`, два режима).
 
 ---
 
 ### 1.10. `shorten` должен сохранять оригинал идемпотентно
 
-**Файл:** `consolidate.py`
-
-При `shorten`:
-
-```py
-tx.write(f"{archive_dir}/{Path(n['_path']).name}.full", serialize(n, n["_body"]))
-```
-
-Если тот же `actions.json` применить повторно, `.full` перезапишется уже укороченной версией. Оригинал будет потерян.
-
-Необходимо перед записью `.full` проверять существование:
-
-```py
-full_path = f"{archive_dir}/{Path(n['_path']).name}.full"
-if not store.abspath(full_path).exists():
-    tx.write(full_path, serialize(n, n["_body"]))
-```
-
-Альтернативно — включать в имя архива `txid` или `action_id`.
-
-**Результат:** повторное применение действия не уничтожает полный оригинал.
+Исправлено на Этапе 3 (задача 4): `.full` пишется только если ещё не существует — повторный `apply` не затирает оригинал. Детали → `07-consolidation.md` («Применение»); regression — `selftest_consolidate.py` (`test_shorten_idempotent`).
 
 ---
 
 ### 1.11. Защита `decision` и `adr` должна enforced в коде
 
-**Файл:** `consolidate.py`
-
-Документация говорит, что `decision` и `adr` защищены. Но `apply_actions()` выполнит `shorten`, `retire` или `merge`, если такие действия пришли от субагента.
-
-Сейчас защита только в промпте, а не в детерминированном слое.
-
-Нужно перед опасными действиями проверять:
-
-```py
-if n.get("type") in protect_types:
-    continue
-```
-
-Для override можно ввести явный флаг:
-
-```json
-{"action": "shorten", "id": "...", "force": true}
-```
-
-Защищать минимум:
-
-- `decision`;
-- `adr`;
-- high-centrality nodes выше `protect_min_centrality`.
-
-**Результат:** ценная память защищена детерминированно, а не только инструкцией модели.
+Исправлено на Этапе 3 (задачи 2–3): `_is_protected` в `apply_actions` бережёт `protect_types` и high-centrality узлы (`degree/max_deg > protect_min_centrality`) от `shorten`/`retire`/`merge`-drop/`summarize`-archive без `force`. Детали → `07-consolidation.md` («Применение», «Компрессия»); regression — `selftest_consolidate.py` (`test_protect_and_force`, `test_centrality_protect`).
 
 ---
 
@@ -403,11 +292,7 @@ absorb — источник можно удалить без удаления з
 
 ### 1.17. Магические константы в consolidate.py
 
-В коде consolidate.py зашиты DEFAULTS: near_duplicate_sim: 0.82, episodic_types: ["section", "note"], stale_age_days: 30.
-В 09-config.md они упомянуты как "умолчания скрипта", но не сказано, что пользователь может добавить их в свой config.yml для переопределения (код load_config в consolidate.py на самом деле не читает эти ключи из config.yml, он читает только weights и compaction).
-Несоответствие: Документация (07-consolidation.md) говорит, что это "умолчания скрипта", но если пользователь захочет их изменить, ему придется править сам Python-код, так как в config.yml они не поддерживаются. 
-
-Это нужно исправить, или в 09-config.md оговорить, или, если у пользователя может возникнуть необходимость их поменять - доработать конфиг.
+Исправлено на Этапе 3 (задача 11): `consolidate.load_config` читает `near_duplicate_sim`/`episodic_types`/`stale_age_days` из конфига (ключи верхнего уровня), они добавлены в шаблон `config.yml`. Детали → `09-config.md` («Настройки плана консолидации»).
 
 ---
 
@@ -431,70 +316,25 @@ extract_structure.py и .claude: В DEFAULT_IGNORE_DIRS указан .claude. Э
 
 ### 1.20. Бюджеты веток и компрессия фактически инертны
 
-**Файлы:**
-
-- `reconcile.py` (`_part_of_for`)
-- `consolidate.py` (`_branch_members`)
-- `agents/amg-synth.md`
-- `docs/ru/architecture/07-consolidation.md`
-
-`_part_of_for()` ставит первичную тему узла равной *строке каталога* (`src/billing`), которая узлом графа не является. `_branch_members()` строит ветку, идя транзитивно вверх по `part_of` членов, и требует достижения узла с `type: hub`/`overview` — цепь рвётся на первом же шаге, на каталожной строке. `amg-synth` по промпту добавляет взвешенное мультичленство лишь сквозным темам и связывает хабы с членами *собственными* рёбрами вниз, которые `_branch_members()` не учитывает.
-
-Итог: на реальном графе `over_budget_branches` почти всегда пуст — бюджеты не считаются, поэтапная компрессия не срабатывает вовсе. Это глубже, чем 1.8 (`compaction.enabled`): даже включённый и корректный флаг ничего не сожмёт.
-
-Нужно одно из (или комбинация):
-
-- при синтезе переписывать первичное членство листьев на их хаб;
-- научить `_branch_members()` следовать и рёбрам хаба вниз;
-- материализовать каталожные темы лёгкими узлами.
-
-**Результат:** ветки реально вычисляются; бюджеты и поэтапная компрессия работают.
+Исправлено на Этапе 3 (задача 12, развилка A): `_branch_members` дополнен обходом **вниз** от хаба по `HUB_DOWN_RELS` (`documents`/`defines`/`specifies`/`implements`/`contains`) со стопом на чужом хабе — ветка вычисляется, даже когда первичное `part_of` листа указывает на каталожную строку (вверх-путь сохранён). Выбран этот вариант (не переписывание синтеза) как локальный в `consolidate.py`. Детали → `07-consolidation.md` («План»), `THEORY.md` §10.2; regression — `selftest_consolidate.py` (`test_branch_downward`).
 
 ---
 
 ### 1.21. `introduce_subhub` уничтожает мультичленство
 
-**Файл:** `consolidate.py`
-
-```py
-mn["part_of"] = [{"topic": hub_id, "w": 1.0}]
-```
-
-— полная замена списка членств. Узел с `part_of: {billing: 0.7, reporting: 0.3}` после группировки под под-хаб биллинга теряет членство в reporting безвозвратно. Защита («группировать только листья») живёт лишь в промпте консолидатора — тот же класс проблемы, что 1.11.
-
-Нужно заменять только ту тему, под которую вводится под-хаб; прочие членства сохранять (с перенормировкой при необходимости).
-
-**Результат:** группировка не стирает заработанную полииерархию.
+Исправлено на Этапе 3 (задача 13): заменяется только тема `parent_topic` → `hub_id`, прочие членства сохраняются, `_combine_part_of` ренормирует к симплексу. Детали → `07-consolidation.md` («Применение»); regression — `selftest_consolidate.py` (`test_subhub_keeps_memberships`).
 
 ---
 
 ### 1.22. `redirect_inbound` создаёт дубли рёбер
 
-**Файл:** `consolidate.py`
-
-Если у стороннего узла были рёбра и к `keep_id`, и к `drop_id`, после перенаправления оба указывают на `keep_id` — без дедупликации по `(rel, to)`.
-
-Нужно после перенаправления дедуплицировать рёбра затронутых соседей по `(rel, to)` (больший вес, суммарный `coact`); связать с улучшением `merge` (Этап 3).
-
-**Результат:** перенаправление не порождает дубликатов связей.
+Исправлено на Этапе 3 (задача 9): `_dedup_edges` после `redirect_inbound` схлопывает рёбра соседа по `(rel, to)` (больший вес, суммарный `coact`) и отбрасывает self-edge. Детали → `07-consolidation.md` («Применение»); regression — `selftest_consolidate.py` (`test_merge_quality`).
 
 ---
 
 ### 1.23. `weights.default_edge_weight` — мёртвый ключ конфигурации
 
-**Файлы:**
-
-- `config.yml`
-- `consolidate.py`
-- `reconcile.py`
-- `retrieve.py`
-- `docs/ru/architecture/09-config.md`
-
-Ключ не читает никто: `consolidate.load_config()` берёт из `weights` только четыре ключа, а `_merge_edges()` и retrieval используют литерал `0.5`. 09-config документирует ключ как рабочий.
-
-Нужно либо пробросить ключ в код, либо убрать его из шаблона и справочника (та же категория, что 1.17, но конкретный ключ там не назван).
-
-**Результат:** конфигурация не содержит декоративных ключей.
+Исправлено на Этапе 3 (задача 11, развилка D): ключ проброшен в `reconcile._merge_edges` (новые смысловые рёбра), `retrieve.build_adjacency` (проводимость) и `consolidate.fold_weights` — больше не декоративный. Детали → `09-config.md` (блок `weights`).
 
 ---
 
@@ -585,7 +425,7 @@ mn["part_of"] = [{"topic": hub_id, "w": 1.0}]
 
 Закрытые пункты помечаются выполненными и теряют содержимое (для чистоты и компактности раздела), чтобы roadmap всегда отражал текущее состояние планов. Момент и порядок сворачивания — правило гранулярности в начале §5: сначала синхронизируется документация, и только затем урезается текст пункта.
 
-README.md и README_RU.md лежат в корне как заглушки — содержимое предстоит написать на своём этапе. В них: первый абзац = первый абзац теории (что такое AMG); 2–3 абзаца «как устроено» (две плоскости, граф-над-деревом, активация→PPR→пакет, консолидация); несколько практических моментов из гайда (mirror/absorb, что само запускается); карта (теория / архитектура / гайд / INSTALL) и как установить и активировать, также добавить однострочный quick-start (установить → active: true → первая сверка → первый запрос) и строку про опциональные зависимости — включая **бэкенды эмбеддингов и их модели по умолчанию** (model2vec `potion-retrieval-32M` / `potion-multilingual-128M`, sentence-transformers) с оговоркой, что для не-английских (в т. ч. русских) проектов нужна мультиязычная модель; детали — в GUIDE (см. 2.12 п. 8). Для README_RU — на Этапе 7, для README — на Этапе 18.
+README.md и README_RU.md лежат в корне как заглушки — содержимое предстоит написать на своём этапе. В них: первый абзац = первый абзац теории (что такое AMG); 2–3 абзаца «как устроено» (две плоскости, граф-над-деревом, активация→PPR→пакет, консолидация); несколько практических моментов из гайда (mirror/absorb, что само запускается; консервативные умолчания: хеббово обучение весов выключено — `weights.apply_hebbian` off, проводимость учится только после измеренного выигрыша eval; компрессия не трогает граф, пока ветка в пределах бюджета); карта (теория / архитектура / гайд / INSTALL) и как установить и активировать, также добавить однострочный quick-start (установить → active: true → первая сверка → первый запрос) и строку про опциональные зависимости — включая **бэкенды эмбеддингов и их модели по умолчанию** (model2vec `potion-retrieval-32M` / `potion-multilingual-128M`, sentence-transformers) с оговоркой, что для не-английских (в т. ч. русских) проектов нужна мультиязычная модель; детали — в GUIDE (см. 2.12 п. 8). Для README_RU — на Этапе 7, для README — на Этапе 18.
 
 README.md - английская версия, ссылается на еще отсутствующие переводы (которые будут идти последним этапом) документов в docs/en/\*, а README_RU.md - аналогичная русская версия, ссылающаяся на уже существующие docs/ru/\*.  
 
@@ -703,16 +543,9 @@ README.md - английская версия, ссылается на еще о
 
 ## 2.8. `docs/ru/architecture/07-consolidation.md`
 
-Нужно исправить:
+Пункты 1–6 закрыты на Этапе 3: `07-consolidation.md` синхронизирован с кодом — `compaction.enabled` как рабочий флаг (п.1), честная idempotency весов без обещания строгой (п.2, decay при журнале), idempotent archive `shorten` (п.3), защита `decision`/`adr`/high-centrality enforced в коде (п.4), узлы консолидации к канону synthesized + бакет `_hubs` (п.5), inbound-grounding в salience (п.6). Пункт 8 закрыт на Этапе 0 (`--root`). Осталось опережающим:
 
-1. `compaction.enabled` описывать как рабочий флаг только после реализации. (Сессия 1 Этапа 3: реализован — `make_plan` гейтит `over_budget`, `apply_actions` гейтит `COMPACTION_ACTIONS` с override `force:true`; при закрытии описать в 07.)
-2. Не называть `weights` идемпотентным, если decay остаётся time/action-based. (Решение C: decay только при наличии журнала → semantic-idempotent относительно зафиксированного сигнала; описать при закрытии.)
-3. Описать idempotent archive для `shorten`. (Сессия 1 Этапа 3: `.full` пишется один раз — проверка существования перед записью; при закрытии описать.)
-4. Защиту `decision` / `adr` описывать как enforced в коде после реализации. (Сессия 1 Этапа 3: `_is_protected` — защищённые типы + high-centrality, override `force`; при закрытии описать.)
-5. Привести создаваемые консолидацией узлы к data model: `source_kind`, `policy`, `source_hash`, `derived_from_hash`, `lang`. — Частично: с Этапа 0 рёбра из `summarize_episodes` штампуются `origin: consolidation` (задача 4), оба создаваемых узла получают `source_kind: synthesized` (задача 5); на Этапе 3 — остальные поля (`policy`, `source_hash`, `derived_from_hash`, `lang`) и вопрос бакета: узел из `summarize_episodes` ложится в `notes/`, тогда как 02-data-model маршрутизирует `source_kind == synthesized` в `_hubs` — либо перенести, либо уточнить правило в документе. (Сессия 2 Этапа 3: реализовано — `policy: authored`/`source_hash: null`/`derived_from_hash: null`/`lang`; `summarize_episodes` перенесён в `_hubs` (бакет унифицирован с правилом). При закрытии описать в 07.)
-6. Grounded/salience должен учитывать не только outgoing, но и inbound `documents` / `implements` / `specifies`. (Сессия 2 Этапа 3: реализовано — `_inbound_grounded` + `salience(grounded_inbound)`. При закрытии описать в 07.)
 7. Автоматический eval-gate: закрывается на Этапе 4 — сверить описание с реализованным механизмом.
-8. Закрыт на Этапе 0: `--root` и цепочка корня описаны в «Командной строке» 07-consolidation.md.
 
 ---
 
@@ -735,9 +568,9 @@ README.md - английская версия, ссылается на еще о
 
 1. Закрыт на Этапе 2: дефолт модели эмбеддингов зависит от `working_language` (en → `potion-retrieval-32M`; не-en → `potion-multilingual-128M` / `paraphrase-multilingual-MiniLM-L12-v2`); принцип «лёгкое обогащение, не ~8B-лидеры», override и `--compare-embeddings` описаны в 09-config/06/GUIDE (README — на Этапах 7/18, см. 2.12 п. 8). Имена — по веб-поиску июня 2026.
 2. Уточнить, что `models` пока declarative/planned, если нет механизма проброса.
-3. `compaction.enabled` описывать как рабочий переключатель только после реализации.
+3. Закрыт на Этапе 3: `compaction.enabled` описан в 09-config как рабочий переключатель (`false` выключает пометку веток и компрессионные действия).
 4. Закрыт на Этапе 2: «код-fallback ≠ шаблон» разведено в 09-config для `token_budget` (код 1200/2500/6000/40) и бюджетов веток (код 150/60000 ≠ шаблон 400/200000); слияние `retrieval` переформулировано как по-ключевое (`_deep_merge`).
-5. Для `near_duplicate_sim`, `episodic_types`, `stale_age_days` либо реализовать чтение из config, либо оставить как internal defaults. (Сессия 3 Этапа 3: реализовано чтение из config — top-level ключи в `consolidate.load_config`, добавлены в шаблон `config.yml`. При закрытии описать в 09-config как настраиваемые.)
+5. Закрыт на Этапе 3: `near_duplicate_sim`/`episodic_types`/`stale_age_days` читаются из конфига, добавлены в шаблон и описаны в 09-config (раздел «Настройки плана консолидации»).
 6. Добавить planned-поля:
    - `automation`;
    - `session_policy`;
@@ -746,7 +579,7 @@ README.md - английская версия, ссылается на еще о
    - `agent_dir` / `entrypoint` (пишет installer, см. 4.9: `entrypoint` читается кодом из конфига, `agent_dir` фиксирует выбор декларативно — корень ищется по расположению самого конфига);
    - `confidence`/`verification` config, если появится.
 7. Закрыт на Этапе 2: `convergence_tol`/`seed_floor`/`status_prior` и типы `refines`/`exemplifies`/`supersedes` внесены в таблицу `retrieval` 09-config.
-8. `weights.default_edge_weight` — мёртвый ключ (см. 1.23): пробросить в код либо убрать из шаблона и справочника. (Сессия 3 Этапа 3: проброшен в `reconcile._merge_edges`/`retrieve.build_adjacency`/`consolidate.fold_weights` — больше не декоративный. При закрытии описать в 09-config как рабочий.)
+8. Закрыт на Этапе 3: `weights.default_edge_weight` проброшен в код (`reconcile`/`retrieve`/`consolidate`) и описан в 09-config как рабочий (см. 1.23).
 
 ---
 
@@ -1302,42 +1135,7 @@ amg/                 # НЕ в репозитории: данные локаль
 
 ## Этап 3 — стабилизация консолидации
 
-Цель: сделать compaction безопасной, обратимой и честно документированной.
-
-Задачи:
-
-1. Реализовать `compaction.enabled`. — выполнено (Сессия 1): `make_plan` не флагует `over_budget` при `enabled:false`; `apply_actions` пропускает действия из `COMPACTION_ACTIONS` без `force:true`.
-2. Enforce `protect_types` в коде. — выполнено (Сессия 1): `_is_protected` в `apply_actions` — `decision`/`adr` не сжимаются/убираются/архивируются без `force`.
-3. Enforce high-centrality protection. — выполнено (Сессия 1): `_is_protected` — нормированная центральность `degree/max_deg > protect_min_centrality`; общий `_degree_map` с `make_plan` (одинаковая оценка центральности).
-4. Сделать `shorten` idempotent-safe. — выполнено (Сессия 1): `.full` пишется только если ещё не существует (повторный `apply` не затирает оригинал).
-5. Уточнить семантику idempotency для `weights`. — выполнено (Сессия 3, развилка C): decay/Хебб/обрезка применяются только при наличии нового журнала ко-активаций → повторный `weights` без журнала — w-no-op; semantic-idempotent относительно зафиксированного сигнала (журнал ротируется в архив один раз).
-6. Добавить `last_decay_at` или другой механизм, если decay должен зависеть от времени. — выполнено (Сессия 3): выбран механизм «decay привязан к наличию журнала» (затухание за период активности, не за календарь); `last_decay_at` намеренно НЕ вводится (Хебб про использование; календарное затухание недетерминированно для тестов).
-7. Привести создаваемые консолидацией узлы к data model. — выполнено (Сессия 2): `summarize_episodes`/`introduce_subhub` → канон synthesized (`policy: authored`, `source_hash`/`derived_from_hash: null`, `lang` из `working_language`); `summarize_episodes` перенесён в бакет `_hubs` (правило «synthesized → _hubs», 2.8 п.5).
-8. Grounded/salience должен учитывать inbound edges. — выполнено (Сессия 2): `_inbound_grounded` + параметр `salience(grounded_inbound)`; узел, на который указывают `documents`/`implements`/`specifies`, заземлён (2.8 п.6).
-9. Улучшить `merge`: — выполнено (Сессия 2): `_fold` (max-вес + сумма `coact`), `_combine_part_of` (слияние членств с симплексом), отбрасывание self-edge и рёбер внутрь drop, `_dedup_edges` соседей после `redirect_inbound` (закрывает 1.22).
-   - сохранять максимальный вес;
-   - сохранять `coact`;
-   - не создавать self-edge;
-   - объединять `part_of`;
-   - дедуплицировать рёбра соседей после `redirect_inbound` по `(rel, to)` (см. 1.22).
-10. Добавить regression-тесты:
-    - повторный `apply actions.json` не теряет оригинал; — выполнено (Сессия 1): `test_shorten_idempotent`
-    - `decision` нельзя `shorten` без `force`; — выполнено (Сессия 1): `test_protect_and_force` + `test_centrality_protect`
-    - `compaction.enabled: false` блокирует compression actions. — выполнено (Сессия 1): `test_enabled_gate`
-    - `merge` max-w/coact/self-edge/part_of/dedup — выполнено (Сессия 2): `test_merge_quality`; членства subhub — `test_subhub_keeps_memberships`; узлы к схеме — `test_consolidation_nodes_schema`; grounded inbound — `test_grounded_inbound`. Вычислимость веток — выполнено (Сессия 3): `test_branch_downward`; веса вхолостую vs on — `test_weights` (два режима).
-11. Учесть магические константы. — выполнено (Сессия 3): `near_duplicate_sim`/`episodic_types`/`stale_age_days` читаются из конфига (top-level в `load_config` + добавлены в шаблон `config.yml`); `default_edge_weight` (1.23) **проброшен** (развилка D), а не убран: `reconcile._merge_edges` (главное место создания смысловых рёбер; `apply_derivation` читает `weights.default_edge_weight`), fallback `retrieve.build_adjacency` (через `load_config`), `consolidate.fold_weights`. Затронуты `reconcile`/`retrieve` строго по списку дефекта 1.23 — закрытие дефекта, не перестройка решений.
-12. Сделать ветки реально вычислимыми (см. 1.20). — выполнено (Сессия 3, развилка A): `_branch_members` дополнен обходом **вниз** от хаба по `HUB_DOWN_RELS` (`documents`/`defines`/`specifies`/`implements`/`contains`), стоп на чужом хабе; вверх-путь по `part_of` сохранён. Выбран вариант «вниз» (не переписывание синтеза) — локально в `consolidate.py`, не трогает `synth`/`reconcile`.
-13. `introduce_subhub` должен сохранять прочие членства узла (см. 1.21): заменяется только тема, под которую вводится под-хаб, с перенормировкой. — выполнено (Сессия 2): заменяется только `parent_topic` → `hub_id`, прочие членства сохраняются, `_combine_part_of` ренормирует к симплексу.
-14. Включать хеббово обновление весов только под измерением. — выполнено (Сессия 3, развилка B): флаг `weights.apply_hebbian` (по умолчанию `false`); `fold_weights` всегда копит `coact` (питает `salience.freq`), а `w` (Хебб+затухание+обрезка) меняет только при флаге И наличии журнала. Дефолт off отражает позицию «суждение консолидатора + провенанс ценнее статистики собственных выдач». В перспективе — сигнал от исхода задачи (сессии с принятым результатом), а не от факта совместной выдачи (разрывает цикличность): кандидат-задача Этапа 13/14, требует сессий (Этап 9) и eval (Этап 4). Само включение Хебба — после измеренного выигрыша eval-gate (Этап 4).
-
-Definition of done:
-
-- compaction обратима;
-- защищённые узлы реально защищены кодом;
-- повторный apply не портит архив;
-- документация больше не обещает строгую идемпотентность там, где её нет;
-- ветки достижимы от хабов: переполнение бюджета реально запускает компрессию;
-- хеббово обучение включено только после измеренного выигрыша по eval.
+Выполнено (закрыт 2026-06-14, v0.5.0): compaction сделана безопасной, обратимой и честно документированной; веса — под измерением. `compaction.enabled` — рабочий переключатель (гейт `over_budget` в `make_plan` и компрессионных действий `COMPACTION_ACTIONS` в `apply_actions`, override `force:true`); защита `protect_types`/high-centrality enforced в коде (`_is_protected`/общий `_degree_map`), не только в промпте; `shorten` идемпотентен (`.full` пишется один раз); `merge` переписан (`_fold` — max-вес + сумма `coact`; `_combine_part_of` — симплекс; без self-edge; `_dedup_edges` соседей после `redirect_inbound`, закрывает 1.22); `introduce_subhub` сохраняет прочие членства (заменяется только `parent_topic`→`hub_id`, 1.21); создаваемые узлы — канон synthesized (`policy: authored`, `source_hash`/`derived_from_hash: null`, `lang`) в бакете `_hubs`; `salience.grounded` учитывает inbound `documents`/`implements`/`specifies` (`_inbound_grounded`); ветки вычислимы — `_branch_members` идёт и **вниз** от хаба по `HUB_DOWN_RELS` со стопом на чужом хабе (1.20); `near_duplicate_sim`/`episodic_types`/`stale_age_days` читаются из конфига (1.17); `default_edge_weight` проброшен в `reconcile._merge_edges`/`retrieve.build_adjacency`/`consolidate.fold_weights` (1.23). **Ключевое теоретическое решение:** хеббово обновление весов по умолчанию **выключено** (`weights.apply_hebbian: false`) из-за частичной цикличности сигнала ко-активаций («богатые богатеют») — `fold_weights` лишь копит `coact` (питает значимость), проводимость статична; включается явно после измеренного выигрыша eval, decay привязан к журналу → semantic-idempotent. DoD выполнен. Regression — `selftest_consolidate.py` (13 проверок); семь селфтестов зелёные. Детали → `07-consolidation.md` (основной), `09-config.md`, `THEORY.md` §8.1/§13, `GUIDE.md`, `config.yml`; решения этапа — свёрнутые пункты 1.8–1.11, 1.17, 1.20–1.23 раздела 1 и закрытые 2.8/2.10. Будущее: хеббов сигнал от исхода задачи (Этап 13/14); включение Хебба под eval-gate (Этап 4).
 
 ---
 
