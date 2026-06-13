@@ -82,6 +82,11 @@ DEFAULTS = {
 COMPACTION_ACTIONS = {"summarize_episodes", "merge", "introduce_subhub",
                       "shorten", "retire"}
 
+# Relations that GROUND a node in code/docs (a spec/impl/doc points AT it). Both a
+# node's own outgoing such edges and INBOUND ones count as provenance for salience
+# (2.8 p.6): a code node that a doc documents is grounded even with no outgoing edge.
+GROUND_RELS = {"documents", "implements", "specifies"}
+
 
 # --------------------------------------------------------------------------- #
 # Node IO
@@ -89,6 +94,7 @@ COMPACTION_ACTIONS = {"summarize_episodes", "merge", "introduce_subhub",
 
 def load_config(amg_root: Path) -> dict:
     cfg = json.loads(json.dumps(DEFAULTS))               # deep copy
+    cfg["working_language"] = "en"          # summaries' language for created nodes
     f = amg_root / "config.yml"
     if f.exists():
         raw = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
@@ -97,6 +103,7 @@ def load_config(amg_root: Path) -> dict:
                 cfg[key] = raw["weights"][key]
         if "compaction" in raw:
             cfg["compaction"].update(raw["compaction"] or {})
+        cfg["working_language"] = raw.get("working_language", "en")
     return cfg
 
 
@@ -251,8 +258,13 @@ def _branch_members(nodes: Dict[str, dict]) -> Dict[str, List[str]]:
     return members
 
 
-def salience(node: dict, degree: int, max_degree: int, cfg: dict) -> float:
-    """Deterministic value-of-information signals (LLM judges the soft ones)."""
+def salience(node: dict, degree: int, max_degree: int, cfg: dict,
+             grounded_inbound: bool = False) -> float:
+    """Deterministic value-of-information signals (LLM judges the soft ones).
+
+    `grounded_inbound` is True when some other node points AT this one with a
+    grounding relation (documents/implements/specifies) — counted as provenance
+    alongside the node's own such outgoing edges (2.8 p.6)."""
     # type prior (decisions/commitments are high-value)
     typ = (node.get("type") or "").lower()
     type_score = 1.0 if typ in cfg["compaction"]["protect_types"] else 0.4
@@ -269,9 +281,11 @@ def salience(node: dict, degree: int, max_degree: int, cfg: dict) -> float:
                 if isinstance(e, dict))
     freq = min(1.0, coact / 10.0)
     bridge = degree / max_degree if max_degree else 0.0
-    # provenance (grounded in code/docs)
+    # provenance (grounded in code/docs): own outgoing grounding edge, OR another
+    # node grounds this one (inbound), OR it is projected from a file
     grounded = 1.0 if (node.get("source_kind") == "derived_from_file"
-                       or any((e.get("rel") in ("documents", "implements", "specifies"))
+                       or grounded_inbound
+                       or any(e.get("rel") in GROUND_RELS
                               for e in (node.get("edges") or []) if isinstance(e, dict))) else 0.4
     return round(0.30 * type_score + 0.20 * rec + 0.20 * freq +
                  0.20 * bridge + 0.10 * grounded, 3)
@@ -304,6 +318,56 @@ def _is_protected(node: Optional[dict], degree: Dict[str, int], max_deg: int,
     deg = degree.get(node.get("id"), 0)
     centrality = deg / max_deg if max_deg else 0.0
     return centrality > cmp_cfg.get("protect_min_centrality", 0.7)
+
+
+def _inbound_grounded(nodes: Dict[str, dict]) -> set:
+    """Ids that some other node points AT with a grounding relation
+    (documents/implements/specifies). Feeds salience's provenance signal (2.8 p.6)."""
+    grounded: set = set()
+    for n in nodes.values():
+        for e in (n.get("edges") or []):
+            if isinstance(e, dict) and e.get("rel") in GROUND_RELS and e.get("to") in nodes:
+                grounded.add(e["to"])
+    return grounded
+
+
+def _combine_part_of(memberships: List[dict], renormalize: bool) -> List[dict]:
+    """Combine memberships by topic, keeping the strongest weight per topic, then
+    renormalize to the simplex (sum <= 1) when asked. Used when merge folds two
+    nodes' memberships and when introduce_subhub rewrites one topic (1.21)."""
+    out: Dict[str, dict] = {}
+    for p in memberships:
+        if not (isinstance(p, dict) and p.get("topic")):
+            continue
+        t = p["topic"]
+        w = float(p.get("w", 0))
+        if t not in out or w > out[t]["w"]:
+            out[t] = {"topic": t, "w": w}
+    merged = list(out.values())
+    if renormalize:
+        s = sum(p["w"] for p in merged)
+        if s > 1.0:
+            for p in merged:
+                p["w"] = round(p["w"] / s, 4)
+    return merged
+
+
+def _dedup_edges(edges: List[dict], owner_id: str) -> List[dict]:
+    """Collapse edges by (rel, to): keep the max weight and SUM coact; drop a
+    self-edge (to == owner). Applied to a neighbor after redirect_inbound so a node
+    that pointed at both the survivor and a dropped node ends with one edge (1.22)."""
+    out: Dict[Tuple, dict] = {}
+    for e in edges:
+        if not isinstance(e, dict) or not e.get("to") or e["to"] == owner_id:
+            continue
+        key = (e.get("rel"), e["to"])
+        cur = out.get(key)
+        if cur is None:
+            out[key] = dict(e)
+        else:
+            cur["w"] = max(float(cur.get("w", 0)), float(e.get("w", 0)))
+            cur["coact"] = int(cur.get("coact", 0)) + int(e.get("coact", 0))
+    return list(out.values())
 
 
 def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
@@ -340,11 +404,14 @@ def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
                 dups.append({"a": ids[i], "b": ids[j], "sim": round(sim, 3)})
 
     # episodic candidates + salience
+    grounded_in = _inbound_grounded(nodes)
     episodic = []
     for nid, n in nodes.items():
         if (n.get("type") in cfg["episodic_types"]
                 and n.get("source_kind") not in ("derived_from_file",)):
-            episodic.append({"id": nid, "salience": salience(n, degree[nid], max_deg, cfg),
+            episodic.append({"id": nid,
+                             "salience": salience(n, degree[nid], max_deg, cfg,
+                                                  nid in grounded_in),
                              "protected": (n.get("type") or "").lower() in cmp_cfg["protect_types"]})
     episodic.sort(key=lambda x: x["salience"])
 
@@ -377,6 +444,7 @@ def apply_actions(project_root: Path, actions_path: Path,
         tx = store.transaction()
         cmp_cfg = cfg["compaction"]
         enabled = cmp_cfg.get("enabled", True)
+        renorm = bool(cfg.get("part_of_renormalize", True))
         degree, max_deg = _degree_map(nodes)
 
         def archive(nid: str):
@@ -386,8 +454,12 @@ def apply_actions(project_root: Path, actions_path: Path,
                 tx.delete(n["_path"])
 
         def redirect_inbound(old_ids: set, new_id: str):
-            """Repoint every edge that targets an archived id to the survivor."""
+            """Repoint every edge/membership that targets an archived id to the
+            survivor, then dedup the neighbor's edges by (rel,to) and drop any
+            self-edge the redirect created (1.22)."""
             for n in nodes.values():
+                if n["id"] in old_ids:
+                    continue
                 ch = False
                 for e in (n.get("edges") or []):
                     if isinstance(e, dict) and e.get("to") in old_ids:
@@ -397,7 +469,8 @@ def apply_actions(project_root: Path, actions_path: Path,
                     if isinstance(p, dict) and p.get("topic") in old_ids:
                         p["topic"] = new_id
                         ch = True
-                if ch and n["id"] not in old_ids:
+                if ch:
+                    n["edges"] = _dedup_edges(n.get("edges") or [], n["id"])
                     tx.write(n["_path"], serialize(n, n["_body"]))
 
         def newpath(nid: str, kind="notes"):
@@ -461,40 +534,65 @@ def apply_actions(project_root: Path, actions_path: Path,
                 counts["shorten"] += 1
 
             elif kind == "merge":
-                keep = nodes.get(act["keep_id"])
+                keep_id = act["keep_id"]
+                keep = nodes.get(keep_id)
                 if not keep:
                     continue
                 drop = set(act.get("drop_ids", []))
-                merged_edges = list(keep.get("edges") or [])
-                seen = {(e.get("rel"), e.get("to")) for e in merged_edges if isinstance(e, dict)}
+                # fold edges by (rel,to): max weight + summed coact; drop a self-edge
+                # (a dropped node pointing back at keep) and edges into the drop set
+                folded: Dict[Tuple[str, str], dict] = {}
+
+                def _fold(e: dict) -> None:
+                    if not isinstance(e, dict) or not e.get("to"):
+                        return
+                    if e["to"] == keep_id or e["to"] in drop:
+                        return
+                    key = (e.get("rel"), e["to"])
+                    cur = folded.get(key)
+                    if cur is None:
+                        folded[key] = dict(e)
+                    else:
+                        cur["w"] = max(float(cur.get("w", 0)), float(e.get("w", 0)))
+                        cur["coact"] = int(cur.get("coact", 0)) + int(e.get("coact", 0))
+
+                for e in (keep.get("edges") or []):
+                    _fold(e)
+                memberships = list(keep.get("part_of") or [])
                 for did in drop:
                     dn = nodes.get(did)
                     if not dn:
                         continue
                     for e in (dn.get("edges") or []):
-                        if isinstance(e, dict) and (e.get("rel"), e.get("to")) not in seen:
-                            merged_edges.append(e); seen.add((e.get("rel"), e.get("to")))
+                        _fold(e)
+                    memberships += (dn.get("part_of") or [])   # fold the dropped node's homes
                     archive(did)
-                keep["edges"] = [e for e in merged_edges
-                                 if not (isinstance(e, dict) and e.get("to") in drop)]
+                keep["edges"] = list(folded.values())
+                keep["part_of"] = _combine_part_of(memberships, renorm)
                 if "summary" in act:
                     keep["summary"] = act["summary"]
                 if "body" in act:
                     keep["_body"] = act["body"]
                 keep["updated"] = _now()
                 tx.write(keep["_path"], serialize(keep, keep["_body"]))
-                redirect_inbound(drop, act["keep_id"])
+                redirect_inbound(drop, keep_id)
                 counts["merge"] += 1
 
             elif kind == "summarize_episodes":
                 nid = act["new_id"]
+                # synthesized node: same canon as reconcile.apply_derivation
+                # (policy authored, no source/derived hash); lands in _hubs, since
+                # the data model routes source_kind==synthesized there (2.8 p.5)
                 meta = {"id": nid, "type": act.get("type", "section"),
-                        "source_kind": "synthesized", "summary": act.get("summary", ""),
+                        "source_kind": "synthesized", "policy": "authored",
+                        "source_hash": None, "derived_from_hash": None,
+                        "summary": act.get("summary", ""),
                         "part_of": act.get("part_of", []),
                         "edges": [dict(e, origin=e.get("origin", "consolidation"))
                                   for e in act.get("edges", [])],
-                        "lang": act.get("lang", "en"), "status": "active", "updated": _now()}
-                tx.write(newpath(nid), serialize(meta, act.get("body", "")))
+                        "lang": act.get("lang", cfg["working_language"]),
+                        "status": "active", "updated": _now()}
+                tx.write(newpath(nid, "_hubs"), serialize(meta, act.get("body", "")))
                 arch_ids = set(act.get("archive_ids", []))
                 for aid in arch_ids:
                     archive(aid)
@@ -503,17 +601,34 @@ def apply_actions(project_root: Path, actions_path: Path,
 
             elif kind == "introduce_subhub":
                 hub_id = act["hub_id"]
+                parent_topic = act.get("parent_topic")
                 meta = {"id": hub_id, "type": "hub", "source_kind": "synthesized",
-                        "summary": act.get("summary", ""),
-                        "part_of": ([{"topic": act["parent_topic"], "w": 1.0}]
-                                    if act.get("parent_topic") else []),
-                        "edges": [], "status": "active", "updated": _now()}
+                        "policy": "authored", "source_hash": None,
+                        "derived_from_hash": None, "summary": act.get("summary", ""),
+                        "part_of": ([{"topic": parent_topic, "w": 1.0}]
+                                    if parent_topic else []),
+                        "edges": [], "lang": act.get("lang", cfg["working_language"]),
+                        "status": "active", "updated": _now()}
                 tx.write(newpath(hub_id, "_hubs"), serialize(meta, ""))
                 for mid in act.get("member_ids", []):
                     mn = nodes.get(mid)
                     if not mn:
                         continue
-                    mn["part_of"] = [{"topic": hub_id, "w": 1.0}]
+                    # rewrite ONLY the parent topic to the sub-hub; keep the member's
+                    # other memberships, renormalized (1.21). If it wasn't under the
+                    # parent topic, just add the sub-hub membership without erasing.
+                    new_po, replaced = [], False
+                    for p in (mn.get("part_of") or []):
+                        if not isinstance(p, dict):
+                            continue
+                        if p.get("topic") == parent_topic:
+                            new_po.append({"topic": hub_id, "w": p.get("w", 1.0)})
+                            replaced = True
+                        else:
+                            new_po.append(dict(p))
+                    if not replaced:
+                        new_po.append({"topic": hub_id, "w": 1.0})
+                    mn["part_of"] = _combine_part_of(new_po, renorm)
                     mn["updated"] = _now()
                     tx.write(mn["_path"], serialize(mn, mn["_body"]))
                 counts["introduce_subhub"] += 1

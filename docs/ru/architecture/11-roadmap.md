@@ -709,8 +709,8 @@ README.md - английская версия, ссылается на еще о
 2. Не называть `weights` идемпотентным, если decay остаётся time/action-based. (Решение C: decay только при наличии журнала → semantic-idempotent относительно зафиксированного сигнала; описать при закрытии.)
 3. Описать idempotent archive для `shorten`. (Сессия 1 Этапа 3: `.full` пишется один раз — проверка существования перед записью; при закрытии описать.)
 4. Защиту `decision` / `adr` описывать как enforced в коде после реализации. (Сессия 1 Этапа 3: `_is_protected` — защищённые типы + high-centrality, override `force`; при закрытии описать.)
-5. Привести создаваемые консолидацией узлы к data model: `source_kind`, `policy`, `source_hash`, `derived_from_hash`, `lang`. — Частично: с Этапа 0 рёбра из `summarize_episodes` штампуются `origin: consolidation` (задача 4), оба создаваемых узла получают `source_kind: synthesized` (задача 5); на Этапе 3 — остальные поля (`policy`, `source_hash`, `derived_from_hash`, `lang`) и вопрос бакета: узел из `summarize_episodes` ложится в `notes/`, тогда как 02-data-model маршрутизирует `source_kind == synthesized` в `_hubs` — либо перенести, либо уточнить правило в документе.
-6. Grounded/salience должен учитывать не только outgoing, но и inbound `documents` / `implements` / `specifies`.
+5. Привести создаваемые консолидацией узлы к data model: `source_kind`, `policy`, `source_hash`, `derived_from_hash`, `lang`. — Частично: с Этапа 0 рёбра из `summarize_episodes` штампуются `origin: consolidation` (задача 4), оба создаваемых узла получают `source_kind: synthesized` (задача 5); на Этапе 3 — остальные поля (`policy`, `source_hash`, `derived_from_hash`, `lang`) и вопрос бакета: узел из `summarize_episodes` ложится в `notes/`, тогда как 02-data-model маршрутизирует `source_kind == synthesized` в `_hubs` — либо перенести, либо уточнить правило в документе. (Сессия 2 Этапа 3: реализовано — `policy: authored`/`source_hash: null`/`derived_from_hash: null`/`lang`; `summarize_episodes` перенесён в `_hubs` (бакет унифицирован с правилом). При закрытии описать в 07.)
+6. Grounded/salience должен учитывать не только outgoing, но и inbound `documents` / `implements` / `specifies`. (Сессия 2 Этапа 3: реализовано — `_inbound_grounded` + `salience(grounded_inbound)`. При закрытии описать в 07.)
 7. Автоматический eval-gate: закрывается на Этапе 4 — сверить описание с реализованным механизмом.
 8. Закрыт на Этапе 0: `--root` и цепочка корня описаны в «Командной строке» 07-consolidation.md.
 
@@ -1312,9 +1312,9 @@ amg/                 # НЕ в репозитории: данные локаль
 4. Сделать `shorten` idempotent-safe. — выполнено (Сессия 1): `.full` пишется только если ещё не существует (повторный `apply` не затирает оригинал).
 5. Уточнить семантику idempotency для `weights`. — решено (Сессия план, развилка C): decay только при наличии нового журнала ко-активаций; без `last_decay_at`/календаря (реализация — Сессия 3).
 6. Добавить `last_decay_at` или другой механизм, если decay должен зависеть от времени.
-7. Привести создаваемые консолидацией узлы к data model.
-8. Grounded/salience должен учитывать inbound edges.
-9. Улучшить `merge`:
+7. Привести создаваемые консолидацией узлы к data model. — выполнено (Сессия 2): `summarize_episodes`/`introduce_subhub` → канон synthesized (`policy: authored`, `source_hash`/`derived_from_hash: null`, `lang` из `working_language`); `summarize_episodes` перенесён в бакет `_hubs` (правило «synthesized → _hubs», 2.8 п.5).
+8. Grounded/salience должен учитывать inbound edges. — выполнено (Сессия 2): `_inbound_grounded` + параметр `salience(grounded_inbound)`; узел, на который указывают `documents`/`implements`/`specifies`, заземлён (2.8 п.6).
+9. Улучшить `merge`: — выполнено (Сессия 2): `_fold` (max-вес + сумма `coact`), `_combine_part_of` (слияние членств с симплексом), отбрасывание self-edge и рёбер внутрь drop, `_dedup_edges` соседей после `redirect_inbound` (закрывает 1.22).
    - сохранять максимальный вес;
    - сохранять `coact`;
    - не создавать self-edge;
@@ -1324,10 +1324,10 @@ amg/                 # НЕ в репозитории: данные локаль
     - повторный `apply actions.json` не теряет оригинал; — выполнено (Сессия 1): `test_shorten_idempotent`
     - `decision` нельзя `shorten` без `force`; — выполнено (Сессия 1): `test_protect_and_force` + `test_centrality_protect`
     - `compaction.enabled: false` блокирует compression actions. — выполнено (Сессия 1): `test_enabled_gate`
-    - (остальные regression — Сессии 2–3: `merge` max-w/coact/self-edge/part_of, членства subhub, вычислимость веток, веса вхолостую)
+    - `merge` max-w/coact/self-edge/part_of/dedup — выполнено (Сессия 2): `test_merge_quality`; членства subhub — `test_subhub_keeps_memberships`; узлы к схеме — `test_consolidation_nodes_schema`; grounded inbound — `test_grounded_inbound`. (Остальные regression — Сессия 3: вычислимость веток, веса вхолостую)
 11. Учесть магические константы: `near_duplicate_sim`/`episodic_types`/`stale_age_days` читать из конфига (top-level + в шаблон); `default_edge_weight` (1.23) — мёртвый ключ, решено **пробросить**, а не убрать (развилка D, подтверждена): `reconcile._merge_edges` (главное место создания смысловых рёбер), fallback `retrieve.build_adjacency`, `consolidate.fold_weights`. Затрагивает модули закрытых этапов строго по списку дефекта 1.23 — закрытие дефекта, не перестройка решений (Сессия 3).
 12. Сделать ветки реально вычислимыми (см. 1.20): первичное `part_of` листьев переписывается на их хаб при синтезе, либо `_branch_members` дополнительно следует рёбрам хаба вниз; без этого `over_budget_branches` пуст и компрессия инертна.
-13. `introduce_subhub` должен сохранять прочие членства узла (см. 1.21): заменяется только тема, под которую вводится под-хаб, с перенормировкой.
+13. `introduce_subhub` должен сохранять прочие членства узла (см. 1.21): заменяется только тема, под которую вводится под-хаб, с перенормировкой. — выполнено (Сессия 2): заменяется только `parent_topic` → `hub_id`, прочие членства сохраняются, `_combine_part_of` ренормирует к симплексу.
 14. Включать хеббово обновление весов только под измерением: сигнал ко-активации частично цикличен (PPR использует веса → пакет порождает пары → пары усиливают те же веса), поэтому до eval-сравнения «weights on/off» копить `coact` вхолостую, не меняя `w`; в перспективе перейти на сигнал от исхода задачи (сессии с принятым результатом), а не от факта совместной выдачи.
 
 Definition of done:

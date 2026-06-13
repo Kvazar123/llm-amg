@@ -265,6 +265,99 @@ def test_shorten_idempotent(proj):
     print("PASS  shorten: repeated apply preserves the archived original (idempotent)")
 
 
+def test_merge_quality(proj):
+    """merge folds edges (max w, summed coact), combines part_of, drops self-edges,
+    and dedups a neighbor's edges after redirect (task 9 + audit 1.22)."""
+    amg = proj / ".claude" / "amg"
+    store = gs.GraphStore(amg)
+    write_node(store, "notes:m/keep", "notes",
+               {"type": "note", "summary": "keep",
+                "edges": [{"rel": "relates_to", "to": "notes:m/x", "w": 0.3, "coact": 1}],
+                "part_of": [{"topic": "hub:b", "w": 0.5}]})
+    write_node(store, "notes:m/drop", "notes",
+               {"type": "note", "summary": "drop",
+                "edges": [{"rel": "relates_to", "to": "notes:m/x", "w": 0.7, "coact": 2},
+                          {"rel": "relates_to", "to": "notes:m/keep", "w": 0.9, "coact": 4}],
+                "part_of": [{"topic": "hub:a", "w": 0.5}]})
+    write_node(store, "notes:m/x", "notes", {"type": "note", "summary": "x"})
+    write_node(store, "notes:m/y", "notes",
+               {"type": "note", "summary": "y",
+                "edges": [{"rel": "relates_to", "to": "notes:m/keep", "w": 0.4, "coact": 1},
+                          {"rel": "relates_to", "to": "notes:m/drop", "w": 0.6, "coact": 2}]})
+    (amg / "work").mkdir(exist_ok=True)
+    # force:true isolates merge mechanics from the protection gate (drop is
+    # highly connected in this shared graph; protection is tested separately).
+    (amg / "work" / "m.json").write_text(json.dumps(
+        [{"action": "merge", "keep_id": "notes:m/keep", "drop_ids": ["notes:m/drop"],
+          "summary": "merged", "force": True}]))
+    C.apply_actions(proj, amg / "work" / "m.json")
+
+    nodes = C.load_nodes(store)
+    assert "notes:m/drop" not in nodes, "dropped node must be archived"
+    keep = nodes["notes:m/keep"]
+    ex = {(e["rel"], e["to"]): e for e in keep["edges"]}
+    xe = ex[("relates_to", "notes:m/x")]
+    assert xe["w"] == 0.7 and xe["coact"] == 3, xe          # max(0.3,0.7), 1+2
+    assert all(e["to"] != "notes:m/keep" for e in keep["edges"]), "no self-edge"
+    assert {p["topic"] for p in keep["part_of"]} == {"hub:a", "hub:b"}, keep["part_of"]
+    ye = [e for e in nodes["notes:m/y"]["edges"] if e["to"] == "notes:m/keep"]
+    assert len(ye) == 1 and ye[0]["w"] == 0.6 and ye[0]["coact"] == 3, ye  # deduped
+    print("PASS  merge: max w + summed coact, part_of combined, no self-edge, neighbor deduped")
+
+
+def test_subhub_keeps_memberships(proj):
+    """introduce_subhub rewrites only the parent topic; other memberships survive (1.21)."""
+    amg = proj / ".claude" / "amg"
+    store = gs.GraphStore(amg)
+    write_node(store, "notes:sh/member", "notes",
+               {"type": "note", "summary": "member",
+                "part_of": [{"topic": "hub:parent", "w": 0.6},
+                            {"topic": "hub:other", "w": 0.4}]})
+    (amg / "work").mkdir(exist_ok=True)
+    (amg / "work" / "sh.json").write_text(json.dumps(
+        [{"action": "introduce_subhub", "hub_id": "hub:sub", "summary": "sub",
+          "parent_topic": "hub:parent", "member_ids": ["notes:sh/member"]}]))
+    C.apply_actions(proj, amg / "work" / "sh.json")
+    topics = {p["topic"]: p["w"] for p in C.load_nodes(store)["notes:sh/member"]["part_of"]}
+    assert "hub:sub" in topics and topics.get("hub:other") == 0.4, topics
+    assert "hub:parent" not in topics, "parent topic must be replaced by the sub-hub"
+    print("PASS  subhub: parent topic -> sub-hub, other memberships preserved")
+
+
+def test_consolidation_nodes_schema(proj):
+    """summarize_episodes / introduce_subhub nodes match the synthesized canon and
+    land in _hubs (task 7, 2.8 p.5)."""
+    amg = proj / ".claude" / "amg"
+    store = gs.GraphStore(amg)
+    for i in (1, 2):
+        write_node(store, f"notes:se/{i}", "notes", {"type": "note", "summary": f"ep{i}"})
+    (amg / "work").mkdir(exist_ok=True)
+    (amg / "work" / "se.json").write_text(json.dumps([
+        {"action": "summarize_episodes", "new_id": "notes:se/sum", "summary": "sum",
+         "body": "condensed", "archive_ids": ["notes:se/1", "notes:se/2"]},
+        {"action": "introduce_subhub", "hub_id": "hub:se", "summary": "subhub"},
+    ]))
+    C.apply_actions(proj, amg / "work" / "se.json")
+    nodes = C.load_nodes(store)
+    for nid in ("notes:se/sum", "hub:se"):
+        n = nodes[nid]
+        assert n["source_kind"] == "synthesized" and n["policy"] == "authored", n
+        assert n["source_hash"] is None and n["derived_from_hash"] is None, n
+        assert n["lang"] == "ru", n                          # demo working_language
+        assert n["_path"].startswith("nodes/_hubs/"), n["_path"]
+    print("PASS  schema: consolidation nodes are synthesized/authored canon, in _hubs")
+
+
+def test_grounded_inbound():
+    """salience counts an inbound documents/implements/specifies edge as provenance (task 8)."""
+    cfg = C.DEFAULTS
+    node = {"id": "n", "type": "note", "source_kind": "authored", "edges": []}
+    s_off = C.salience(node, 0, 1, cfg, grounded_inbound=False)
+    s_on = C.salience(node, 0, 1, cfg, grounded_inbound=True)
+    assert s_on > s_off, (s_off, s_on)            # grounded 0.4 -> 1.0 (weight 0.10)
+    print("PASS  grounded: an inbound grounding edge raises salience (provenance)")
+
+
 if __name__ == "__main__":
     proj = setup_project()
     try:
@@ -275,6 +368,10 @@ if __name__ == "__main__":
         test_centrality_protect()
         test_enabled_gate(proj)
         test_shorten_idempotent(proj)
+        test_merge_quality(proj)
+        test_subhub_keeps_memberships(proj)
+        test_consolidation_nodes_schema(proj)
+        test_grounded_inbound()
         print("\nALL CONSOLIDATION CHECKS PASSED")
     finally:
         shutil.rmtree(proj, ignore_errors=True)
