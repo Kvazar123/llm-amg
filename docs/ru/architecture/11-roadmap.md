@@ -717,13 +717,7 @@ README.md - английская версия, ссылается на еще о
 Нужно исправить:
 
 1. Закрыт на Этапе 1 (задачи 1–2): канон `type` — раздел «Типы узлов» 02-data-model.md; tree-sitter-типы — допустимое расширение до канонизации (задача 8 Этапа 1).
-2. Добавить поля:
-   - `lineno`;
-   - `qualname`;
-   - `branch_budget`;
-   - `confidence` / `provenance` / `verification` как planned-поля;
-   - `origin` на рёбрах как planned или реализуемое поле.
-   Пометка (Этап 0, задача 2): `lineno`/`qualname` уже пишутся при created/changed и тихо обновляются при сдвиге единицы без смены хеша; поле `lang` узла остаётся языком сводки (так его пишет цепочка builder → apply → consolidate); язык источника в схему узла не вводится — потребителя нет, для mirror он восстановим из `source_path`; при будущей нужде это отдельное поле `source_lang` (решение Этапа 1). Поле `origin` рёбер реализовано (задачи 3–4): `structural | semantic | synthesized | consolidation`; legacy-рёбра без origin размечает миграция Этапа 1 (задача 7). Пометка (Этап 1, задачи 5–6): `branch_budget` внесён в таблицу полей (только у хабов, бюджет в узлах; читает `consolidate.py plan`, кодом не пишется); `confidence`/`provenance`/`verification` — подраздел «Запланированные поля» с привязкой к Этапу 13; пункт закрывается после миграции (задача 7).
+2. Закрыт на Этапе 1 (задачи 5–7; `lineno`/`qualname`/`origin` — ещё Этап 0): все поля и planned-поля — в таблицах и подразделе «Запланированные поля» 02-data-model.md; legacy-разметку `origin` выполняет `migrate_schema.py`; решение по `lang` (язык источника в схему не входит, при будущей нужде — отдельное поле `source_lang`) — строка `lang` таблицы полей.
 3. Уточнить, что `coact` и `last_used` — поля рёбер.
 4. Закрыт на Этапе 1 (задача 4; код — Этап 0, задача 5): канон — разделы «Классы узлов и `source_kind`» и «Типы узлов» 02-data-model.md; миграция старых узлов — задача 7 Этапа 1.
 5. Описать, что `part_of` может:
@@ -1427,12 +1421,12 @@ amg/                 # НЕ в репозитории: данные локаль
    - `confidence`;
    - `provenance`;
    - `verification`.
-7. Сделать миграционный скрипт для старых узлов:
+7. Сделать миграционный скрипт для старых узлов: — выполнено (`migrate_schema.py`, идемпотентно, одной транзакцией под локом; regression — `selftest_migrate.py`; уточнение спецификации: рёбра без `origin` у synthesized-узлов получают `origin: synthesized`, не `semantic`; `lineno` скрипт не трогает — его бесплатно восстанавливает следующий `bootstrap` веткой дрейфа, связка покрыта тестом; файлы между бакетами не переносятся — вопрос бакета отложен в 2.8 п. 5)
    - `source_kind: derived` → `synthesized`;
-   - `type: derived` у хабов → `hub` или `overview`;
+   - `type: derived` у хабов → `hub` или `overview` (`overview` — если хвост id содержит "overview"; мигрированные id выводятся в отчёте);
    - при возможности восстановить `lineno`;
    - проставить `origin` рёбрам без него: `imports`/`calls` → `structural`, прочие → `semantic` (поле введено на Этапе 0, задача 4).
-8. Канонизировать `kind` tree-sitter-единиц при извлечении (`function_definition` → `function`, `class_declaration` → `class` и т. п.) либо расширить `TIER_OF_TYPE`/`CODE_TYPES` — см. 1.25; иначе не-Python код выпадает из ярусов и формата указателей.
+8. Канонизировать `kind` tree-sitter-единиц при извлечении (`function_definition` → `function`, `class_declaration` → `class` и т. п.) либо расширить `TIER_OF_TYPE`/`CODE_TYPES` — см. 1.25; иначе не-Python код выпадает из ярусов и формата указателей. — выполнено первым вариантом: `_TS_DEF` в `extract_structure.py` стал картой «тип грамматики → `function`/`class`» (контейнеры struct/impl/trait/interface/enum → `class`), `retrieve.py` не менялся; в дрейф указателя `reconcile.py` добавлена проверка `type` (тип зеркала принадлежит извлечению — legacy-графы сводятся и без миграции); попутно `_treesitter_units` адаптирован к двум поколениям биндинга `tree-sitter-language-pack` (классический py-tree-sitter-API и alef-rewrite ≥ 1.8 с методным API — без адаптации свежие установки молча падали в файловые единицы); regression — `selftest_stage2.py` (живой JS-прогон), `selftest_reconcile.py` (сценарий дрейфа).
 
 Definition of done:
 
