@@ -4,6 +4,29 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-06-13
+
+Stage 2 closed: retrieval is aligned with the data model — status-aware ranking, fixed tiers, consistent edge priors, by-key config merge, multilingual embedding defaults, an off-vs-on eval harness, activation explainability, and a lightweight pre-answer verification rule.
+
+### Added
+- Status prior (`status_prior`, `_apply_status_prior`): a per-status multiplier on the FINAL activation so a `superseded` claim (×0.2) never competes as an active fact, while `stale` is not penalized but flagged in the pack (`_STALE_MARK`); `disputed` (0.5) is forward-looking (Stage 14). It re-ranks by node validity without gating multi-hop flow (audit 1.12).
+- `retrieve.py --explain`: decomposes PPR inflow on the raw (pre-prior) activation — `inflow(u→v)=d·π[u]·c/outsum[u]` — to show the edges that drove each top node, grounding the explainability claim (THEORY §14.2).
+- `eval_retrieval.py --compare-embeddings`: runs labelled cases with embeddings off then on (a separate isolated cross-language demo, `build_embeddings_demo`); `run(cfg=...)` override.
+- `selftest_retrieve.py` (new, 7 checks: status prior, stale mark, decision tier + body render, by-key merge, `--explain`, inspect bucket); `selftest_embed.py` gains multilingual-default and off-vs-on checks.
+
+### Changed
+- Config merge is key-by-key and recursive (`_deep_merge`): an incomplete `relation_priors` / `token_budget` / `status_prior` / `embeddings` overlays the built-in defaults instead of replacing the whole block, so a prior the user did not restate is no longer silently lost.
+- Tier mapping: authored `decision`/`adr` → strategic, and their body (rationale) renders inline in any tier (`DOC_BODY_TYPES`).
+- Embedding model default is chosen by `working_language`: English → `potion-retrieval-32M` (best static retrieval model); non-English → multilingual `potion-multilingual-128M` / `paraphrase-multilingual-MiniLM-L12-v2`. The seed stays deliberately light (not the ~8B MTEB leaders); any HF id can be set via `retrieval.embeddings.model`. `working_language` is threaded through `retrieve.load_config`.
+- `supersedes` edge prior 0.5 → 0.3 (parity with `contradicts`); `exemplifies` is now emitted by `amg-builder`.
+- `amg-retrieve` SKILL + `amg-retriever`: a lightweight "verify a code claim before you answer" rule (pointer resolves / grep the symbol / re-read a stale source; the source wins over a stale summary) — a cheap precursor to the Stage 13 verification layer.
+- Demo ids use the `doc:` canon; the multi-hop demo (`build_demo_store`) and the embeddings demo are kept in separate graphs so a connected case cannot pull PPR mass from an isolated one.
+
+### Fixed
+- `status: superseded` now actually influences retrieval (audit 1.12).
+- `inspect_graph.py --bucket` filters by the node's real on-disk directory via `_path`, so `notes`/`_hubs` match too (audit 1.26).
+- A broken relative link in `06-retrieval.md`.
+
 ## [0.3.0] — 2026-06-13
 
 Stage 1 closed: the node schema is unified to one canon and pre-canon graphs migrate to it.
