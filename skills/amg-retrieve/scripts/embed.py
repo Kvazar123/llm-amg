@@ -41,16 +41,27 @@ os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 # Default models per backend (downloaded once on first use; offline -> fallback).
+# AMG's embedding seed is OPTIONAL, light enrichment over BM25 (markdown stays the
+# source of truth), so defaults favor FAST, CPU-friendly, retrieval/multilingual-tuned
+# models — deliberately NOT the heavyweight ~8B MTEB leaders (Qwen3-Embedding,
+# Llama-Embed-Nemotron, Gemini), which contradict the light-by-design seed. Pick by
+# measuring per graph (`eval_retrieval.py --compare-embeddings`); any HF id can be set
+# via retrieval.embeddings.{backend,model}.
 _DEFAULT_MODEL = {
-    "model2vec": "minishlab/potion-base-8M",
+    # model2vec = static, no torch. potion-retrieval-32M is MinishLab's best static
+    # RETRIEVAL model — exactly this seed's job (beats the older potion-base-*).
+    "model2vec": "minishlab/potion-retrieval-32M",
     "sentence-transformers": "sentence-transformers/all-MiniLM-L6-v2",
 }
 # For a non-English working_language, default to a MULTILINGUAL model per backend so
-# cross-language seeding (e.g. an English query over Russian summaries) works without
-# the user naming a model. If the model can't load (offline / not cached), get_embedder
+# cross-language seeding (an English query over Russian summaries) works without the
+# user naming a model. If the model can't load (offline / not cached), get_embedder
 # falls through to the next backend and finally to None (pure BM25) — no hard failure.
 _DEFAULT_MODEL_MULTILINGUAL = {
+    # potion-multilingual-128M: best static multilingual model, 101 languages (MinishLab).
     "model2vec": "minishlab/potion-multilingual-128M",
+    # paraphrase-multilingual-MiniLM-L12-v2: robust, loads with a plain SentenceTransformer
+    # call. Higher quality but heavier alternative (set via config): Alibaba-NLP/gte-multilingual-base.
     "sentence-transformers": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
 }
 

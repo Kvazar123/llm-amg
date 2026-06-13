@@ -95,9 +95,13 @@ retrieval:
   # unchanged. OPTIONAL: with no backend installed, retrieval stays pure-BM25.
   #   pip install model2vec            (light, CPU, recommended)  -- or --
   #   pip install sentence-transformers (heavier, needs torch)
-  # For a non-English working_language the default model is MULTILINGUAL (model2vec:
-  # potion-multilingual-128M; sentence-transformers: paraphrase-multilingual-MiniLM-
-  # L12-v2), so an English query lights up Russian summaries by meaning.
+  # The seed is OPTIONAL enrichment (markdown is the source of truth), so defaults are
+  # light, retrieval/multilingual-tuned models — not the heavy ~8B MTEB leaders. The
+  # per-backend default is chosen by working_language:
+  #     en    -> model2vec potion-retrieval-32M | st all-MiniLM-L6-v2
+  #     non-en-> model2vec potion-multilingual-128M | st paraphrase-multilingual-MiniLM-L12-v2
+  # Override `model:` with any HF id for more quality (e.g. Alibaba-NLP/gte-multilingual-base),
+  # and size the gain with: eval_retrieval.py --compare-embeddings
   embeddings:
     enabled: off        # auto = use if a backend is installed | on | off
     backend: auto       # auto | model2vec | sentence-transformers
