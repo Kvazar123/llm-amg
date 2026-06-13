@@ -157,18 +157,16 @@ def _node(nid, typ, summary, body="", edges=None, part_of=None,
     return f"---\n{fm}\n---\n{body}".rstrip() + "\n"
 
 
-def build_demo_store(root: Path, xlang: bool = False) -> List[dict]:
-    """A two-subsystem graph designed so two billing gold nodes are reachable
-    ONLY via edges (no lexical overlap with the query) — a clean multi-hop test.
-    The auth subsystem is a distractor that must NOT be retrieved (precision). A
-    superseded older policy exercises the status prior, and (when xlang=True) an
-    isolated Russian-summary node reachable from an English query only by meaning
-    exercises the embeddings off-vs-on comparison."""
+def build_demo_store(root: Path) -> List[dict]:
+    """A two-subsystem graph designed so two billing gold nodes are reachable ONLY via
+    edges (no lexical overlap with the query) — a clean multi-hop test. The auth
+    subsystem is a distractor that must NOT be retrieved (precision). Lexical only:
+    embeddings are off, so --make-demo is deterministic and offline. The embedding /
+    status-prior demonstrations live in build_embeddings_demo (kept in a SEPARATE graph
+    so they cannot perturb this fragile multi-hop top-K)."""
     nd = root / "nodes"
     for sub in ("code", "doc", "notes", "_hubs"):
         (nd / sub).mkdir(parents=True, exist_ok=True)
-    # embeddings off by default so --make-demo is deterministic and offline; the
-    # --compare-embeddings mode flips this on via a cfg override at run time.
     (root / "config.yml").write_text(
         "active: true\nworking_language: ru\nretrieval:\n  embeddings:\n    enabled: off\n")
 
@@ -207,17 +205,8 @@ def build_demo_store(root: Path, xlang: bool = False) -> List[dict]:
     # multi-hop gold #2: a decision, no query words; reached via relates_to.
     w("notes", "retry_policy.md", _node(
         "notes:decisions/retry-policy", "decision",
-        "Retry policy: three attempts with exponential backoff before surfacing an error.",
-        body="Decision: wrap the gateway call in a 3x retry with exponential backoff.",
-        edges=[{"rel": "supersedes", "to": "notes:decisions/retry-policy-v1", "w": 0.9}]))
-    # superseded near-duplicate, deliberately the STRONGER lexical match for the
-    # 'failed charge' query: a naive lexical ranker picks it; only the status prior
-    # (x0.2) keeps the active decision above it. This is what makes the case sharp.
-    w("notes", "retry_policy_v1.md", _node(
-        "notes:decisions/retry-policy-v1", "decision",
-        "Retry policy for a failed charge: re-attempt the failed charge twice with "
-        "backoff, then surface the error.",
-        body="Superseded: two retries, no backoff.", status="superseded"))
+        "Transient failures are re-attempted three times with backoff before surfacing an error.",
+        body="Decision: wrap the gateway call in a 3x retry with exponential backoff."))
 
     # --- lexical distractors: match the query's words but are NOT connected to the
     # charge flow and are NOT gold. A pure lexical/RAG ranker is fooled by these and
@@ -260,28 +249,53 @@ def build_demo_store(root: Path, xlang: bool = False) -> List[dict]:
         ],
         "note": "2 gold nodes share no words with the query (reached only via edges); "
                 "3 disconnected distractors share words but are not gold.",
-    }, {
-        "id": "retry-policy-current",
-        "query": "retry policy for a failed charge with backoff",
-        "gold_ids": ["notes:decisions/retry-policy"],
-        "note": "retry-policy-v1 is a SUPERSEDED near-duplicate and the STRONGER lexical "
-                "match; lexical top-1 picks it, only the status prior keeps the active "
-                "decision on top (AMG recall 1 vs lexical 0).",
     }]
-    if xlang:
-        # English query, Russian summary, zero lexical overlap, and isolated (no edges)
-        # so it activates ONLY via the seed: missed with BM25, found with a multilingual
-        # embedding. Reached only when embeddings are on -> the off-vs-on comparison.
-        w("code", "gateway_ru.md", _node(
-            "code:src/billing.py::call_gateway", "function",
-            "Отправляет запрос на списание средств во внешний платёжный шлюз и разбирает ответ."))
-        cases.append({
-            "id": "xlang-gateway",
-            "query": "send the charge request to the external payment gateway",
-            "gold_ids": ["code:src/billing.py::call_gateway"],
-            "note": "EN query over a RU summary, no shared words — recovered only with a "
-                    "multilingual embedding seed (run --compare-embeddings).",
-        })
+    (root / "cases.json").write_text(json.dumps(cases, indent=2))
+    return cases
+
+
+def build_embeddings_demo(root: Path) -> List[dict]:
+    """A minimal, FOCUSED graph for the embeddings off-vs-on comparison, kept separate
+    from the multi-hop demo so the two cannot interfere. One cross-language case with a
+    lexical FALSE FRIEND:
+
+      xlang-keys : a Russian gold ("ротация ключей шифрования") vs an English distractor
+                   about tire rotation. The two share the word "rotation" but mean
+                   different things. BM25 is fooled by the shared word (it ranks the tire
+                   node first, so OFF misses the gold); a multilingual embedding prefers
+                   the Russian node by meaning (so ON recovers it). blend leans high so
+                   the semantic signal outweighs the false friend's lexical match.
+
+    Both nodes are edge-free (isolated), so activation is the seed alone — the case
+    turns purely on lexical vs semantic seeding, not on graph structure. Recovery still
+    depends on a multilingual model that bridges languages well enough; the light static
+    model does so only weakly, so a stronger sentence-transformers model may be needed."""
+    nd = root / "nodes"
+    for sub in ("code", "doc"):
+        (nd / sub).mkdir(parents=True, exist_ok=True)
+    (root / "config.yml").write_text(
+        "active: true\nworking_language: ru\n"
+        "retrieval:\n  embeddings:\n    enabled: off\n    blend: 0.85\n")
+
+    def w(rel_dir, fname, text):
+        (nd / rel_dir / fname).write_text(text, encoding="utf-8")
+
+    w("code", "rotate_keys_ru.md", _node(
+        "code:src/crypto.py::rotate_keys", "function",
+        "Периодически выполняет ротацию ключей шифрования и перешифровывает секреты."))
+    w("doc", "tires_doc.md", _node(
+        "doc:doc/fleet.md::tires", "section",
+        "Tire rotation schedule and wheel alignment for the delivery vehicle fleet."))
+
+    cases = [{
+        "id": "xlang-keys",
+        "query": "automatic rotation of encryption keys and re-encrypting secrets",
+        "gold_ids": ["code:src/crypto.py::rotate_keys"],
+        "note": "RU summary, EN query: BM25 is fooled by the 'tire rotation' false "
+                "friend (OFF misses); a multilingual embedding picks the RU "
+                "encryption-keys node by meaning (ON recovers). Needs a multilingual "
+                "model that bridges languages well.",
+    }]
     (root / "cases.json").write_text(json.dumps(cases, indent=2))
     return cases
 
@@ -311,8 +325,8 @@ def main(argv: List[str]) -> int:
             path = args[j + 1] if j + 1 < len(args) and not args[j + 1].startswith("-") else None
             store = Path(path).resolve() if path else Path(tempfile.mkdtemp(prefix="amg-xlang-"))
             store.mkdir(parents=True, exist_ok=True)
-            cases = build_demo_store(store, xlang=True)
-            print(f"built xlang demo graph at {store}\n")
+            cases = build_embeddings_demo(store)
+            print(f"built embeddings demo graph at {store}\n")
         base = R.load_config(store)
         for label, enabled in (("OFF", "off"), ("ON", "on")):
             cfg = {**base, "embeddings": {**(base.get("embeddings") or {}), "enabled": enabled}}
