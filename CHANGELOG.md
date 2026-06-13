@@ -4,6 +4,29 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-06-14
+
+Stage 3 closed: consolidation is made safe, reversible, and honestly documented; edge weights are put under measurement. Compaction is gated by a real switch and protects valuable nodes in code; merge/sub-hub mutations preserve earned signal and memberships; created nodes match the synthesized canon; branches are computable on a real graph; and Hebbian weight updates are OFF by default until eval proves they help.
+
+### Added
+- `weights.apply_hebbian` (default **false**): `fold_weights` always accumulates `coact` (which feeds salience) but changes edge weight `w` only when enabled AND a new co-activation journal exists. Default-off breaks the partly-circular co-activation loop (weights → pack → pairs → same weights) until an eval on/off comparison proves the uplift (THEORY §8.1); tying decay to the journal makes a no-signal re-run a w-no-op (audit 1.9).
+- Code-enforced compaction safety: `_is_protected` (protected types + high centrality via the shared `_degree_map`) spares valuable nodes from shorten/retire/merge-drop/summarize-archive without `force`; `compaction.enabled: false` blocks over-budget flagging and every compression action (audit 1.8, 1.11).
+- `_branch_members` downward traversal — from a hub via containment edges (`HUB_DOWN_RELS` = documents/defines/specifies/implements/contains), stopping at any other hub — so branches are non-empty when a leaf's primary `part_of` is the directory string, and over-budget compaction is no longer inert (audit 1.20).
+- `selftest_consolidate.py` grows to 13 checks (protect/force, centrality, enabled-gate, shorten idempotent, merge quality, sub-hub memberships, node schema, grounded inbound, branch downward, two-mode weights).
+
+### Changed
+- `merge` rewritten: edges fold by `(rel,to)` with max weight + **summed** `coact`, `part_of` combined (simplex), self-edges and edges into the drop set dropped, and a neighbor's edges deduped after `redirect_inbound` (audit 1.22).
+- `introduce_subhub` replaces only the `parent_topic` membership with the sub-hub, preserving the node's other memberships, renormalized (audit 1.21).
+- Consolidation-created nodes (`summarize_episodes`, `introduce_subhub`) match the synthesized canon — `policy: authored`, `source_hash`/`derived_from_hash: null`, `lang` from `working_language` — and land in the `_hubs` bucket (2.8 p.5).
+- `salience` provenance counts inbound `documents`/`implements`/`specifies` edges, not only outgoing (2.8 p.6).
+- `near_duplicate_sim`/`episodic_types`/`stale_age_days` are read from config (top-level) and added to the template (audit 1.17).
+- `weights.default_edge_weight` is passed through `reconcile._merge_edges`, `retrieve.build_adjacency`, and `consolidate.fold_weights` — no longer a dead key (audit 1.23).
+- Docs synced with the stage: THEORY §8 reworked (+ §8.1 "why Hebbian is off by default", the self-reinforcement risk) and §13; `07-consolidation.md`, `09-config.md`, `GUIDE.md`; roadmap compacted.
+
+### Fixed
+- `shorten` archives the full original once, so a repeated `apply` no longer overwrites it with the shortened body (audit 1.10).
+- `weights` no longer claims strict idempotency it lacks: decay/reinforcement run only with a journal (audit 1.9).
+
 ## [0.4.0] — 2026-06-13
 
 Stage 2 closed: retrieval is aligned with the data model — status-aware ranking, fixed tiers, consistent edge priors, by-key config merge, multilingual embedding defaults, an off-vs-on eval harness, activation explainability, and a lightweight pre-answer verification rule.
