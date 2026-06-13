@@ -723,7 +723,7 @@ README.md - английская версия, ссылается на еще о
    - `branch_budget`;
    - `confidence` / `provenance` / `verification` как planned-поля;
    - `origin` на рёбрах как planned или реализуемое поле.
-   Пометка (Этап 0, задача 2): `lineno`/`qualname` уже пишутся при created/changed и тихо обновляются при сдвиге единицы без смены хеша; поле `lang` узла остаётся языком сводки (так его пишет цепочка builder → apply → consolidate); язык источника в схему узла не вводится — потребителя нет, для mirror он восстановим из `source_path`; при будущей нужде это отдельное поле `source_lang` (решение Этапа 1). Поле `origin` рёбер реализовано (задачи 3–4): `structural | semantic | synthesized | consolidation`; legacy-рёбра без origin размечает миграция Этапа 1 (задача 7).
+   Пометка (Этап 0, задача 2): `lineno`/`qualname` уже пишутся при created/changed и тихо обновляются при сдвиге единицы без смены хеша; поле `lang` узла остаётся языком сводки (так его пишет цепочка builder → apply → consolidate); язык источника в схему узла не вводится — потребителя нет, для mirror он восстановим из `source_path`; при будущей нужде это отдельное поле `source_lang` (решение Этапа 1). Поле `origin` рёбер реализовано (задачи 3–4): `structural | semantic | synthesized | consolidation`; legacy-рёбра без origin размечает миграция Этапа 1 (задача 7). Пометка (Этап 1, задачи 5–6): `branch_budget` внесён в таблицу полей (только у хабов, бюджет в узлах; читает `consolidate.py plan`, кодом не пишется); `confidence`/`provenance`/`verification` — подраздел «Запланированные поля» с привязкой к Этапу 13; пункт закрывается после миграции (задача 7).
 3. Уточнить, что `coact` и `last_used` — поля рёбер.
 4. Закрыт на Этапе 1 (задача 4; код — Этап 0, задача 5): канон — разделы «Классы узлов и `source_kind`» и «Типы узлов» 02-data-model.md; миграция старых узлов — задача 7 Этапа 1.
 5. Описать, что `part_of` может:
@@ -1418,12 +1418,12 @@ amg/                 # НЕ в репозитории: данные локаль
    - `derived_from_file`;
    - `synthesized`;
    - `authored`.
-5. Добавить fields:
+5. Добавить fields: — выполнено (`lineno`/`qualname` и `origin` рёбер внесены в 02-data-model.md ещё на Этапе 0; `branch_budget` добавлен в таблицу полей: читает только `consolidate.py plan`, кодом не пишется)
    - `lineno`;
    - `qualname`;
    - `branch_budget`;
    - `origin` на рёбрах.
-6. Подготовить planned-поля:
+6. Подготовить planned-поля: — выполнено (подраздел «Запланированные поля (не реализованы)» в 02-data-model.md со ссылкой на Этап 13)
    - `confidence`;
    - `provenance`;
    - `verification`.
