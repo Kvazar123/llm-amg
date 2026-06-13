@@ -4,6 +4,26 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-06-13
+
+Stage 1 closed: the node schema is unified to one canon and pre-canon graphs migrate to it.
+
+### Added
+- `migrate_schema.py` — one-shot, idempotent schema migration (one transaction under the writer lock): `source_kind: derived` → `synthesized`, `type: derived` hubs → `hub`/`overview`, tree-sitter grammar kinds → canonical, edge `origin` backfilled per owner class; `lineno` is left to the next `bootstrap`, which restores it via pointer drift. `selftest_migrate.py` is the sixth selftest.
+- `branch_budget` node field (hub-only node-count budget read by `consolidate.py plan`); planned trust fields `confidence`/`provenance`/`verification` documented as a forward-looking subsection (Stage 13).
+- tree-sitter binding adapter in `_treesitter_units` for both generations of `tree-sitter-language-pack` (classic py-tree-sitter API and the alef rewrite ≥ 1.8); without it fresh installs silently degraded non-Python files to a single file unit. `selftest_stage2.py` now exercises a live JavaScript parse.
+
+### Changed
+- tree-sitter unit `kind` is canonicalized to `function`/`class` at extraction (`_TS_DEF` map; struct/impl/trait/interface/enum → `class`), so non-Python code gets the same retrieval tiers and `path:line` pointers as Python (audit 1.25).
+- reconcile pointer-drift now also reconciles a mirror node's `type` (extraction-owned), converging legacy grammar kinds without re-derivation.
+- `amg-synth` emits `type: hub`/`overview` instead of `derived`; provenance lives in `source_kind: synthesized` (audit 1.4).
+- Data-model doc brought to canon: new "Node types" section, `branch_budget` and planned fields in the frontmatter table, node-file-path example corrected (single underscore for `::`).
+
+### Fixed
+- Hub node types are `hub`/`overview`, so hubs land in the strategic tier and participate in branch compaction (1.4).
+- `source_kind` normalization is completed for pre-canon graphs by the migration (1.5).
+- Non-Python tree-sitter nodes no longer fall out of tiers and the `path:line` pointer format (1.25).
+
 ## [0.2.0] — 2026-06-13
 
 Stage 0 closed: the reconcile core (`bootstrap`/`plan`/`apply`) is correct and self-healing.

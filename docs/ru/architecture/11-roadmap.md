@@ -69,52 +69,13 @@
 
 ### 1.4. Типы хабов должны быть `hub` / `overview`, а не `derived`
 
-**Файлы:**
-
-- `agents/amg-synth.md`
-- `reconcile.py`
-- `retrieve.py`
-- `consolidate.py`
-- `docs/ru/architecture/08-agents-skills.md`
-- `docs/ru/architecture/02-data-model.md`
-
-Промпт `amg-synth` сейчас допускает `type: derived` для hub/overview-узлов. Но код ждёт:
-
-```py
-TIER_OF_TYPE = {
-    "hub": "strategic",
-    "overview": "strategic",
-}
-```
-
-А `consolidate.py` ищет ветки так:
-
-```py
-hubs = [nid for nid, n in nodes.items() if n.get("type") in ("hub", "overview")]
-```
-
-Нужно закрепить:
-
-- верхнеуровневый обзор: `type: overview`;
-- тематический хаб: `type: hub`;
-- происхождение хранить в `source_kind`, а не в `type`.
-
-Пример:
-
-```yaml
-id: hub:controllers-routing
-type: hub
-source_kind: synthesized
-policy: authored
-```
-
-**Результат:** хабы попадают в strategic tier, участвуют в budget planning и branch compaction.
+Исправлено на Этапе 1 (задача 3): `amg-synth` (промпт и § в 08-agents-skills.md) задаёт `type: overview`/`hub`, происхождение — `source_kind: synthesized`; `retrieve.TIER_OF_TYPE` и `consolidate._branch_members` уже относили hub/overview к strategic-ярусу и веткам (код не менялся). Канон типов → `02-data-model.md`, раздел «Типы узлов».
 
 ---
 
 ### 1.5. Нормализовать таксономию `source_kind`
 
-Исправлено на Этапе 0 (задача 5): код больше не пишет `derived` — `summarize_episodes` и `introduce_subhub` создают `source_kind: synthesized`; канон (`derived_from_file` / `synthesized` / `authored`) — `02-data-model.md`. Остатки: миграция старых узлов — Этап 1 (задача 7); устаревшее `derived` в `consistency-model.md` — пункт 2.14 (Этап 7).
+Исправлено на Этапах 0 (задача 5: код больше не пишет `derived`) и 1 (задача 7: `migrate_schema.py` переводит старые узлы `source_kind: derived` → `synthesized`). Канон (`derived_from_file` / `synthesized` / `authored`) → `02-data-model.md`; устаревший класс `derived` в `consistency-model.md` — пункт 2.14 (Этап 7).
 
 ---
 
@@ -571,17 +532,7 @@ mn["part_of"] = [{"topic": hub_id, "w": 1.0}]
 
 ### 1.25. Tree-sitter-узлы выпадают из ярусов и формата указателей
 
-**Файлы:**
-
-- `extract_structure.py`
-- `retrieve.py` (`TIER_OF_TYPE`, `CODE_TYPES`)
-- `docs/ru/architecture/06-retrieval.md`
-
-`kind` единиц tree-sitter — это типы узлов грамматики (`function_definition`, `class_declaration`, …). Их нет ни в `TIER_OF_TYPE` (класс уходит в operational вместо tactical), ни в `CODE_TYPES` (узел рендерится как документ `### id`, а не указателем `path:line`).
-
-Нужно канонизировать `kind` ещё при извлечении (`function_definition` → `function`, `class_declaration` → `class` и т. п.) либо расширить оба отображения; согласовать с каноном типов Этапа 1.
-
-**Результат:** не-Python код получает те же ярусы и указатели, что Python.
+Исправлено на Этапе 1 (задача 8): `_TS_DEF` в `extract_structure.py` канонизирует типы узлов грамматики в `function`/`class` ещё при извлечении, поэтому не-Python код попадает в существующие `TIER_OF_TYPE`/`CODE_TYPES` (retrieve.py не менялся); дрейф указателя `reconcile.py` сводит `type` старых зеркал. Детали → `04-ingest.md` («Прочий код — tree-sitter»), `02-data-model.md` («Типы узлов»); regression — `selftest_stage2.py` (живой JS-прогон). Описание tier mapping в `06-retrieval.md` сверяется на Этапе 2 (пункт 2.7.2).
 
 ---
 
@@ -718,7 +669,7 @@ README.md - английская версия, ссылается на еще о
 
 1. Закрыт на Этапе 1 (задачи 1–2): канон `type` — раздел «Типы узлов» 02-data-model.md; tree-sitter-типы — допустимое расширение до канонизации (задача 8 Этапа 1).
 2. Закрыт на Этапе 1 (задачи 5–7; `lineno`/`qualname`/`origin` — ещё Этап 0): все поля и planned-поля — в таблицах и подразделе «Запланированные поля» 02-data-model.md; legacy-разметку `origin` выполняет `migrate_schema.py`; решение по `lang` (язык источника в схему не входит, при будущей нужде — отдельное поле `source_lang`) — строка `lang` таблицы полей.
-3. Уточнить, что `coact` и `last_used` — поля рёбер.
+3. Закрыт на Этапе 1: `coact` и `last_used` описаны как поля рёбер в таблице «Рёбра» 02-data-model.md.
 4. Закрыт на Этапе 1 (задача 4; код — Этап 0, задача 5): канон — разделы «Классы узлов и `source_kind`» и «Типы узлов» 02-data-model.md; миграция старых узлов — задача 7 Этапа 1.
 5. Описать, что `part_of` может:
    - создаваться детерминированно по пути;
@@ -727,7 +678,7 @@ README.md - английская версия, ссылается на еще о
    - заменяться на subhub при `introduce_subhub`.
 6. Не писать, что `superseded` уже понижается retrieval, пока это не реализовано.
 7. Дополнить раскладку каталогов: в схеме отсутствуют `cache/` (pack.md, embeddings.json) и `log.md`.
-8. Исправить пример пути файла узла: `[^\w.-]+` схлопывает `::` в один подчерк, поэтому верный пример — `nodes/code/src_billing.py_charge_card-1a2b3c4d.md`, а не `…py__charge_card…`.
+8. Закрыт на Этапе 1: пример пути файла узла исправлен на `nodes/code/src_billing.py_charge_card-…` (одинарный подчерк вместо двойного) — 02-data-model.md, раздел «Путь файла узла».
 9. Закрыт на Этапе 0: резолвер imports, поле `origin` рёбер и строки `qualname`/`lineno` отражены в 02-data-model.md (таблицы полей и рёбер, раздел «Рёбра»).
 
 ---
@@ -1386,53 +1337,7 @@ amg/                 # НЕ в репозитории: данные локаль
 
 ## Этап 1 — стабилизация модели данных
 
-Цель: привести node schema к одному канону.
-
-Задачи:
-
-1. Обновить `02-data-model.md`. — выполнено в объёме задач 2–4 (раздел «Типы узлов», строка `type` таблицы полей); поля задач 5–6 допишутся при их выполнении.
-2. Закрепить `type` — выполнено (раздел «Типы узлов» в 02-data-model.md):
-   - `hub`;
-   - `overview`;
-   - `module`;
-   - `class`;
-   - `function`;
-   - `section`;
-   - `block`;
-   - `page`;
-   - `record`;
-   - `sheet`;
-   - `file`;
-   - `note`;
-   - `decision`;
-   - `adr`;
-   - tree-sitter-specific types как допустимое расширение.
-3. Убрать использование `type: derived`. — выполнено (`agents/amg-synth.md`, § `amg-synth` в 08-agents-skills.md; код и демо-граф значение не использовали; устаревший класс `derived` в consistency-model.md — пункт 2.14, Этап 7).
-4. Закрепить `source_kind` — выполнено (раздел «Классы узлов и `source_kind`» в 02-data-model.md был каноничен; код нормализован на Этапе 0, задача 5; миграция старых узлов — задача 7):
-   - `derived_from_file`;
-   - `synthesized`;
-   - `authored`.
-5. Добавить fields: — выполнено (`lineno`/`qualname` и `origin` рёбер внесены в 02-data-model.md ещё на Этапе 0; `branch_budget` добавлен в таблицу полей: читает только `consolidate.py plan`, кодом не пишется)
-   - `lineno`;
-   - `qualname`;
-   - `branch_budget`;
-   - `origin` на рёбрах.
-6. Подготовить planned-поля: — выполнено (подраздел «Запланированные поля (не реализованы)» в 02-data-model.md со ссылкой на Этап 13)
-   - `confidence`;
-   - `provenance`;
-   - `verification`.
-7. Сделать миграционный скрипт для старых узлов: — выполнено (`migrate_schema.py`, идемпотентно, одной транзакцией под локом; regression — `selftest_migrate.py`; уточнение спецификации: рёбра без `origin` у synthesized-узлов получают `origin: synthesized`, не `semantic`; `lineno` скрипт не трогает — его бесплатно восстанавливает следующий `bootstrap` веткой дрейфа, связка покрыта тестом; файлы между бакетами не переносятся — вопрос бакета отложен в 2.8 п. 5)
-   - `source_kind: derived` → `synthesized`;
-   - `type: derived` у хабов → `hub` или `overview` (`overview` — если хвост id содержит "overview"; мигрированные id выводятся в отчёте);
-   - при возможности восстановить `lineno`;
-   - проставить `origin` рёбрам без него: `imports`/`calls` → `structural`, прочие → `semantic` (поле введено на Этапе 0, задача 4).
-8. Канонизировать `kind` tree-sitter-единиц при извлечении (`function_definition` → `function`, `class_declaration` → `class` и т. п.) либо расширить `TIER_OF_TYPE`/`CODE_TYPES` — см. 1.25; иначе не-Python код выпадает из ярусов и формата указателей. — выполнено первым вариантом: `_TS_DEF` в `extract_structure.py` стал картой «тип грамматики → `function`/`class`» (контейнеры struct/impl/trait/interface/enum → `class`), `retrieve.py` не менялся; в дрейф указателя `reconcile.py` добавлена проверка `type` (тип зеркала принадлежит извлечению — legacy-графы сводятся и без миграции); попутно `_treesitter_units` адаптирован к двум поколениям биндинга `tree-sitter-language-pack` (классический py-tree-sitter-API и alef-rewrite ≥ 1.8 с методным API — без адаптации свежие установки молча падали в файловые единицы); regression — `selftest_stage2.py` (живой JS-прогон), `selftest_reconcile.py` (сценарий дрейфа).
-
-Definition of done:
-
-- старый граф проходит migration;
-- `retrieve.py` и `consolidate.py` одинаково понимают hub/overview;
-- документация схемы совпадает с фактическим frontmatter.
+Выполнено (закрыт 2026-06-13, v0.3.0): node schema приведена к одному канону. Типы узлов закреплены по классам `source_kind` (раздел «Типы узлов» 02-data-model.md); `type: derived` упразднён (`amg-synth` → `overview`/`hub`, происхождение в `source_kind: synthesized`); поля `lineno`/`qualname`/`branch_budget`/`origin` и planned-поля `confidence`/`provenance`/`verification` задокументированы; `migrate_schema.py` идемпотентно (одной транзакцией под локом) приводит старые графы к канону — `source_kind`/`type: derived`, грамматические `kind`, разметка `origin` рёбер по классу узла-владельца, `lineno` добирает следующий `bootstrap` дрейфом указателя; tree-sitter `kind` канонизируется в `function`/`class` при извлечении (`_TS_DEF`-карта + адаптер двух поколений биндинга `tree-sitter-language-pack`), дрейф указателя сводит `type` старых зеркал. DoD выполнен: миграция старого графа (`selftest_migrate.py`); `retrieve.TIER_OF_TYPE` и `consolidate._branch_members` одинаково понимают hub/overview; схема == frontmatter. Regression — шесть селфтестов (добавлен `selftest_migrate.py`). Детали → `02-data-model.md` (основной), `04-ingest.md`, `05-reconcile.md`, `08-agents-skills.md`; решения этапа — свёрнутые пункты 1.4, 1.5, 1.25 раздела 1 и закрытые пункты 2.3 (пп. 1–4, 8), 2.9 п. 1.
 
 ---
 
