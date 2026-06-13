@@ -51,4 +51,4 @@ Stage 0 closed: the reconcile core (`bootstrap`/`plan`/`apply`) is correct and s
 
 ## [0.1.0] — 2026-06-12
 ### Added
-- Baseline of the source repository: engine (skills, agents), entrypoint activation template, config template, Russian documentation (THEORY, GUIDE, architecture 01–11), roadmap with audit items 1.1–1.30 and stages 0–18, development tooling (CLAUDE.md, BASE-PROMPT.md, STATUS.md).
+- Baseline of the source repository: engine (skills, agents), entrypoint activation template, config template, Russian documentation (THEORY, GUIDE, architecture 01–11), roadmap with audit items 1.1–1.30 and stages 0–18, development tooling (CLAUDE.md, STATUS.md).
