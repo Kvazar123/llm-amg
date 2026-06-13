@@ -185,12 +185,96 @@ def test_apply_and_recall(proj):
           f"({recall_before:.2f} -> {recall_after:.2f}); store verifies clean")
 
 
+def test_protect_and_force(proj):
+    """A protected type (decision/adr) is not shortened/retired without force (1.11)."""
+    amg = proj / ".claude" / "amg"
+    store = gs.GraphStore(amg)
+    write_node(store, "notes:dec/keep", "notes",
+               {"type": "decision", "summary": "keep me", "status": "active"},
+               body="Important decision rationale.")
+    (amg / "work").mkdir(exist_ok=True)
+
+    (amg / "work" / "a1.json").write_text(json.dumps(
+        [{"action": "shorten", "id": "notes:dec/keep", "summary": "x", "body": "y"}]))
+    counts = C.apply_actions(proj, amg / "work" / "a1.json")
+    assert counts.get("skipped_protected") == 1, counts
+    n = C.load_nodes(store)["notes:dec/keep"]
+    assert n["_body"].strip() == "Important decision rationale.", "decision body must be intact"
+
+    (amg / "work" / "a2.json").write_text(json.dumps(
+        [{"action": "shorten", "id": "notes:dec/keep", "summary": "x", "body": "y",
+          "force": True}]))
+    counts = C.apply_actions(proj, amg / "work" / "a2.json")
+    n = C.load_nodes(store)["notes:dec/keep"]
+    assert counts.get("shorten") == 1 and n["_body"].strip() == "y", n
+    print("PASS  protect: decision not shortened without force; force overrides")
+
+
+def test_centrality_protect():
+    """A node at max degree centrality (> protect_min_centrality) is protected in code."""
+    cmp_cfg = C.DEFAULTS["compaction"]
+    degree = {"n1": 4, "n2": 1}
+    assert C._is_protected({"id": "n1", "type": "note"}, degree, 4, cmp_cfg), \
+        "max-centrality node must be protected even as a plain note"
+    assert not C._is_protected({"id": "n2", "type": "note"}, degree, 4, cmp_cfg)
+    print("PASS  protect: high-centrality node is protected by code")
+
+
+def test_enabled_gate(proj):
+    """compaction.enabled:false blocks compression actions and over-budget flagging (1.8)."""
+    amg = proj / ".claude" / "amg"
+    store = gs.GraphStore(amg)
+    cfg_path = amg / "config.yml"
+    original = cfg_path.read_text(encoding="utf-8")
+    cfg_path.write_text(original + "\ncompaction:\n  enabled: false\n", encoding="utf-8")
+    try:
+        write_node(store, "notes:tmp/long", "notes",
+                   {"type": "note", "summary": "long one"}, body="A B C D E F.")
+        (amg / "work").mkdir(exist_ok=True)
+        (amg / "work" / "ag.json").write_text(json.dumps(
+            [{"action": "shorten", "id": "notes:tmp/long", "summary": "x", "body": "y"}]))
+        counts = C.apply_actions(proj, amg / "work" / "ag.json")
+        assert counts.get("skipped_disabled") == 1, counts
+        n = C.load_nodes(store)["notes:tmp/long"]
+        assert n["_body"].strip() == "A B C D E F.", "compression must be blocked when disabled"
+
+        edit_node(store, "hub:billing", lambda nd: nd.__setitem__("branch_budget", 1))
+        C.make_plan(proj)
+        plan = json.loads((amg / "work" / "consolidation-plan.json").read_text())
+        assert plan["over_budget_branches"] == [], "disabled compaction flags no branches"
+    finally:
+        cfg_path.write_text(original, encoding="utf-8")
+    print("PASS  enabled: enabled:false blocks compression and over-budget flagging")
+
+
+def test_shorten_idempotent(proj):
+    """A repeated apply of the same shorten must not overwrite the archived original (1.10)."""
+    amg = proj / ".claude" / "amg"
+    store = gs.GraphStore(amg)
+    write_node(store, "notes:tmp/orig", "notes",
+               {"type": "note", "summary": "orig summary"}, body="ORIGINAL FULL TEXT.")
+    (amg / "work").mkdir(exist_ok=True)
+    (amg / "work" / "s.json").write_text(json.dumps(
+        [{"action": "shorten", "id": "notes:tmp/orig", "summary": "short", "body": "shortened."}]))
+    C.apply_actions(proj, amg / "work" / "s.json")
+    C.apply_actions(proj, amg / "work" / "s.json")          # apply a SECOND time
+    full = list((store.root / "archive").glob("*orig*.full"))
+    assert full, "full original must be archived"
+    assert "ORIGINAL FULL TEXT." in full[0].read_text(encoding="utf-8"), \
+        "repeated apply must not overwrite the archived original with the shortened body"
+    print("PASS  shorten: repeated apply preserves the archived original (idempotent)")
+
+
 if __name__ == "__main__":
     proj = setup_project()
     try:
         test_weights(proj)
         test_plan(proj)
         test_apply_and_recall(proj)
+        test_protect_and_force(proj)
+        test_centrality_protect()
+        test_enabled_gate(proj)
+        test_shorten_idempotent(proj)
         print("\nALL CONSOLIDATION CHECKS PASSED")
     finally:
         shutil.rmtree(proj, ignore_errors=True)

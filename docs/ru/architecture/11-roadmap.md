@@ -705,10 +705,10 @@ README.md - английская версия, ссылается на еще о
 
 Нужно исправить:
 
-1. `compaction.enabled` описывать как рабочий флаг только после реализации.
-2. Не называть `weights` идемпотентным, если decay остаётся time/action-based.
-3. Описать idempotent archive для `shorten`.
-4. Защиту `decision` / `adr` описывать как enforced в коде после реализации.
+1. `compaction.enabled` описывать как рабочий флаг только после реализации. (Сессия 1 Этапа 3: реализован — `make_plan` гейтит `over_budget`, `apply_actions` гейтит `COMPACTION_ACTIONS` с override `force:true`; при закрытии описать в 07.)
+2. Не называть `weights` идемпотентным, если decay остаётся time/action-based. (Решение C: decay только при наличии журнала → semantic-idempotent относительно зафиксированного сигнала; описать при закрытии.)
+3. Описать idempotent archive для `shorten`. (Сессия 1 Этапа 3: `.full` пишется один раз — проверка существования перед записью; при закрытии описать.)
+4. Защиту `decision` / `adr` описывать как enforced в коде после реализации. (Сессия 1 Этапа 3: `_is_protected` — защищённые типы + high-centrality, override `force`; при закрытии описать.)
 5. Привести создаваемые консолидацией узлы к data model: `source_kind`, `policy`, `source_hash`, `derived_from_hash`, `lang`. — Частично: с Этапа 0 рёбра из `summarize_episodes` штампуются `origin: consolidation` (задача 4), оба создаваемых узла получают `source_kind: synthesized` (задача 5); на Этапе 3 — остальные поля (`policy`, `source_hash`, `derived_from_hash`, `lang`) и вопрос бакета: узел из `summarize_episodes` ложится в `notes/`, тогда как 02-data-model маршрутизирует `source_kind == synthesized` в `_hubs` — либо перенести, либо уточнить правило в документе.
 6. Grounded/salience должен учитывать не только outgoing, но и inbound `documents` / `implements` / `specifies`.
 7. Автоматический eval-gate: закрывается на Этапе 4 — сверить описание с реализованным механизмом.
@@ -1306,11 +1306,11 @@ amg/                 # НЕ в репозитории: данные локаль
 
 Задачи:
 
-1. Реализовать `compaction.enabled`.
-2. Enforce `protect_types` в коде.
-3. Enforce high-centrality protection.
-4. Сделать `shorten` idempotent-safe.
-5. Уточнить семантику idempotency для `weights`.
+1. Реализовать `compaction.enabled`. — выполнено (Сессия 1): `make_plan` не флагует `over_budget` при `enabled:false`; `apply_actions` пропускает действия из `COMPACTION_ACTIONS` без `force:true`.
+2. Enforce `protect_types` в коде. — выполнено (Сессия 1): `_is_protected` в `apply_actions` — `decision`/`adr` не сжимаются/убираются/архивируются без `force`.
+3. Enforce high-centrality protection. — выполнено (Сессия 1): `_is_protected` — нормированная центральность `degree/max_deg > protect_min_centrality`; общий `_degree_map` с `make_plan` (одинаковая оценка центральности).
+4. Сделать `shorten` idempotent-safe. — выполнено (Сессия 1): `.full` пишется только если ещё не существует (повторный `apply` не затирает оригинал).
+5. Уточнить семантику idempotency для `weights`. — решено (Сессия план, развилка C): decay только при наличии нового журнала ко-активаций; без `last_decay_at`/календаря (реализация — Сессия 3).
 6. Добавить `last_decay_at` или другой механизм, если decay должен зависеть от времени.
 7. Привести создаваемые консолидацией узлы к data model.
 8. Grounded/salience должен учитывать inbound edges.
@@ -1321,10 +1321,11 @@ amg/                 # НЕ в репозитории: данные локаль
    - объединять `part_of`;
    - дедуплицировать рёбра соседей после `redirect_inbound` по `(rel, to)` (см. 1.22).
 10. Добавить regression-тесты:
-    - повторный `apply actions.json` не теряет оригинал;
-    - `decision` нельзя `shorten` без `force`;
-    - `compaction.enabled: false` блокирует compression actions.
-11. Учесть магические константы.
+    - повторный `apply actions.json` не теряет оригинал; — выполнено (Сессия 1): `test_shorten_idempotent`
+    - `decision` нельзя `shorten` без `force`; — выполнено (Сессия 1): `test_protect_and_force` + `test_centrality_protect`
+    - `compaction.enabled: false` блокирует compression actions. — выполнено (Сессия 1): `test_enabled_gate`
+    - (остальные regression — Сессии 2–3: `merge` max-w/coact/self-edge/part_of, членства subhub, вычислимость веток, веса вхолостую)
+11. Учесть магические константы: `near_duplicate_sim`/`episodic_types`/`stale_age_days` читать из конфига (top-level + в шаблон); `default_edge_weight` (1.23) — мёртвый ключ, решено **пробросить**, а не убрать (развилка D, подтверждена): `reconcile._merge_edges` (главное место создания смысловых рёбер), fallback `retrieve.build_adjacency`, `consolidate.fold_weights`. Затрагивает модули закрытых этапов строго по списку дефекта 1.23 — закрытие дефекта, не перестройка решений (Сессия 3).
 12. Сделать ветки реально вычислимыми (см. 1.20): первичное `part_of` листьев переписывается на их хаб при синтезе, либо `_branch_members` дополнительно следует рёбрам хаба вниз; без этого `over_budget_branches` пуст и компрессия инертна.
 13. `introduce_subhub` должен сохранять прочие членства узла (см. 1.21): заменяется только тема, под которую вводится под-хаб, с перенормировкой.
 14. Включать хеббово обновление весов только под измерением: сигнал ко-активации частично цикличен (PPR использует веса → пакет порождает пары → пары усиливают те же веса), поэтому до eval-сравнения «weights on/off» копить `coact` вхолостую, не меняя `w`; в перспективе перейти на сигнал от исхода задачи (сессии с принятым результатом), а не от факта совместной выдачи.

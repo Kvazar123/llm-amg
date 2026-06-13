@@ -75,6 +75,13 @@ DEFAULTS = {
     "stale_age_days": 30,
 }
 
+# Actions that COMPRESS the graph (vs. promote, which only raises a status). When
+# compaction.enabled is false these are skipped unless the action carries
+# force:true; a protected node (protect_types / high centrality) is likewise
+# spared from a destructive action without force.
+COMPACTION_ACTIONS = {"summarize_episodes", "merge", "introduce_subhub",
+                      "shorten", "retire"}
+
 
 # --------------------------------------------------------------------------- #
 # Node IO
@@ -270,6 +277,35 @@ def salience(node: dict, degree: int, max_degree: int, cfg: dict) -> float:
                  0.20 * bridge + 0.10 * grounded, 3)
 
 
+def _degree_map(nodes: Dict[str, dict]) -> Tuple[Dict[str, int], int]:
+    """Degree centrality over edges whose target is a known node (both endpoints
+    counted), and the max degree. Shared by the plan (salience bridging) and apply
+    (high-centrality protection) so both judge centrality identically."""
+    degree: Dict[str, int] = defaultdict(int)
+    for nid, n in nodes.items():
+        for e in (n.get("edges") or []):
+            if isinstance(e, dict) and e.get("to") in nodes:
+                degree[nid] += 1
+                degree[e["to"]] += 1
+    return degree, (max(degree.values()) if degree else 1)
+
+
+def _is_protected(node: Optional[dict], degree: Dict[str, int], max_deg: int,
+                  cmp_cfg: dict) -> bool:
+    """A node the compaction layer must not collapse/shorten/retire/archive without
+    an explicit force: a protected type (decision/adr) or a node whose normalized
+    degree centrality exceeds protect_min_centrality. Enforced in code, not only in
+    the consolidator prompt (1.11)."""
+    if node is None:
+        return False
+    protect = {str(t).lower() for t in cmp_cfg.get("protect_types", [])}
+    if (node.get("type") or "").lower() in protect:
+        return True
+    deg = degree.get(node.get("id"), 0)
+    centrality = deg / max_deg if max_deg else 0.0
+    return centrality > cmp_cfg.get("protect_min_centrality", 0.7)
+
+
 def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
     amg = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     store = gs.GraphStore(amg)
@@ -277,24 +313,21 @@ def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
     cfg = load_config(amg)
     nodes = load_nodes(store)
 
-    degree: Dict[str, int] = defaultdict(int)
-    for nid, n in nodes.items():
-        for e in (n.get("edges") or []):
-            if isinstance(e, dict) and e.get("to") in nodes:
-                degree[nid] += 1
-                degree[e["to"]] += 1
-    max_deg = max(degree.values()) if degree else 1
+    degree, max_deg = _degree_map(nodes)
 
     members = _branch_members(nodes)
     cmp_cfg = cfg["compaction"]
     over_budget = []
-    for hub, mem in members.items():
-        budget = nodes[hub].get("branch_budget", cmp_cfg["default_branch_budget_nodes"])
-        tok = sum(_toklen(serialize(nodes[m], nodes[m].get("_body", ""))) for m in mem)
-        if len(mem) > budget or tok > cmp_cfg["default_branch_budget_tokens"]:
-            over_budget.append({"hub": hub, "size_nodes": len(mem), "size_tokens": tok,
-                                "budget_nodes": budget, "members": mem,
-                                "staged_steps": cmp_cfg["steps"]})
+    # compaction.enabled is a real switch: when off, no branch is ever flagged
+    # over budget, so the consolidator is never handed compression work (1.8).
+    if cmp_cfg.get("enabled", True):
+        for hub, mem in members.items():
+            budget = nodes[hub].get("branch_budget", cmp_cfg["default_branch_budget_nodes"])
+            tok = sum(_toklen(serialize(nodes[m], nodes[m].get("_body", ""))) for m in mem)
+            if len(mem) > budget or tok > cmp_cfg["default_branch_budget_tokens"]:
+                over_budget.append({"hub": hub, "size_nodes": len(mem), "size_tokens": tok,
+                                    "budget_nodes": budget, "members": mem,
+                                    "staged_steps": cmp_cfg["steps"]})
 
     # near-duplicate candidates (lexical Jaccard over summaries)
     ids = list(nodes)
@@ -342,6 +375,9 @@ def apply_actions(project_root: Path, actions_path: Path,
         store.recover()
         nodes = load_nodes(store)
         tx = store.transaction()
+        cmp_cfg = cfg["compaction"]
+        enabled = cmp_cfg.get("enabled", True)
+        degree, max_deg = _degree_map(nodes)
 
         def archive(nid: str):
             n = nodes.get(nid)
@@ -371,6 +407,27 @@ def apply_actions(project_root: Path, actions_path: Path,
 
         for act in actions:
             kind = act.get("action")
+            force = bool(act.get("force"))
+
+            # compaction.enabled off blocks every compression action unless forced (1.8)
+            if kind in COMPACTION_ACTIONS and not enabled and not force:
+                counts["skipped_disabled"] += 1
+                continue
+            # protected nodes are never collapsed/shortened/retired/archived without
+            # force — enforced here in code, not only in the consolidator prompt (1.11)
+            if not force:
+                if kind in ("shorten", "retire"):
+                    guard = [act.get("id")]
+                elif kind == "merge":
+                    guard = list(act.get("drop_ids", []))
+                elif kind == "summarize_episodes":
+                    guard = list(act.get("archive_ids", []))
+                else:
+                    guard = []
+                if any(_is_protected(nodes.get(t), degree, max_deg, cmp_cfg)
+                       for t in guard if t):
+                    counts["skipped_protected"] += 1
+                    continue
 
             if kind == "promote":
                 n = nodes.get(act["id"])
@@ -391,7 +448,11 @@ def apply_actions(project_root: Path, actions_path: Path,
                 n = nodes.get(act["id"])
                 if not n:
                     continue
-                tx.write(f"{archive_dir}/{Path(n['_path']).name}.full", serialize(n, n["_body"]))
+                # Save the full original ONCE: a repeated apply must not overwrite
+                # the archived original with the already-shortened version (1.10).
+                full_rel = f"{archive_dir}/{Path(n['_path']).name}.full"
+                if not store.abspath(full_rel).exists():
+                    tx.write(full_rel, serialize(n, n["_body"]))
                 if "summary" in act:
                     n["summary"] = act["summary"]
                 n["_body"] = act.get("body", "")
