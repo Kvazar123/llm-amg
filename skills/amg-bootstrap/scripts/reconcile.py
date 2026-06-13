@@ -477,7 +477,9 @@ def apply_derivation(project_root: Path, derivation_path: Path,
     items = json.loads(Path(derivation_path).read_text(encoding="utf-8"))
     config = load_config(amg_root) or {}
     default_lang = config.get("working_language", "en")
-    renormalize = bool((config.get("weights") or {}).get("part_of_renormalize", True))
+    weights_cfg = config.get("weights") or {}
+    renormalize = bool(weights_cfg.get("part_of_renormalize", True))
+    default_w = float(weights_cfg.get("default_edge_weight", 0.5))
     applied, created, skipped = 0, 0, 0
 
     with store.lock():
@@ -517,7 +519,8 @@ def apply_derivation(project_root: Path, derivation_path: Path,
                 node["part_of"] = _merge_part_of(node.get("part_of") or [],
                                                  item["part_of"], renormalize)
             if item.get("edges"):
-                node["edges"] = _merge_edges(node.get("edges", []), item["edges"])
+                node["edges"] = _merge_edges(node.get("edges", []), item["edges"],
+                                             default_w=default_w)
             if "summary" in item or node.get("source_kind") != "derived_from_file":
                 node["derived_from_hash"] = node.get("source_hash")
                 node["status"] = "active"
@@ -561,12 +564,13 @@ def _merge_part_of(existing: List[dict], incoming: List[dict],
 
 
 def _merge_edges(existing: List[dict], incoming: List[dict],
-                 default_origin: str = "semantic") -> List[dict]:
+                 default_origin: str = "semantic", default_w: float = 0.5) -> List[dict]:
     """Merge by (rel, to); keep the higher weight and accumulated coact count.
 
     An existing edge keeps its origin (a structural edge confirmed by the
     judgment layer stays structural — it is still re-extractable); a new or
-    unmarked one takes the incoming origin, defaulting to `default_origin`.
+    unmarked one takes the incoming origin, defaulting to `default_origin`. A new
+    edge with no explicit weight starts at `default_w` (weights.default_edge_weight).
     """
     index = {(e.get("rel"), e.get("to")): dict(e) for e in existing}
     for e in incoming:
@@ -576,7 +580,7 @@ def _merge_edges(existing: List[dict], incoming: List[dict],
             index[key].setdefault("origin", e.get("origin", default_origin))
         else:
             index[key] = {"rel": e.get("rel"), "to": e.get("to"),
-                          "w": e.get("w", 0.5), "coact": 0,
+                          "w": e.get("w", default_w), "coact": 0,
                           "origin": e.get("origin", default_origin)}
     return list(index.values())
 

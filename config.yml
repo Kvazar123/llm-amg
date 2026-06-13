@@ -112,11 +112,16 @@ retrieval:
 # Weight maintenance (Hebbian reinforcement + decay), applied during consolidation.
 # -----------------------------------------------------------------------------
 weights:
-  default_edge_weight: 0.5
+  default_edge_weight: 0.5        # starting weight for a semantic edge with no explicit w
   hebbian_rate: 0.10
   decay_rate: 0.02
   prune_below: 0.05
   part_of_renormalize: true
+  # Hebbian weight updates are OFF until an eval on/off comparison proves they help:
+  # the co-activation signal is partly circular (weights -> pack -> pairs -> weights),
+  # so `consolidate.py weights` only ACCUMULATES coact (which feeds salience) and
+  # leaves w untouched while this is false. Flip on after measuring the uplift.
+  apply_hebbian: false
 
 # -----------------------------------------------------------------------------
 # Compaction (amg-consolidate). Off by default; a branch is compressed only when
@@ -130,3 +135,11 @@ compaction:
   protect_min_centrality: 0.7
   archive_dir: archive
   steps: [summarize_episodes, merge_near_duplicates, introduce_subhub, lossy_shorten]
+
+# -----------------------------------------------------------------------------
+# Consolidation plan tunables (near-duplicate detection + episodic classification).
+# Previously hardcoded in consolidate.py; surfaced here so they are overridable.
+# -----------------------------------------------------------------------------
+near_duplicate_sim: 0.82           # Jaccard threshold to flag two nodes as merge candidates
+episodic_types: [section, note]    # node types treated as episodic (summarize / salience)
+stale_age_days: 30                 # recency basis for the salience freshness signal

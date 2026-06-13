@@ -59,7 +59,13 @@ WORD_RE = re.compile(r"\w+", re.UNICODE)   # Unicode: must match non-Latin scrip
 
 DEFAULTS = {
     "hebbian_rate": 0.10, "decay_rate": 0.02, "prune_below": 0.05,
-    "part_of_renormalize": True,
+    "part_of_renormalize": True, "default_edge_weight": 0.5,
+    # Hebbian weight updates are OFF by default: the co-activation signal is partly
+    # circular (PPR weights -> pack -> co-activated pairs -> the same weights), so
+    # `weights` only ACCUMULATES coact (which feeds salience) until an eval on/off
+    # comparison proves the updates help retrieval (roadmap task 14). Flip on via
+    # weights.apply_hebbian once measured.
+    "apply_hebbian": False,
     "compaction": {
         "enabled": True,
         "default_branch_budget_nodes": 150,
@@ -87,6 +93,13 @@ COMPACTION_ACTIONS = {"summarize_episodes", "merge", "introduce_subhub",
 # (2.8 p.6): a code node that a doc documents is grounded even with no outgoing edge.
 GROUND_RELS = {"documents", "implements", "specifies"}
 
+# "Containment-ish" relations a hub follows DOWNWARD to reach its branch (1.20). A
+# leaf's primary part_of points at a directory STRING (not a node), so the upward
+# part_of walk alone leaves over_budget_branches empty on a real graph; following a
+# hub's own outgoing structural edges (and a module's `defines` to its functions)
+# down to non-hub nodes recovers the branch. The walk stops at any other hub.
+HUB_DOWN_RELS = {"documents", "defines", "specifies", "implements", "contains"}
+
 
 # --------------------------------------------------------------------------- #
 # Node IO
@@ -98,11 +111,16 @@ def load_config(amg_root: Path) -> dict:
     f = amg_root / "config.yml"
     if f.exists():
         raw = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
-        for key in ("hebbian_rate", "decay_rate", "prune_below", "part_of_renormalize"):
+        for key in ("hebbian_rate", "decay_rate", "prune_below", "part_of_renormalize",
+                    "default_edge_weight", "apply_hebbian"):
             if key in (raw.get("weights") or {}):
                 cfg[key] = raw["weights"][key]
         if "compaction" in raw:
             cfg["compaction"].update(raw["compaction"] or {})
+        # plan tunables previously frozen in code (1.17): now overridable from config
+        for key in ("near_duplicate_sim", "episodic_types", "stale_age_days"):
+            if key in raw:
+                cfg[key] = raw[key]
         cfg["working_language"] = raw.get("working_language", "en")
     return cfg
 
@@ -149,6 +167,8 @@ def fold_weights(project_root: Path, amg_root: Optional[Path] = None) -> dict:
     store.init()
     cfg = load_config(amg)
     eta, lam, prune = cfg["hebbian_rate"], cfg["decay_rate"], cfg["prune_below"]
+    default_w = cfg["default_edge_weight"]
+    apply_hebbian = bool(cfg.get("apply_hebbian", False))
 
     log_path = store.root / "work" / "coactivation.log"
     pair_counts: Dict[Tuple[str, str], int] = defaultdict(int)
@@ -164,6 +184,12 @@ def fold_weights(project_root: Path, amg_root: Optional[Path] = None) -> dict:
             for u, v in rec.get("coactivated", []):
                 pair_counts[tuple(sorted((u, v)))] += 1
     max_co = max(pair_counts.values()) if pair_counts else 1
+    # Touch w (decay + reinforcement + prune) ONLY when Hebbian updates are enabled
+    # AND a new co-activation journal exists. Otherwise just ACCUMULATE coact (which
+    # feeds salience) and leave w alone: the signal is partly circular, so weight
+    # updates stay off until eval proves them (task 14); tying decay to the journal's
+    # presence also makes a no-signal re-run a w-no-op (audit 1.9 idempotency).
+    update_w = apply_hebbian and bool(pair_counts)
 
     with store.lock():
         store.recover()
@@ -184,19 +210,20 @@ def fold_weights(project_root: Path, amg_root: Optional[Path] = None) -> dict:
                 if not isinstance(e, dict) or not e.get("to"):
                     kept.append(e)
                     continue
-                w = float(e.get("w", 0.5))
                 co = co_for(nid, e["to"])
-                w = w - lam                              # passive decay (everyone)
-                if co > 0:                                # Hebbian reinforcement
-                    w += eta * (co / max_co)
+                if co > 0:                                # accumulate the signal ALWAYS
                     e["coact"] = int(e.get("coact", 0)) + co
-                w = max(0.0, min(1.0, w))
-                e["w"] = round(w, 4)
-                touched = True                            # a weight changed -> must persist
-                if w >= prune:
-                    kept.append(e)
-                else:
-                    pass                                  # faded edge dropped (pruned)
+                    touched = True
+                if update_w:
+                    w = float(e.get("w", default_w)) - lam    # passive decay
+                    if co > 0:                                # Hebbian reinforcement
+                        w += eta * (co / max_co)
+                    w = max(0.0, min(1.0, w))
+                    e["w"] = round(w, 4)
+                    touched = True
+                    if w < prune:
+                        continue                          # faded edge dropped (pruned)
+                kept.append(e)
             if kept != edges:
                 node["edges"] = kept
                 touched = True
@@ -219,10 +246,12 @@ def fold_weights(project_root: Path, amg_root: Optional[Path] = None) -> dict:
             tx.delete("work/coactivation.log")
 
         txid = tx.commit()
-        _log(store, f"weights folded: {len(pair_counts)} edges reinforced, "
-                    f"{changed} nodes updated", txid)
+        _log(store, f"weights folded: apply_hebbian={update_w}, "
+                    f"{len(pair_counts)} co-activated pairs, {changed} nodes updated", txid)
 
-    return {"reinforced_edges": len(pair_counts), "nodes_updated": changed}
+    return {"coact_pairs": len(pair_counts),
+            "reinforced_edges": len(pair_counts) if update_w else 0,
+            "nodes_updated": changed, "hebbian_applied": update_w}
 
 
 # --------------------------------------------------------------------------- #
@@ -239,12 +268,24 @@ def _jaccard(a: set, b: set) -> float:
 
 
 def _branch_members(nodes: Dict[str, dict]) -> Dict[str, List[str]]:
-    """For each hub node, the ids whose part_of (transitively) reaches it."""
+    """For each hub node, the ids that belong to its branch — reached two ways:
+
+      * upward: a node whose part_of transitively reaches the hub (explicit
+        membership, incl. weighted multi-membership from synthesis);
+      * downward: from the hub, following its containment-ish edges (HUB_DOWN_RELS)
+        transitively to non-hub nodes (a hub documents a module, the module defines
+        its functions). This makes branches computable when a leaf's primary
+        membership is the directory string rather than the hub node (audit 1.20).
+
+    The downward walk stops at any other hub, so branches don't bleed together."""
     parent_topics: Dict[str, List[str]] = {
         nid: [p.get("topic") for p in (n.get("part_of") or []) if isinstance(p, dict)]
         for nid, n in nodes.items()}
     hubs = [nid for nid, n in nodes.items() if n.get("type") in ("hub", "overview")]
-    members: Dict[str, List[str]] = {h: [] for h in hubs}
+    hub_set = set(hubs)
+    members: Dict[str, set] = {h: set() for h in hubs}
+
+    # upward: part_of transitively reaching a hub
     for nid in nodes:
         seen, stack = set(), list(parent_topics.get(nid, []))
         while stack:
@@ -253,9 +294,27 @@ def _branch_members(nodes: Dict[str, dict]) -> Dict[str, List[str]]:
                 continue
             seen.add(t)
             if t in members and nid != t:
-                members[t].append(nid)
+                members[t].add(nid)
             stack.extend(parent_topics.get(t, []))
-    return members
+
+    # downward: hub -> containment-ish edges -> non-hub nodes, transitively
+    for h in hubs:
+        seen, stack = {h}, [h]
+        while stack:
+            cur = nodes.get(stack.pop())
+            if not cur:
+                continue
+            for e in (cur.get("edges") or []):
+                if not (isinstance(e, dict) and e.get("rel") in HUB_DOWN_RELS):
+                    continue
+                to = e.get("to")
+                if to not in nodes or to in seen or to in hub_set:
+                    continue
+                seen.add(to)
+                members[h].add(to)
+                stack.append(to)
+
+    return {h: sorted(m) for h, m in members.items()}
 
 
 def salience(node: dict, degree: int, max_degree: int, cfg: dict,

@@ -737,7 +737,7 @@ README.md - английская версия, ссылается на еще о
 2. Уточнить, что `models` пока declarative/planned, если нет механизма проброса.
 3. `compaction.enabled` описывать как рабочий переключатель только после реализации.
 4. Закрыт на Этапе 2: «код-fallback ≠ шаблон» разведено в 09-config для `token_budget` (код 1200/2500/6000/40) и бюджетов веток (код 150/60000 ≠ шаблон 400/200000); слияние `retrieval` переформулировано как по-ключевое (`_deep_merge`).
-5. Для `near_duplicate_sim`, `episodic_types`, `stale_age_days` либо реализовать чтение из config, либо оставить как internal defaults.
+5. Для `near_duplicate_sim`, `episodic_types`, `stale_age_days` либо реализовать чтение из config, либо оставить как internal defaults. (Сессия 3 Этапа 3: реализовано чтение из config — top-level ключи в `consolidate.load_config`, добавлены в шаблон `config.yml`. При закрытии описать в 09-config как настраиваемые.)
 6. Добавить planned-поля:
    - `automation`;
    - `session_policy`;
@@ -746,7 +746,7 @@ README.md - английская версия, ссылается на еще о
    - `agent_dir` / `entrypoint` (пишет installer, см. 4.9: `entrypoint` читается кодом из конфига, `agent_dir` фиксирует выбор декларативно — корень ищется по расположению самого конфига);
    - `confidence`/`verification` config, если появится.
 7. Закрыт на Этапе 2: `convergence_tol`/`seed_floor`/`status_prior` и типы `refines`/`exemplifies`/`supersedes` внесены в таблицу `retrieval` 09-config.
-8. `weights.default_edge_weight` — мёртвый ключ (см. 1.23): пробросить в код либо убрать из шаблона и справочника.
+8. `weights.default_edge_weight` — мёртвый ключ (см. 1.23): пробросить в код либо убрать из шаблона и справочника. (Сессия 3 Этапа 3: проброшен в `reconcile._merge_edges`/`retrieve.build_adjacency`/`consolidate.fold_weights` — больше не декоративный. При закрытии описать в 09-config как рабочий.)
 
 ---
 
@@ -1310,8 +1310,8 @@ amg/                 # НЕ в репозитории: данные локаль
 2. Enforce `protect_types` в коде. — выполнено (Сессия 1): `_is_protected` в `apply_actions` — `decision`/`adr` не сжимаются/убираются/архивируются без `force`.
 3. Enforce high-centrality protection. — выполнено (Сессия 1): `_is_protected` — нормированная центральность `degree/max_deg > protect_min_centrality`; общий `_degree_map` с `make_plan` (одинаковая оценка центральности).
 4. Сделать `shorten` idempotent-safe. — выполнено (Сессия 1): `.full` пишется только если ещё не существует (повторный `apply` не затирает оригинал).
-5. Уточнить семантику idempotency для `weights`. — решено (Сессия план, развилка C): decay только при наличии нового журнала ко-активаций; без `last_decay_at`/календаря (реализация — Сессия 3).
-6. Добавить `last_decay_at` или другой механизм, если decay должен зависеть от времени.
+5. Уточнить семантику idempotency для `weights`. — выполнено (Сессия 3, развилка C): decay/Хебб/обрезка применяются только при наличии нового журнала ко-активаций → повторный `weights` без журнала — w-no-op; semantic-idempotent относительно зафиксированного сигнала (журнал ротируется в архив один раз).
+6. Добавить `last_decay_at` или другой механизм, если decay должен зависеть от времени. — выполнено (Сессия 3): выбран механизм «decay привязан к наличию журнала» (затухание за период активности, не за календарь); `last_decay_at` намеренно НЕ вводится (Хебб про использование; календарное затухание недетерминированно для тестов).
 7. Привести создаваемые консолидацией узлы к data model. — выполнено (Сессия 2): `summarize_episodes`/`introduce_subhub` → канон synthesized (`policy: authored`, `source_hash`/`derived_from_hash: null`, `lang` из `working_language`); `summarize_episodes` перенесён в бакет `_hubs` (правило «synthesized → _hubs», 2.8 п.5).
 8. Grounded/salience должен учитывать inbound edges. — выполнено (Сессия 2): `_inbound_grounded` + параметр `salience(grounded_inbound)`; узел, на который указывают `documents`/`implements`/`specifies`, заземлён (2.8 п.6).
 9. Улучшить `merge`: — выполнено (Сессия 2): `_fold` (max-вес + сумма `coact`), `_combine_part_of` (слияние членств с симплексом), отбрасывание self-edge и рёбер внутрь drop, `_dedup_edges` соседей после `redirect_inbound` (закрывает 1.22).
@@ -1324,11 +1324,11 @@ amg/                 # НЕ в репозитории: данные локаль
     - повторный `apply actions.json` не теряет оригинал; — выполнено (Сессия 1): `test_shorten_idempotent`
     - `decision` нельзя `shorten` без `force`; — выполнено (Сессия 1): `test_protect_and_force` + `test_centrality_protect`
     - `compaction.enabled: false` блокирует compression actions. — выполнено (Сессия 1): `test_enabled_gate`
-    - `merge` max-w/coact/self-edge/part_of/dedup — выполнено (Сессия 2): `test_merge_quality`; членства subhub — `test_subhub_keeps_memberships`; узлы к схеме — `test_consolidation_nodes_schema`; grounded inbound — `test_grounded_inbound`. (Остальные regression — Сессия 3: вычислимость веток, веса вхолостую)
-11. Учесть магические константы: `near_duplicate_sim`/`episodic_types`/`stale_age_days` читать из конфига (top-level + в шаблон); `default_edge_weight` (1.23) — мёртвый ключ, решено **пробросить**, а не убрать (развилка D, подтверждена): `reconcile._merge_edges` (главное место создания смысловых рёбер), fallback `retrieve.build_adjacency`, `consolidate.fold_weights`. Затрагивает модули закрытых этапов строго по списку дефекта 1.23 — закрытие дефекта, не перестройка решений (Сессия 3).
-12. Сделать ветки реально вычислимыми (см. 1.20): первичное `part_of` листьев переписывается на их хаб при синтезе, либо `_branch_members` дополнительно следует рёбрам хаба вниз; без этого `over_budget_branches` пуст и компрессия инертна.
+    - `merge` max-w/coact/self-edge/part_of/dedup — выполнено (Сессия 2): `test_merge_quality`; членства subhub — `test_subhub_keeps_memberships`; узлы к схеме — `test_consolidation_nodes_schema`; grounded inbound — `test_grounded_inbound`. Вычислимость веток — выполнено (Сессия 3): `test_branch_downward`; веса вхолостую vs on — `test_weights` (два режима).
+11. Учесть магические константы. — выполнено (Сессия 3): `near_duplicate_sim`/`episodic_types`/`stale_age_days` читаются из конфига (top-level в `load_config` + добавлены в шаблон `config.yml`); `default_edge_weight` (1.23) **проброшен** (развилка D), а не убран: `reconcile._merge_edges` (главное место создания смысловых рёбер; `apply_derivation` читает `weights.default_edge_weight`), fallback `retrieve.build_adjacency` (через `load_config`), `consolidate.fold_weights`. Затронуты `reconcile`/`retrieve` строго по списку дефекта 1.23 — закрытие дефекта, не перестройка решений.
+12. Сделать ветки реально вычислимыми (см. 1.20). — выполнено (Сессия 3, развилка A): `_branch_members` дополнен обходом **вниз** от хаба по `HUB_DOWN_RELS` (`documents`/`defines`/`specifies`/`implements`/`contains`), стоп на чужом хабе; вверх-путь по `part_of` сохранён. Выбран вариант «вниз» (не переписывание синтеза) — локально в `consolidate.py`, не трогает `synth`/`reconcile`.
 13. `introduce_subhub` должен сохранять прочие членства узла (см. 1.21): заменяется только тема, под которую вводится под-хаб, с перенормировкой. — выполнено (Сессия 2): заменяется только `parent_topic` → `hub_id`, прочие членства сохраняются, `_combine_part_of` ренормирует к симплексу.
-14. Включать хеббово обновление весов только под измерением: сигнал ко-активации частично цикличен (PPR использует веса → пакет порождает пары → пары усиливают те же веса), поэтому до eval-сравнения «weights on/off» копить `coact` вхолостую, не меняя `w`; в перспективе перейти на сигнал от исхода задачи (сессии с принятым результатом), а не от факта совместной выдачи.
+14. Включать хеббово обновление весов только под измерением. — выполнено (Сессия 3, развилка B): флаг `weights.apply_hebbian` (по умолчанию `false`); `fold_weights` всегда копит `coact` (питает `salience.freq`), а `w` (Хебб+затухание+обрезка) меняет только при флаге И наличии журнала. Дефолт off отражает позицию «суждение консолидатора + провенанс ценнее статистики собственных выдач». В перспективе — сигнал от исхода задачи (сессии с принятым результатом), а не от факта совместной выдачи (разрывает цикличность): кандидат-задача Этапа 13/14, требует сессий (Этап 9) и eval (Этап 4). Само включение Хебба — после измеренного выигрыша eval-gate (Этап 4).
 
 Definition of done:
 

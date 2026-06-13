@@ -16,6 +16,7 @@ Checks:
 Run:  python selftest_consolidate.py
 """
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -57,7 +58,8 @@ def edge_of(store, nid, to):
 
 
 def write_node(store, nid, kind, meta_extra, body=""):
-    slug = nid.split(":", 1)[-1].replace("/", "_")[:48]
+    # same slug rule as reconcile.node_relpath / consolidate.newpath (filename-safe)
+    slug = re.sub(r"[^\w.-]+", "_", nid.split(":", 1)[-1]).strip("_")[:48] or "node"
     h = gs.sha256_text(nid)[:8]
     meta = {"id": nid, "status": "active", "updated": "2026-01-01T00:00:00"}
     meta.update(meta_extra)
@@ -74,38 +76,52 @@ def gold_recall(proj, amg):
 # --------------------------------------------------------------------------- #
 
 def test_weights(proj):
+    """apply_hebbian off (default) only accumulates coact; on reinforces/decays/prunes."""
     amg = proj / ".claude" / "amg"
     store = gs.GraphStore(amg)
+    cfg_path = amg / "config.yml"
+    original_cfg = cfg_path.read_text(encoding="utf-8")
 
-    # Inject a faded, un-coactivated edge that should be pruned (0.04 -> 0.02 < 0.05).
-    edit_node(store, "code:src/billing.py::compute_total", lambda n: n.__setitem__(
+    cc, ct = "code:src/billing.py::charge_card", "code:src/billing.py::compute_total"
+    # a faded, un-coactivated edge that WOULD be pruned if decay ran (0.04 - 0.02 < 0.05)
+    edit_node(store, ct, lambda n: n.__setitem__(
         "edges", [{"rel": "relates_to", "to": "code:src/auth.py::login", "w": 0.04, "coact": 0}]))
+    pair = [cc, ct]
 
-    # A co-activation log naming one pair three times.
-    (store.root / "work").mkdir(exist_ok=True)
-    pair = ["code:src/billing.py::charge_card", "code:src/billing.py::compute_total"]
-    (store.root / "work" / "coactivation.log").write_text(
-        "".join(json.dumps({"coactivated": [pair]}) + "\n" for _ in range(3)))
+    def write_log():
+        (store.root / "work").mkdir(exist_ok=True)
+        (store.root / "work" / "coactivation.log").write_text(
+            "".join(json.dumps({"coactivated": [pair]}) + "\n" for _ in range(3)))
 
-    w_before = edge_of(store, "code:src/billing.py::charge_card",
-                       "code:src/billing.py::compute_total")["w"]
-    C.fold_weights(proj)
+    w_before = edge_of(store, cc, ct)["w"]
 
-    reinforced = edge_of(store, "code:src/billing.py::charge_card",
-                         "code:src/billing.py::compute_total")
-    assert reinforced["w"] > w_before, "co-activated edge should strengthen"
-    assert reinforced["coact"] == 3, "co-activation count should accumulate"
+    # Phase 1 — default (apply_hebbian off): coact ACCUMULATES, w untouched, no prune;
+    # the journal is still rotated (the signal is consumed into coact).
+    write_log()
+    res = C.fold_weights(proj)
+    assert res["hebbian_applied"] is False, res
+    e = edge_of(store, cc, ct)
+    assert e["coact"] == 3, "coact must accumulate even with hebbian off"
+    assert e["w"] == w_before, "w must NOT change while apply_hebbian is off"
+    assert abs(edge_of(store, "code:src/billing.py", cc)["w"] - 1.0) < 1e-9, "no decay when off"
+    assert edge_of(store, ct, "code:src/auth.py::login") is not None, "no prune when off"
+    assert not (store.root / "work" / "coactivation.log").exists(), "log rotated (signal consumed)"
 
-    decayed = edge_of(store, "code:src/billing.py", "code:src/billing.py::charge_card")
-    assert abs(decayed["w"] - 0.98) < 1e-6, "unused edge should decay by lambda"
-
-    assert edge_of(store, "code:src/billing.py::compute_total",
-                   "code:src/auth.py::login") is None, "faded edge should be pruned"
-
-    assert not (store.root / "work" / "coactivation.log").exists(), "log should be rotated"
-    arch = list((store.root / "archive").glob("coactivation-*.log"))
-    assert arch, "rotated log should be archived (not lost)"
-    print("PASS  weights: reinforce + decay + prune + log rotation")
+    # Phase 2 — apply_hebbian on: reinforcement + decay + prune apply.
+    cfg_path.write_text(original_cfg + "\nweights:\n  apply_hebbian: true\n", encoding="utf-8")
+    try:
+        write_log()
+        res = C.fold_weights(proj)
+        assert res["hebbian_applied"] is True, res
+        r = edge_of(store, cc, ct)
+        assert r["w"] > w_before, "co-activated edge should strengthen when on"
+        assert r["coact"] == 6, "coact keeps accumulating across folds"
+        assert abs(edge_of(store, "code:src/billing.py", cc)["w"] - 0.98) < 1e-6, "unused edge decays"
+        assert edge_of(store, ct, "code:src/auth.py::login") is None, "faded edge pruned when on"
+    finally:
+        cfg_path.write_text(original_cfg, encoding="utf-8")
+    assert list((store.root / "archive").glob("coactivation-*.log")), "rotated log archived"
+    print("PASS  weights: hebbian off accumulates coact only; on reinforces + decays + prunes")
 
 
 def test_plan(proj):
@@ -358,6 +374,28 @@ def test_grounded_inbound():
     print("PASS  grounded: an inbound grounding edge raises salience (provenance)")
 
 
+def test_branch_downward(proj):
+    """A hub reaches its branch via containment edges even when leaf part_of is the
+    directory string (not the hub) — so over_budget is computable on a real graph (1.20)."""
+    amg = proj / ".claude" / "amg"
+    store = gs.GraphStore(amg)
+    write_node(store, "hub:svc", "_hubs",
+               {"type": "hub", "source_kind": "synthesized",
+                "edges": [{"rel": "documents", "to": "code:svc/m.py", "w": 0.6}]})
+    write_node(store, "code:svc/m.py", "code",
+               {"type": "module", "source_path": "svc/m.py",
+                "edges": [{"rel": "defines", "to": "code:svc/m.py::f", "w": 1.0},
+                          {"rel": "defines", "to": "code:svc/m.py::g", "w": 1.0}],
+                "part_of": [{"topic": "svc", "w": 1.0}]})    # primary home is the DIR string
+    for fn in ("f", "g"):
+        write_node(store, f"code:svc/m.py::{fn}", "code",
+                   {"type": "function", "source_path": "svc/m.py",
+                    "part_of": [{"topic": "svc", "w": 1.0}]})
+    branch = set(C._branch_members(C.load_nodes(store)).get("hub:svc", []))
+    assert branch >= {"code:svc/m.py", "code:svc/m.py::f", "code:svc/m.py::g"}, branch
+    print("PASS  branch: hub reaches its branch downward via containment edges (1.20)")
+
+
 if __name__ == "__main__":
     proj = setup_project()
     try:
@@ -372,6 +410,7 @@ if __name__ == "__main__":
         test_subhub_keeps_memberships(proj)
         test_consolidation_nodes_schema(proj)
         test_grounded_inbound()
+        test_branch_downward(proj)
         print("\nALL CONSOLIDATION CHECKS PASSED")
     finally:
         shutil.rmtree(proj, ignore_errors=True)

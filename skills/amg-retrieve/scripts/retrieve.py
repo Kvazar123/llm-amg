@@ -147,6 +147,9 @@ def load_config(store_root: Path) -> dict:
     # Surface top-level working_language into the retrieval cfg so embedding backend
     # selection can default to a multilingual model for non-English projects.
     cfg["working_language"] = raw.get("working_language", "en")
+    # weights.default_edge_weight is the fallback weight for an edge with no explicit
+    # w (audit 1.23); read it here so build_adjacency does not hardcode 0.5.
+    cfg["default_edge_weight"] = float((raw.get("weights") or {}).get("default_edge_weight", 0.5))
     return cfg
 
 
@@ -251,6 +254,7 @@ def build_adjacency(nodes: Dict[str, dict], cfg: dict) -> Dict[str, List[Tuple[s
     """
     priors = cfg["relation_priors"]
     default = cfg["relation_prior_default"]
+    default_w = cfg.get("default_edge_weight", 0.5)
     acc: Dict[Tuple[str, str], float] = defaultdict(float)
 
     def add_edge(u: str, rel: str, v: str, w: float):
@@ -265,7 +269,7 @@ def build_adjacency(nodes: Dict[str, dict], cfg: dict) -> Dict[str, List[Tuple[s
     for u, node in nodes.items():
         for e in node["edges"]:
             if isinstance(e, dict) and e.get("to"):
-                add_edge(u, e.get("rel", "relates_to"), e["to"], e.get("w", 0.5))
+                add_edge(u, e.get("rel", "relates_to"), e["to"], e.get("w", default_w))
         for pm in node["part_of"]:
             if isinstance(pm, dict) and pm.get("topic"):
                 add_edge(u, "part_of", pm["topic"], pm.get("w", 0.7))
