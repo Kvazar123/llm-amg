@@ -118,6 +118,10 @@ Process when reworking docs:
 4. Where needed — restructure, deepen the shallow parts from the code, fix misplaced anglicisms, repair diagrams.
 5. **Never damage what is already written correctly.** Good fragments stay; forward-written descriptions of future features stay too (see the preamble of roadmap Section 2).
 
+**The documentation must be comprehensive, detailed, without confusion, consistent, written in competent technical Russian (or another language), and not consist of only terms and dry theses; people will read it**.
+
+All principles are mandatory not only when writing documentation from scratch, but also for any edits.
+
 ## 8. Testing
 
 - Headless (always available): core selftests (`skills/*/scripts/selftest_*.py`); CLI cycles on fixtures in temp directories (bootstrap → stub derivation → retrieve → consolidate); `eval_retrieval.py --make-demo` in a temp directory.
