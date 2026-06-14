@@ -123,49 +123,7 @@
 
 ### 1.13. Результат `amg-classifier` должен применяться кодом
 
-**Файлы:**
-
-- `agents/amg-classifier.md`
-- `skills/amg-bootstrap/SKILL.md`
-- `extract_structure.py`
-- `docs/ru/architecture/04-ingest.md`
-- `docs/ru/architecture/08-agents-skills.md`
-
-`extract_structure.py --stats` показывает `ambiguous_files`. Скилл говорит, что можно запустить `amg-classifier`.
-
-Но в коде нет:
-
-- файла override-классификации;
-- аргумента CLI для подстановки результата classifier;
-- чтения `work/classification-overrides.json`;
-- повторного extract с уточнённой категорией.
-
-То есть classifier сейчас концептуально описан, но не интегрирован.
-
-Требуется добавить, например:
-
-```txt
-.claude/amg/work/classification-overrides.json
-```
-
-Формат:
-
-```json
-{
-  "scripts/run": {"category": "code", "language": "bash"},
-  "README.old": {"category": "doc", "language": null}
-}
-```
-
-`extract_structure.py` должен:
-
-1. читать overrides;
-2. применять их до fallback-классификации;
-3. показывать в `--stats`, какие ambiguous files разрешены override-ом.
-
-**Результат:** `amg-classifier` становится рабочей частью bootstrap, а не только описанным prompt.
-
-_Этап 6 (задачи 1–5, реализовано):_ `extract_structure.load_overrides`/`_route_override`/`_classify_path` читают `work/classification-overrides.json` **до** fallback-классификации; override побеждает и известное расширение (ручная коррекция приоритетна); маршрутизация `code`+`python`→ast, `code`+грамматика→treesitter, `data`→json, `doc`→paragraphs; `null`/malformed-файл → пустая карта (bootstrap не блокируется). `--stats` отдаёт `resolved_by_override` + `ambiguous_files` (только неразрешённые) + `classifier_hint`. Workflow — `amg-bootstrap/SKILL.md` шаг 2 и `agents/amg-classifier.md`; regression — `selftest_extract_overrides.py`. Свернуть до строки «исправлено на Этапе 6» при закрытии этапа (синхронизировав 04-ingest/08).
+Исправлено на Этапе 6 (задачи 1–5): `extract_structure` читает `work/classification-overrides.json` (`load_overrides`/`_route_override`/`_classify_path`) **до** fallback-классификации, override сильнее догадки по расширению и маршрутизирует файл по нарезателям; битый/отсутствующий файл → пустая карта (bootstrap не блокируется); `--stats` показывает `resolved_by_override`/`ambiguous_files`/`classifier_hint`. Детали → `04-ingest.md` («Overrides: вердикт классификатора, действующий в коде»), `08-agents-skills.md` (§ `amg-classifier`/`amg-bootstrap`); regression — `selftest_extract_overrides.py`.
 
 ---
 
@@ -528,7 +486,7 @@ README.md - английская версия, ссылается на еще о
    - function hash меняется у функции;
    - class hash меняется у всего class body;
    - module hash меняется у всего файла.
-4. Описать, что `amg-classifier` требует `classification-overrides.json`. _(Этап 6: реализовано — см. 1.13; при закрытии описать в 04-ingest формат `{путь: {category, language}}` в `work/`, чтение до fallback, приоритет над расширением, маршрутизацию по нарезателям, мягкий пропуск malformed; новый раздел «Классификатор: overrides» рядом с «Классификация».)_
+4. Закрыт на Этапе 6: применение `amg-classifier` через `classification-overrides.json` (формат `{путь: {category, language}}`, чтение до fallback, приоритет над расширением, маршрутизация по нарезателям, мягкий пропуск битого файла) описано в 04-ingest, раздел «Overrides: вердикт классификатора, действующий в коде».
 5. Не заявлять CSV/logs как supported data, пока нет классификатора и нарезателя.
 6. Добавить planned:
    - chat/session chunker;
@@ -571,7 +529,7 @@ README.md - английская версия, ссылается на еще о
 
 1. Закрыт на Этапе 1 (задача 3): `agents/amg-synth.md` и § `amg-synth` в 08-agents-skills.md задают `type: overview` для обзора и `type: hub` для хабов; происхождение — `source_kind: synthesized`, проставляется при `apply`.
 2. Закрыт на Этапе 0: поля `qualname`/`lineno`/`lang` добавлены в очередь; вход синхронизирован и в промпте `amg-builder.md`, и в § `amg-builder` файла 08-agents-skills.md (`lang` на входе — язык источника, в выходе — язык сводки).
-3. Описать применение `amg-classifier` через overrides. _(Этап 6: реализовано — см. 1.13; при закрытии в § `amg-classifier`/§ `amg-bootstrap` файла 08 описать петлю «ambiguous → classifier → запись `work/classification-overrides.json` → повтор bootstrap», выход классификатора как вход overrides.)_
+3. Закрыт на Этапе 6: петля «ambiguous → classifier → запись `work/classification-overrides.json` → повтор bootstrap» описана в § `amg-bootstrap`/`amg-classifier` файла 08.
 4. Уточнить, что `amg-synth` не редактирует `nodes/`, но может писать `gap-report.md`.
 5. Закрыт на Этапе 5: безопасный API заметок — `notes.py add` (типы `note`/`decision`/`adr`/`open_question`/`plan`, статус `captured`, запись через `graph_store.Transaction`); петля захвата в § `amg-consolidate` (шаг 2) и петле активации описана через него, не как ручная правка `nodes/`.
 6. Хуки, команды `/amg`, sessions и `automation`: описания сверяются на Этапах 8–9 (закрытие пункта там); до того остаются опережающими.
@@ -1182,48 +1140,7 @@ amg/                 # НЕ в репозитории: данные локаль
 
 ## Этап 6 — интеграция `amg-classifier`
 
-Цель: ambiguous files должны уточняться не только в prompt, но и в pipeline.
-
-Задачи:
-
-1. Добавить `classification-overrides.json`. — выполнено
-2. Научить `extract_structure.py` читать overrides. — выполнено
-3. Добавить команду: — выполнено
-
-```bash
-python .claude/skills/amg-bootstrap/scripts/extract_structure.py . --stats
-```
-
-которая показывает:
-
-- unresolved ambiguous files;
-- resolved by override;
-- suggested classifier command.
-
-4. Обновить `amg-bootstrap` workflow: — выполнено
-   - если ambiguous files есть, можно запустить `amg-classifier`;
-   - результат записать в overrides;
-   - повторить extract/plan.
-5. Добавить tests. — выполнено
-6. Подготовить песочницу `amg-testbed/` (см. 4.9): отдельный тест-проект с игрушечными mirror/absorb-источниками и sync-скрипт, копирующий движок из репозитория-источника в `<testbed>/.claude/`; прогнать в ней цикл классификации целиком. Дальше песочница обслуживает этапы 8–10 (хуки, команды, сессии, установка). — выполнено _(`sync_testbed.py` в корне репо: идемпотентно копирует `skills/`+`agents/` → `<testbed>/.claude/`, шаблон `entrypoint/CLAUDE.md` → `<testbed>/CLAUDE.md`, `notes.py` входит автоматически; граф/конфиг/источники не трогает. Песочница `../amg-testbed`: delivery-service (billing/jobs/notify/auth + docs mirror, data absorb, неоднозначный `src/run`). Цикл синтезированным движком: `--stats` (src/run ambiguous) → override `{code,bash}` → `--stats` (resolved) → `bootstrap` (27 узлов, src/run в бакете code). Песочница вне репо, в гит не идёт.)_
-7. **Продуктовое измерение хеббовых весов (`apply_hebbian`) на реальном графе песочницы.** Отложено с Этапа 4 (задача 7): дефолт `apply_hebbian` ставится в `true` **только** по измерению на реальных данных, а не по синтетике (она доказала лишь корректность механизма — `build_hebbian_demo`). Песочница (задача 6) даёт первый реальный/репрезентативный граф с настоящим журналом ко-активаций. Провести **пошагово** (команды — из корня `amg-testbed`):
-   1. **Построить граф.** Полный bootstrap на источниках песочницы: `reconcile.py bootstrap .` → деривация субагентами `amg-builder` (по `work/queue.json`) → `reconcile.py apply work/derived-*.json .` → синтез `amg-synth` и его `apply`. Итог — наполненный граф со сводками и смысловыми рёбрами.
-   2. **Разметить хорошие cases.** Завести `<testbed>/.claude/amg/cases.json` с 5–10 **многошаговыми** реальными запросами; id целей брать из `inspect_graph.py`. Обязательно включить случаи, где gold достижим **по рёбрам, а не лексически** (иначе ни PPR, ни Хеббу нечего показать на hop-recall). Это рабочая разметка, не шаблон.
-   3. **Накопить настоящий журнал ко-активаций.** Прогнать `retrieve.py "<запрос>" --store .claude/amg` по набору **реально задаваемых** запросов (журнал `work/coactivation.log` копит само извлечение при записи пакета). Чем репрезентативнее запросы, тем честнее сигнал; журнал руками **не** синтезировать. Чем больше прогонов, тем заметнее свёртка (один `weights` сдвигает веса слабо).
-   4. **Измерить off.** При `weights.apply_hebbian: false`: `eval_retrieval.py --store .claude/amg --cases .claude/amg/cases.json --out off.json` — зафиксировать recall / precision / hop-recall / pack-recall.
-   5. **Свернуть журнал в веса.** Сделать снимок графа (git-коммит песочницы или копия — `weights` мутирует веса и ротирует журнал), выставить `weights.apply_hebbian: true`, прогнать `consolidate.py weights .` (усиление + затухание + обрезка по журналу).
-   6. **Измерить on.** `eval_retrieval.py --store .claude/amg --cases .claude/amg/cases.json --out on.json` на том же наборе; сравнить с off.
-   7. **Решение по дефолту.** Если on устойчиво **не хуже** off (выигрыш по hop-recall/recall без просадки полноты на других случаях) — переключить дефолт `weights.apply_hebbian: true` в шаблоне `config.yml` и обновить THEORY §8.1 / GUIDE («веса по умолчанию обновляются»). Если выигрыш неубедителен или есть просадка — оставить `false` и **записать числа off/on** (в этап/STATUS) как обоснование. Решение принимать по совокупности случаев, а не по одному. Это и есть закрытие отложенной части задачи 7 Этапа 4.
-
-   **Выполнено (вариант 2 — деривация субагентами).** Песочница `amg-testbed`: 33-узловой граф delivery-service, сводки и смысловые рёбра деривированы субагентами `amg-builder` (sonnet) и `amg-synth` (opus) — **без подсказок про Хебб**, чтобы не подыгрывать; 7 многошаговых размеченных cases (gold за рёбрами, ids из `inspect_graph`). Журнал — 16 реалистичных запросов (шире cases), накоплен естественно; max-пары (count 32) — **центральный hub/overview-костяк** (ровно «богатые богатеют» §8.1). Замер off vs on **по 12 циклам свёртки** (журнал → `weights` → eval): `recall=0.4238, hop_recall=0.5833, pack_recall=1.0` — **идентично на всех 12 фолдах** (ни выигрыша, ни просадки). Механизм при этом **работает**: 130/130 рёбер изменили вес, 82 насыщены до 1.0, 43 затухли; слабое multi-hop ребро `charge_card→retry-policy` усилено 0.5→1.0 — но top-K не переупорядочился. **Причина (механистично, §8.1):** реальный журнал на малом плотном графе **равномерно** заливает весь релевантный подграф к потолку весов — различающего сигнала нет. **Это не ложноотрицательный:** базлайн ненасыщен (recall 0.42, несколько cases <1.0), метрики чувствительны (top-K, бюджет-независимы), журнал реальный, веса доказуемо менялись, слабые рёбра доказуемо усиливались. **Устойчиво и к засеву:** повтор off/on с семантическим засевом — model2vec `potion-retrieval-32M` (6 фолдов) и sentence-transformers `paraphrase-multilingual-MiniLM-L12-v2`, blend 0.5 (6 фолдов) — даёт тот же плоский результат (0.4238 / 0.5833). Эмбеддинги влияют на **seed**, Хебб — на **spread**; нулевой эффект — свойство spread, поэтому language/seed-независим (русский контент сменил бы лишь качество засева, не динамику свёртки). **Проверка на БОЛЬШОМ разрежённом графе (190 узлов, цепочки `depends_on`; `amg-bigtest`, генератор `gen_big.py`) — РЕШАЮЩАЯ.** Там веса имеют рычаг (PPR не достаёт всё тривиально), и слепой Хебб **вредит монотонно по всем трём засевам**: за 8 фолдов recall −0.08…−0.10, hop_recall −0.11…−0.14 (BM25 0.604→0.500, hop 0.25→0.11; model2vec 0.604→0.521, hop 0.306→0.194; ST 0.583→0.500, hop 0.222→0.111). Траектория монотонна (фолды 0→1→2→4→8: recall 0.604→0.563→0.563→0.542→0.500) — не выброс, а системный эффект. Это ровно «магистрали» §8.1: усиление ко-активированных (центральных/ранних) рёбер оттягивает массу от multi-hop gold → hop_recall обваливается. Малый плотный граф давал плоско (веса почти не влияли — отсюда совпадение до 4 знака; **бага нет** — `ST on≠off` доказал, что веса влияют, когда граф разрежён). **Итог: дефолт `apply_hebbian: false` обоснован СИЛЬНО — слепое правило не «без пользы», а ВРЕДИТ на реалистичных графах.** Включать Хебб можно лишь с улучшенным правилом (outcome-gated + различающее, Этап 14 задача 8) под измерением. Также: польза Хебба ∝ слабости засева относительно структуры (на малом плотном графе с сильным засевом инертен, на разрежённом — вредит); ранний кажущийся «+0.03 у ST» оказался артефактом форсированного рассогласования модель↔язык (мультиязычная модель на английском контенте = слабый засев). THEORY §8.1 это предсказывает (подтверждение + конкретные числа вреда — при закрытии этапа; empirical-якорь и строка GUIDE «веса по умолчанию не обновляются — измерено, что слепой Хебб вредит на разрежённом графе»).
-
-Definition of done:
-
-- classifier реально влияет на chunker choice;
-- ambiguous files не блокируют bootstrap;
-- пользователь видит, что было классифицировано автоматически, а что уточнено;
-- цикл этапа воспроизведён в песочнице `amg-testbed`;
-- решение о дефолте `apply_hebbian` принято по измерению off/on на реальном графе песочницы (либо повторно отложено с зафиксированными числами, если граф ещё не репрезентативен).
+Выполнено (закрыт 2026-06-15, v0.8.0): вердикт классификатора стал рабочей частью конвейера; собрана песочница; измерены хеббовы веса. `extract_structure` читает `work/classification-overrides.json` **до** fallback-классификации (`load_overrides`/`_route_override`/`_classify_path`): override `{путь: {category, language}}` сильнее догадки по расширению и маршрутизирует файл в нужный нарезатель (code+python→ast, code+грамматика→treesitter, data→json, doc→paragraphs), отсутствующий/битый файл → пустая карта (bootstrap не блокируется); `--stats` отдаёт `resolved_by_override`/`ambiguous_files`/`classifier_hint`; workflow — `amg-bootstrap/SKILL.md` и `agents/amg-classifier.md` (закрыт аудит 1.13). Песочница `../amg-testbed` (delivery-service; движок копирует `sync_testbed.py`, включая `notes.py`) воспроизвела цикл классификации целиком и остаётся для интеграционных проверок этапов 8–10. **Ключевое решение:** дефолт `weights.apply_hebbian` остаётся `false` — **по измерению**: на малом плотном графе (33 узла) слепой Хебб инертен (off≡on, веса почти не влияют), на большом разрежённом (`../amg-bigtest`, 190 узлов, цепочки `depends_on`) — монотонно **вредит** полноте (recall −0.10, hop −0.14 за 8 фолдов по всем засевам BM25/model2vec/ST), эффект «магистралей» §8.1; полезный Хебб требует переработанного правила (outcome-gated + различающее) под измерением на собранном стенде (Этап 14 задача 8; субстрат сигнала — Этап 13 задача 9; стенд `amg-bigtest` с README — НЕ удалять). Попутно по эмбеддингам: исправлено расхождение doc↔код дефолтной модели (`potion-retrieval-32M`); измерено, что лёгкая мультиязычная `potion-multilingual-128M` валидна для русского (порядок бэкендов менять не нужно, ST — опц. апгрейд; гайд установщика — Этап 10). DoD выполнен (classifier влияет на нарезатель; ambiguous не блокируют bootstrap; `--stats` различает авто/override; цикл в песочнице; решение по `apply_hebbian` принято измерением). Regression — `selftest_extract_overrides.py`; девять селфтестов зелёные. Детали → `04-ingest.md` («Overrides: вердикт классификатора…»), `08-agents-skills.md` (§ `amg-classifier`/`amg-bootstrap`), `THEORY.md` §8.2 (измеренный вред Хебба, принцип seed-vs-spread), `07-consolidation.md`, `06-retrieval.md`/`GUIDE.md` (эмбеддинги), §3.4 (читаемость документации); решения этапа — свёрнутый пункт 1.13 и закрытые 2.5 п.4 / 2.9 п.3.
 
 ---
 
