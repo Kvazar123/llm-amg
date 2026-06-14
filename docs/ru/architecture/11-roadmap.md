@@ -1166,11 +1166,16 @@ eval_gate:
   on_fail: reject | revert | warn
 ```
 
+6. **Размеченные случаи (cases).** Текущий `skills/amg-retrieve/evals/cases.json` ссылается на устаревший тестовый проект FastMVC (его граф удалён, `gold_ids` висячие) — заменить. Для **selftest/regression** использовать воспроизводимый демо-граф `eval_retrieval.build_demo_store` (billing/auth, declined-card), на котором `selftest_consolidate.test_apply_and_recall` уже меряет recall до/после (прото-gate — расширить). Постоянный `evals/cases.json` сделать **примером-шаблоном** (формат `{id, query, gold_ids, note}` + пояснение «разметьте свои случаи, id из `inspect_graph.py`, либо укажите `eval_gate.cases` на свой файл»), не привязанным к конкретному графу. Gate обязан быть **робастен**: при отсутствующих/пустых cases или нерезолвящихся `gold_ids` — пропускать измерение с понятным предупреждением, не блокируя compaction ложно (дефолтная установка без разметки безопасна).
+7. **Решение о дефолте `apply_hebbian` (связь с задачей 14 Этапа 3).** Предусмотреть режим сравнения `apply_hebbian` off/on на cases (тот же приём, что `eval_retrieval.py --compare-embeddings`: `run(cfg=...)`-override на изолированном графе); при подтверждённом выигрыше по recall/hop-recall — перевести дефолт `weights.apply_hebbian` в шаблоне `config.yml` в `true` и обновить THEORY §8.1/GUIDE. Решение принимается по числу, а не по мнению; при неубедительном результате — оставить off с записью измерения.
+
 Definition of done:
 
 - compaction self-reverts или reject-ится при падении качества;
 - ручная проверка eval остаётся доступной;
-- результат записывается в action log.
+- результат записывается в action log;
+- gate безопасен при отсутствии разметки: нет/пустые/мёртвые cases → пропуск с предупреждением, без ложного reject;
+- решение о дефолте `apply_hebbian` принято по измерению weights off/on (или явно отложено с обоснованием).
 
 ---
 
