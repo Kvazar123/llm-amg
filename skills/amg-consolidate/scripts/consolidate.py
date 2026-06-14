@@ -79,7 +79,13 @@ DEFAULTS = {
                   "introduce_subhub", "lossy_shorten"],
     },
     "near_duplicate_sim": 0.82,
-    "episodic_types": ["section", "note"],
+    # Episodic node types: authored captures that must be ROUTED through consolidation
+    # judgment (salience, summarize/merge, promote/retire). note/section + the authored
+    # transient types open_question/plan — both are states awaiting resolution (a question
+    # gets answered -> promote/retire; a plan gets done), so they must be revisited rather
+    # than living forever as active (which would surface a long-answered question as open).
+    # decision/adr are NOT episodic — they are protected commitments (compaction.protect_types).
+    "episodic_types": ["section", "note", "open_question", "plan"],
     "stale_age_days": 30,
     # Eval gate: measure a compaction on a graph CLONE before touching the real graph;
     # apply only if recall holds. Robust to missing/dead cases (skip, never false-reject).

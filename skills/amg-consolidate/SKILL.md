@@ -42,10 +42,17 @@ compacted).
    Hebbian reinforcement + decay, prunes faded edges, renormalizes `part_of`, and
    rotates the log into the archive.
 
-2. **Capture this session's conclusions.** Before consolidating, write any decisions,
-   conclusions, or forward-looking plans reached in the conversation as `notes` nodes
-   (status `captured`). These are the episodic inputs the salience step judges. When
-   in doubt, capture — selection happens next, not now.
+2. **Capture this session's conclusions** through the safe note API — never by
+   hand-editing files under `nodes/`:
+   ```bash
+   python .claude/skills/amg-bootstrap/scripts/notes.py add \
+     --type decision --summary "..." [--body "..."] [--tags "routing,controllers"]
+   ```
+   Record any decisions, conclusions, open questions, or forward-looking plans reached
+   in the conversation (types: `note` / `decision` / `adr` / `open_question` / `plan`;
+   default status `captured`). The write is transactional and crash-safe. These are the
+   episodic inputs the salience step judges. When in doubt, capture — selection happens
+   next, not now.
 
 3. **Plan** (deterministic):
    ```bash

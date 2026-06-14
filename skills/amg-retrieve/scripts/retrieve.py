@@ -177,9 +177,12 @@ def load_nodes(store_root: Path) -> Dict[str, dict]:
             continue
         topics = " ".join(t.get("topic", "") for t in (meta.get("part_of") or [])
                           if isinstance(t, dict))
+        # authored-note tags (notes.py) are searchable labels: fold them into the BM25
+        # bag so a note is findable by its tag, not only by summary/body words.
+        tags = " ".join(str(t) for t in (meta.get("tags") or []) if t)
         text = " ".join([
             nid.split(":", 1)[-1].replace("::", " ").replace("/", " ").replace("_", " "),
-            str(meta.get("summary", "")), topics, body[:600],
+            str(meta.get("summary", "")), topics, tags, body[:600],
         ])
         nodes[nid] = {
             "id": nid, "type": meta.get("type", "node"),

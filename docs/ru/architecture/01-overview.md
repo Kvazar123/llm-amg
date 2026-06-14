@@ -51,6 +51,7 @@ flowchart TD
 | Хранилище | `graph_store.py` | транзакционное чтение/запись узлов, журнал, лок, восстановление | `init` · `recover` · `verify` |
 | Извлечение структуры | `extract_structure.py` | классификация типа файла и нарезка на единицы | `<путь>` · `--stats` |
 | Сверка | `reconcile.py` | диф графа с источником, очередь на деривацию, применение | `bootstrap` · `plan` · `apply` |
+| Захват заметок | `notes.py` | безопасная запись авторских узлов (решение / вывод / план / открытый вопрос) через транзакцию | `add` |
 | Извлечение из графа | `retrieve.py` | засев → PPR → сборка пакета по ярусам | `"<запрос>"` · `--store` |
 | Семантический засев | `embed.py` | опциональное обогащение засева эмбеддингами; диагностика | одиночный запуск (диагностика) |
 | Консолидация | `consolidate.py` | свёртка весов, значимость, компрессия веток | `weights` · `plan` · `apply` |
@@ -78,7 +79,7 @@ skills/                          скиллы — процедуры (когда
   amg-bootstrap/
     SKILL.md
     references/consistency-model.md     формальная модель согласованности
-    scripts/  extract_structure.py · graph_store.py · reconcile.py · selftest_*.py
+    scripts/  extract_structure.py · graph_store.py · reconcile.py · notes.py · selftest_*.py
   amg-retrieve/
     SKILL.md
     scripts/  retrieve.py · embed.py · eval_retrieval.py · inspect_graph.py · selftest_*.py

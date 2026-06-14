@@ -141,7 +141,11 @@ compaction:
 # Previously hardcoded in consolidate.py; surfaced here so they are overridable.
 # -----------------------------------------------------------------------------
 near_duplicate_sim: 0.82           # Jaccard threshold to flag two nodes as merge candidates
-episodic_types: [section, note]    # node types treated as episodic (summarize / salience)
+# Episodic types: authored captures consolidation may summarize / rank by salience /
+# promote / retire. open_question and plan are transient states awaiting resolution, so
+# they are revisited here rather than living forever active. decision/adr are NOT listed:
+# they are protected commitments (protect_types above).
+episodic_types: [section, note, open_question, plan]
 stale_age_days: 30                 # recency basis for the salience freshness signal
 
 # -----------------------------------------------------------------------------

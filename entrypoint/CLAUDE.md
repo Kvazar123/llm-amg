@@ -36,10 +36,15 @@ At session start, check whether `.claude/amg/config.yml` exists with `active: tr
    via the **`amg-retrieve`** skill (seed → spreading activation → a budgeted context
    pack), then do the work. Do not dump the whole codebase into context.
 
-3. **Capture as you go; consolidate at the end.** When a decision, conclusion, or
-   forward-looking plan emerges, write it as a `notes` node — this is cheap, done
-   during the session, and does NOT require a bootstrap (bootstrap is only for source
-   files, not for your reasoning). At session end, or before `/clear`, run the
+3. **Capture as you go; consolidate at the end.** When a decision, conclusion, open
+   question, or forward-looking plan emerges, capture it with the safe note API — do
+   NOT hand-edit files under `nodes/`:
+   ```
+   python .claude/skills/amg-bootstrap/scripts/notes.py add --type decision --summary "..." [--body "..."] [--tags "a,b"]
+   ```
+   (types: `note` / `decision` / `adr` / `open_question` / `plan`). This is cheap,
+   transactional, and does NOT require a bootstrap (bootstrap is only for source files,
+   not for your reasoning). At session end, or before `/clear`, run the
    **`amg-consolidate`** skill once to fold the session's co-activations into edge
    weights and maintain memory. Conclusions that live only in chat are lost on
    `/clear`; the graph is where they survive, so capture before clearing.

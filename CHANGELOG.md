@@ -4,6 +4,23 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-06-14
+
+Stage 5 closed: decisions, conclusions, open questions and plans are captured into the graph through a safe, crash-safe API — no hand-editing of node files.
+
+### Added
+- `notes.py add` (new, in `amg-bootstrap/scripts`): writes an authored node through a `graph_store` transaction (recover → atomic commit), reusing reconcile's node helpers (`serialize_node`/`node_relpath`/`_merge_edges`/`_merge_part_of`). Types `note`/`decision`/`adr`/`open_question`/`plan`; fields `source_kind: authored` + `policy: authored` (the preservation rule — a note survives any later bootstrap, since the deletion/move passes only ever touch derived_from_file+mirror nodes), `status` (default `captured`), plus `created`/`updated`/`lang`/`tags`/`part_of`/`edges`. Content-addressed id `note:<slug>-<hash8>` (identical re-capture → one node, not a duplicate; `--id` for a stable, revisable node).
+- `created` and `tags` authored-node fields, and edge `origin: authored`; documented in `02-data-model.md` (types, status, fields, origin).
+- `selftest_notes.py` (7 checks): fields/bucket, content-addressed identity + created-preserving update, explicit-id merge, crash recovery mid-commit, survives a bootstrap unpurged, found in retrieval by summary and by tag, episodic in the consolidation plan.
+
+### Changed
+- `episodic_types` default gains `open_question` and `plan` (`config.yml` + `consolidate.DEFAULTS`): they are transient authored states consolidation must **revisit** (an answered question / a done plan is promoted or retired) rather than living forever `active` — otherwise a long-answered question is surfaced as open (confidently-stale memory). `decision`/`adr` stay out (they are protected, not episodic).
+- `retrieve.load_nodes` folds a note's `tags` into the BM25 bag, so a note is findable by tag, not only by summary/body.
+- Capture loop switched to the API everywhere it was described as hand-writing nodes: `amg-consolidate` SKILL (step 2), `entrypoint/CLAUDE.md`, `08-agents-skills.md`; user how-to in `GUIDE.md`; `THEORY §13` (capture is a safe transactional API; transient types are revisited at consolidation).
+
+### Decided
+- The note id uses a neutral `note:` namespace for every type (not `<type>:`), because a later `promote` changes `type` while the id is immutable. `status: captured` is intentionally absent from `status_prior` (multiplier 1.0 — a fresh note is found immediately, not hidden); consolidation raises it to `active` via `promote`.
+
 ## [0.6.0] — 2026-06-14
 
 Stage 4 closed: compaction can no longer silently hurt retrieval — it passes an automatic recall check (eval gate) measured on a clone of the graph before the real graph is touched. The Hebbian-default question is resolved: the mechanism is proven correct by a synthetic control, but the default stays off pending a measurement on real data.
