@@ -29,6 +29,10 @@ symbol, doc by section/paragraph, data by record). When genuinely unsure, choose
 `doc` — it is the safe default the script already uses.
 
 ## Output (return this to the caller; do not write graph files)
+The caller writes your mapping verbatim to
+`.claude/amg/work/classification-overrides.json`, where `extract_structure.py` reads it
+BEFORE its own fallback and routes each file to the matching chunker. Keep every key
+EXACTLY the project-relative path you were given, so it matches on re-extraction.
 ```json
 {
   "scripts/run":        {"category": "code", "language": "bash"},

@@ -119,7 +119,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
     store.init()
 
     config = load_config(amg_root)
-    units = {u["id"]: u for u in extract(project_root, config)}
+    units = {u["id"]: u for u in extract(project_root, config, amg_root)}
     summary = {"added": 0, "changed": 0, "moved": 0, "deleted": 0, "unchanged": 0,
                "requeued_stale": 0, "pointer_refreshed": 0}
     queue: List[dict] = []

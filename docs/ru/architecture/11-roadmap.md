@@ -165,6 +165,8 @@
 
 **Результат:** `amg-classifier` становится рабочей частью bootstrap, а не только описанным prompt.
 
+_Этап 6 (задачи 1–5, реализовано):_ `extract_structure.load_overrides`/`_route_override`/`_classify_path` читают `work/classification-overrides.json` **до** fallback-классификации; override побеждает и известное расширение (ручная коррекция приоритетна); маршрутизация `code`+`python`→ast, `code`+грамматика→treesitter, `data`→json, `doc`→paragraphs; `null`/malformed-файл → пустая карта (bootstrap не блокируется). `--stats` отдаёт `resolved_by_override` + `ambiguous_files` (только неразрешённые) + `classifier_hint`. Workflow — `amg-bootstrap/SKILL.md` шаг 2 и `agents/amg-classifier.md`; regression — `selftest_extract_overrides.py`. Свернуть до строки «исправлено на Этапе 6» при закрытии этапа (синхронизировав 04-ingest/08).
+
 ---
 
 ### 1.14. `models` в `config.yml` должен работать
@@ -526,7 +528,7 @@ README.md - английская версия, ссылается на еще о
    - function hash меняется у функции;
    - class hash меняется у всего class body;
    - module hash меняется у всего файла.
-4. Описать, что `amg-classifier` требует `classification-overrides.json`.
+4. Описать, что `amg-classifier` требует `classification-overrides.json`. _(Этап 6: реализовано — см. 1.13; при закрытии описать в 04-ingest формат `{путь: {category, language}}` в `work/`, чтение до fallback, приоритет над расширением, маршрутизацию по нарезателям, мягкий пропуск malformed; новый раздел «Классификатор: overrides» рядом с «Классификация».)_
 5. Не заявлять CSV/logs как supported data, пока нет классификатора и нарезателя.
 6. Добавить planned:
    - chat/session chunker;
@@ -569,7 +571,7 @@ README.md - английская версия, ссылается на еще о
 
 1. Закрыт на Этапе 1 (задача 3): `agents/amg-synth.md` и § `amg-synth` в 08-agents-skills.md задают `type: overview` для обзора и `type: hub` для хабов; происхождение — `source_kind: synthesized`, проставляется при `apply`.
 2. Закрыт на Этапе 0: поля `qualname`/`lineno`/`lang` добавлены в очередь; вход синхронизирован и в промпте `amg-builder.md`, и в § `amg-builder` файла 08-agents-skills.md (`lang` на входе — язык источника, в выходе — язык сводки).
-3. Описать применение `amg-classifier` через overrides.
+3. Описать применение `amg-classifier` через overrides. _(Этап 6: реализовано — см. 1.13; при закрытии в § `amg-classifier`/§ `amg-bootstrap` файла 08 описать петлю «ambiguous → classifier → запись `work/classification-overrides.json` → повтор bootstrap», выход классификатора как вход overrides.)_
 4. Уточнить, что `amg-synth` не редактирует `nodes/`, но может писать `gap-report.md`.
 5. Закрыт на Этапе 5: безопасный API заметок — `notes.py add` (типы `note`/`decision`/`adr`/`open_question`/`plan`, статус `captured`, запись через `graph_store.Transaction`); петля захвата в § `amg-consolidate` (шаг 2) и петле активации описана через него, не как ручная правка `nodes/`.
 6. Хуки, команды `/amg`, sessions и `automation`: описания сверяются на Этапах 8–9 (закрытие пункта там); до того остаются опережающими.
@@ -1171,9 +1173,9 @@ amg/                 # НЕ в репозитории: данные локаль
 
 Задачи:
 
-1. Добавить `classification-overrides.json`.
-2. Научить `extract_structure.py` читать overrides.
-3. Добавить команду:
+1. Добавить `classification-overrides.json`. — выполнено
+2. Научить `extract_structure.py` читать overrides. — выполнено
+3. Добавить команду: — выполнено
 
 ```bash
 python .claude/skills/amg-bootstrap/scripts/extract_structure.py . --stats
@@ -1185,11 +1187,11 @@ python .claude/skills/amg-bootstrap/scripts/extract_structure.py . --stats
 - resolved by override;
 - suggested classifier command.
 
-4. Обновить `amg-bootstrap` workflow:
+4. Обновить `amg-bootstrap` workflow: — выполнено
    - если ambiguous files есть, можно запустить `amg-classifier`;
    - результат записать в overrides;
    - повторить extract/plan.
-5. Добавить tests.
+5. Добавить tests. — выполнено
 6. Подготовить песочницу `amg-testbed/` (см. 4.9): отдельный тест-проект с игрушечными mirror/absorb-источниками и sync-скрипт, копирующий движок из репозитория-источника в `<testbed>/.claude/`; прогнать в ней цикл классификации целиком. Дальше песочница обслуживает этапы 8–10 (хуки, команды, сессии, установка).
 7. **Продуктовое измерение хеббовых весов (`apply_hebbian`) на реальном графе песочницы.** Отложено с Этапа 4 (задача 7): дефолт `apply_hebbian` ставится в `true` **только** по измерению на реальных данных, а не по синтетике (она доказала лишь корректность механизма — `build_hebbian_demo`). Песочница (задача 6) даёт первый реальный/репрезентативный граф с настоящим журналом ко-активаций. Провести **пошагово** (команды — из корня `amg-testbed`):
    1. **Построить граф.** Полный bootstrap на источниках песочницы: `reconcile.py bootstrap .` → деривация субагентами `amg-builder` (по `work/queue.json`) → `reconcile.py apply work/derived-*.json .` → синтез `amg-synth` и его `apply`. Итог — наполненный граф со сводками и смысловыми рёбрами.

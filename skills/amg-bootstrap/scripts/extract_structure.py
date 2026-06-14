@@ -42,7 +42,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 try:
     import yaml
@@ -208,6 +208,66 @@ def classify(path: Path) -> Tuple[str, str, Optional[str], bool]:
     # readable text of unknown kind: treat as prose, flag as ambiguous so the
     # bootstrap skill may ask the classifier subagent to refine it.
     return ("doc", "paragraphs", None, True)
+
+
+# --------------------------------------------------------------------------- #
+# Classifier overrides: amg-classifier's verdict made effective in code (1.13)
+# --------------------------------------------------------------------------- #
+
+# Categories an override may assign (the amg-classifier subagent picks one of these).
+_OVERRIDE_CATEGORIES = {"code", "doc", "data"}
+
+
+def load_overrides(amg_root: Optional[Path]) -> Dict[str, dict]:
+    """Read the amg-classifier category overrides for ambiguous files (audit 1.13).
+
+    Format: { "<rel/path>": {"category": code|doc|data, "language": <grammar|null>} }.
+    The bootstrap workflow writes this to work/classification-overrides.json after the
+    amg-classifier subagent labels the files extract flagged ambiguous. A missing file
+    -> {} (pure deterministic classification); a malformed file warns and is ignored, so
+    a bad override never blocks bootstrap.
+    """
+    if amg_root is None:
+        return {}
+    f = amg_root / "work" / "classification-overrides.json"
+    if not f.exists():
+        return {}
+    try:
+        data = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        sys.stderr.write(f"warning: ignoring malformed {f}\n")
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _route_override(category: str, language: Optional[str]) -> Tuple[str, str, Optional[str]]:
+    """Map an amg-classifier override (category + optional grammar name) onto the
+    (category, chunker, lang) the chunker registry expects: code+python -> the stdlib
+    `ast` chunker; code+grammar -> tree-sitter (a null grammar degrades to a single file
+    unit, exactly like any unavailable grammar); data -> the json/yaml record chunker;
+    doc -> the prose paragraph chunker (the same safe default the content sniff uses — a
+    'use headings' hint is not expressible, so structured markdown should keep its .md)."""
+    if category == "code":
+        if language == "python":
+            return ("code", "python", "python")
+        return ("code", "treesitter", language)
+    if category == "data":
+        return ("data", "json", None)
+    return ("doc", "paragraphs", None)
+
+
+def _classify_path(path: Path, rel: str, overrides: Dict[str, dict]
+                   ) -> Tuple[str, str, Optional[str], bool, bool]:
+    """classify(), but an explicit override for this rel-path wins over the
+    deterministic guess (applied BEFORE the content sniff, so it routes the file
+    straight to the chosen chunker). Returns classify()'s 4-tuple plus a final
+    `overridden` flag; an override resolves ambiguity, so its `ambiguous` is False."""
+    ov = overrides.get(rel)
+    if isinstance(ov, dict) and ov.get("category") in _OVERRIDE_CATEGORIES:
+        category, chunker, lang = _route_override(ov["category"], ov.get("language"))
+        return (category, chunker, lang, False, True)
+    category, chunker, lang, amb = classify(path)
+    return (category, chunker, lang, amb, False)
 
 
 # --------------------------------------------------------------------------- #
@@ -580,14 +640,15 @@ CHUNKERS = {"python": _python_units, "treesitter": _treesitter_units,
 # Driver
 # --------------------------------------------------------------------------- #
 
-def extract(project_root: Path, config: dict) -> List[dict]:
+def extract(project_root: Path, config: dict, amg_root: Optional[Path] = None) -> List[dict]:
     gitignore = load_gitignore(project_root)
     extra = _as_list(config.get("exclude"))
+    overrides = load_overrides(amg_root)
     units: List[dict] = []
     for base_rel, policy in resolve_sources(config):
         for path in iter_source_files(project_root, base_rel, extra, gitignore):
             rel = path.relative_to(project_root).as_posix()
-            category, chunker, lang, _amb = classify(path)
+            category, chunker, lang, _amb, _ov = _classify_path(path, rel, overrides)
             if chunker == "skip":
                 continue
             if chunker == "treesitter":
@@ -606,21 +667,25 @@ def extract(project_root: Path, config: dict) -> List[dict]:
     return units
 
 
-def _stats(project_root: Path, config: dict) -> dict:
+def _stats(project_root: Path, config: dict, amg_root: Optional[Path] = None) -> dict:
     gitignore = load_gitignore(project_root)
     extra = _as_list(config.get("exclude"))
+    overrides = load_overrides(amg_root)
     from collections import Counter
-    cat, langs, skipped, ambiguous = Counter(), Counter(), 0, []
+    cat, langs, skipped, ambiguous, resolved = Counter(), Counter(), 0, [], []
     for base_rel, _policy in resolve_sources(config):
         for path in iter_source_files(project_root, base_rel, extra, gitignore):
-            category, chunker, lang, amb = classify(path)
+            rel = path.relative_to(project_root).as_posix()
+            category, chunker, lang, amb, overridden = _classify_path(path, rel, overrides)
             if chunker == "skip":
                 skipped += 1
                 continue
             cat[category] += 1
             langs[lang or chunker] += 1
-            if amb:
-                ambiguous.append(path.relative_to(project_root).as_posix())
+            if overridden:
+                resolved.append(rel)            # ambiguity settled by amg-classifier
+            elif amb:
+                ambiguous.append(rel)           # still unresolved -> prose default
     try:
         from tree_sitter_language_pack import get_parser
         get_parser("json")                    # attempt a real grammar load
@@ -637,9 +702,18 @@ def _stats(project_root: Path, config: dict) -> dict:
         except Exception:
             extraction[fmt] = f"unavailable (pip install {'python-docx' if mod=='docx' else mod}) -> files skipped"
 
-    return {"by_category": dict(cat), "by_language": dict(langs),
-            "skipped_binary": skipped, "ambiguous_files": ambiguous[:20],
-            "tree_sitter": ts, "text_extraction": extraction}
+    out = {"by_category": dict(cat), "by_language": dict(langs),
+           "skipped_binary": skipped, "ambiguous_files": ambiguous[:20],
+           "resolved_by_override": resolved[:20],
+           "tree_sitter": ts, "text_extraction": extraction}
+    if ambiguous:
+        ov_path = ((amg_root / "work" / "classification-overrides.json").as_posix()
+                   if amg_root else "work/classification-overrides.json")
+        out["classifier_hint"] = (
+            f"{len(ambiguous)} ambiguous file(s) defaulted to prose. Spawn the "
+            f"amg-classifier subagent on ambiguous_files, write its "
+            f"{{path: {{category, language}}}} mapping to {ov_path}, then re-run.")
+    return out
 
 
 def main(argv: List[str]) -> int:
@@ -648,9 +722,9 @@ def main(argv: List[str]) -> int:
     amg_root = Path(rest[0]).resolve() if rest else project_root / ".claude" / "amg"
     config = load_config(amg_root)
     if "--stats" in argv:
-        print(json.dumps(_stats(project_root, config), ensure_ascii=False, indent=2))
+        print(json.dumps(_stats(project_root, config, amg_root), ensure_ascii=False, indent=2))
         return 0
-    json.dump(extract(project_root, config), sys.stdout, ensure_ascii=False, indent=2)
+    json.dump(extract(project_root, config, amg_root), sys.stdout, ensure_ascii=False, indent=2)
     print()
     return 0
 

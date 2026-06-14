@@ -73,10 +73,18 @@ delegating per-unit reading to subagents.
    ```
    The printed counts tell you the scope. If `queued_for_semantic` is 0, the graph
    is already current — stop here. To see how files were classified first (and
-   whether tree-sitter is active), run `extract_structure.py . --stats`. If it lists
-   `ambiguous_files` (extensionless or unknown types it defaulted to prose), you may
-   spawn the `amg-classifier` subagent to label them before deriving; this is
-   optional — the queue is never blocked by ambiguity.
+   whether tree-sitter is active), run `extract_structure.py . --stats`. It lists
+   `ambiguous_files` (extensionless or unknown types it defaulted to prose),
+   `resolved_by_override` (already settled), and a `classifier_hint` when any remain.
+   If files are ambiguous you MAY refine them (optional — the queue is never blocked):
+     a. spawn the `amg-classifier` subagent on the `ambiguous_files` list; it returns
+        a compact `{ "<path>": {"category": code|doc|data, "language": <grammar|null>} }`
+        mapping;
+     b. write that mapping to `.claude/amg/work/classification-overrides.json` (merge
+        if the file already exists);
+     c. re-run `reconcile.py bootstrap .` — extraction reads the override BEFORE its
+        own fallback, so each labeled file now routes to the right chunker (code by
+        symbol, data by record) instead of the prose default.
 
 3. **Semantic derivation (bulk).** Read `.claude/amg/work/queue.json`. If it is
    large, split it into batches by subtree (e.g. per top-level package) and spawn an
