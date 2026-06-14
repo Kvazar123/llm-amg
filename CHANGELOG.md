@@ -4,6 +4,25 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-06-14
+
+Stage 4 closed: compaction can no longer silently hurt retrieval — it passes an automatic recall check (eval gate) measured on a clone of the graph before the real graph is touched. The Hebbian-default question is resolved: the mechanism is proven correct by a synthetic control, but the default stays off pending a measurement on real data.
+
+### Added
+- Eval gate in `consolidate.apply_actions` (`_eval_gate`): a baseline eval on the real graph, the same actions applied to a **clone** (`_clone_for_eval`, recursive `apply` with `_run_gate=False`), then a re-measure. The real graph is committed only if recall holds, so a `reject` needs no rollback (`revert` ≡ `reject` — measuring before commit makes a post-commit, archive-based revert unnecessary and brittle, since `redirect_inbound`/`merge` would already have rewritten neighbors). Metric: `pack_recall` (compaction changes pack composition, not just top-K ranking) under `min_recall_delta` plus aggregate `hop_recall` under `min_hop_recall_delta`.
+- `eval_gate` config block (`enabled` / `cases` / `min_recall_delta` / `min_hop_recall_delta` / `on_fail`) in `config.yml` and `consolidate.DEFAULTS`/`load_config`.
+- Report `work/eval-gate-report.json`: status, deltas, thresholds, and per-case `regressions` — which gold ids dropped out of the pack and which actions touched them (`_action_ids` attribution).
+- `eval_retrieval.build_hebbian_demo` — a positive control proving the Hebbian mechanism: a gold node behind a deliberately weak edge is missed with static weights (hop-recall 0) and recovered after folding a co-activation journal (hop-recall 1). `evaluate_case` now also returns `pack_gold` (gold present in the assembled pack) for gate attribution.
+- `selftest_consolidate.py` grows to 16 checks: `test_eval_gate` (harmful compaction rejected with the graph intact + attributed; safe applied; `warn` applies and records), `test_gate_robust` (no/dead cases → skip + apply, never a false reject), `test_hebbian_demo` (off→on hop-recall 0→1 positive control; recall held on good weights — negative control).
+
+### Changed
+- Compaction safety is now automatic, not a manual step: `amg-consolidate` SKILL and the `amg-consolidator` prompt note that the driver auto-gates compaction by recall, so the subagent proposes the smallest safe compaction and the gate catches over-aggressive cuts.
+- `skills/amg-retrieve/evals/cases.json` rewritten from the stale FastMVC reference into a neutral template; its placeholder `gold_ids` resolve in no real graph, so a fresh install's gate stays safely disarmed (`status: skipped`) until the user labels real cases.
+- Docs synced: `07-consolidation.md` (new "Автоматическая проверка полноты" section + `eval_gate` keys), `09-config.md` (`eval_gate` block), `10-eval-tools.md` ("Роль в консолидации"), `THEORY.md` §10.3 (forgetting is auto-measured) and §8.1 (Hebbian: mechanism proven, default deferred), `GUIDE.md`, `08-agents-skills.md`. Term cleanup in touched files: «харнесс» → «измерительный стенд», «гейт» → «проверка качества».
+
+### Decided
+- `weights.apply_hebbian` stays **false** by default. The synthetic demo proves only that the mechanism *can* help (a flattering graph always would); it does not show Hebbian helps on average, and the co-activation signal is partly circular (THEORY §8.1). Flipping the default requires a measured uplift on a real/representative graph with a real journal (Stage 6+); the tooling for that measurement is now in place.
+
 ## [0.5.0] — 2026-06-14
 
 Stage 3 closed: consolidation is made safe, reversible, and honestly documented; edge weights are put under measurement. Compaction is gated by a real switch and protects valuable nodes in code; merge/sub-hub mutations preserve earned signal and memberships; created nodes match the synthesized canon; branches are computable on a real graph; and Hebbian weight updates are OFF by default until eval proves they help.
