@@ -4,6 +4,29 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-06-15
+
+Stage 6 closed: the `amg-classifier` verdict is now applied in code — ambiguous files route to the right chunker through overrides instead of defaulting to prose; an integration sandbox is built; and the Hebbian-weights question is settled by measurement — the blind rule is *harmful* on a realistic sparse graph, so the default stays off pending a redesigned rule.
+
+### Added
+- Classifier overrides in `extract_structure.py` (`load_overrides` / `_route_override` / `_classify_path`): extraction reads `work/classification-overrides.json` **before** its fallback classification and routes each labeled file to the matching chunker (`code`+`python`→ast, `code`+grammar→tree-sitter, `data`→json, `doc`→paragraphs). An override wins even over a known extension (manual correction); a missing or malformed file degrades to an empty map, so bootstrap is never blocked. `--stats` now reports `resolved_by_override` + `ambiguous_files` (unresolved only) + `classifier_hint`.
+- `selftest_extract_overrides.py` (route / load robustness / ambiguous→resolved / precedence).
+- `sync_testbed.py` — the manual predecessor of the Stage 10 installer: idempotently mirrors `skills/` + `agents/` (incl. `notes.py`) into `<testbed>/.claude/` and the `entrypoint/CLAUDE.md` activation block into the sandbox root, never touching the sandbox's own graph / config / sources.
+- Integration sandboxes (live outside the repo, uncommitted): `../amg-testbed` (a delivery-service toy where the classification cycle was reproduced end-to-end) and `../amg-bigtest` (a 190-node sparse `depends_on`-chain graph — the stand for the Hebbian re-measurement, with `gen_big.py`, `_measure_big.py`, and a README).
+
+### Changed
+- `reconcile.plan` passes `amg_root` to `extract`. Workflow prompts updated: `amg-bootstrap/SKILL.md` (step 2) and `agents/amg-classifier.md` describe the ambiguous → classifier → write-overrides → re-run loop.
+- Docs synced for the classifier: `04-ingest.md` (new "Overrides: вердикт классификатора, действующий в коде" + `--stats` fields), `08-agents-skills.md` (§ `amg-classifier` / `amg-bootstrap`).
+- THEORY gains §8.2 (a human-readable account of what measuring the Hebbian rule showed); `07-consolidation.md` and `GUIDE.md` record the measured harm next to the `apply_hebbian`-off rationale. Roadmap gains §3.4 ("документация пишется для людей": narrative over terse theses) and detailed Stage 13/14 tasks for a redesigned Hebbian rule + its validation protocol on `amg-bigtest`.
+
+### Fixed
+- Audit 1.13: the `amg-classifier` result is applied by code, not just described in a prompt.
+- `06-retrieval.md` doc↔code drift: the default embedding model is `potion-retrieval-32M`, not the older `potion-base-8M`; noted that `backend: auto` tries backends light→heavy.
+
+### Decided
+- `weights.apply_hebbian` stays **false** — now by direct measurement, not only caution. Blind co-activation Hebb is *inert* on a small dense graph (weights barely move the ranking) but **monotonically harmful** on a large sparse one (recall ≈ −0.10, hop-recall ≈ −0.14 over 8 folds, across BM25 / model2vec / ST seeds): reinforcing the already-central edges into conductance "highways" starves the multi-hop periphery where the gold lives (THEORY §8.1–8.2). A useful Hebb needs an outcome-gated, discriminative rule (roadmap Stage 13 task 9 + Stage 14 task 8), validated on the `amg-bigtest` stand.
+- Embedding defaults need no change. The light multilingual default (`potion-multilingual-128M`) recovers a Russian cross-lingual gold as well as the heavy ST `paraphrase-multilingual-MiniLM-L12-v2` (recall 1.0 vs BM25 0.0 on the xlang demo), so the `embed.py` backend order is **not** reordered (ST needs torch, and a segfault at encode-time is uncatchable). ST stays an optional, measured upgrade; installer guidance for non-English recorded under Stage 10.
+
 ## [0.7.0] — 2026-06-14
 
 Stage 5 closed: decisions, conclusions, open questions and plans are captured into the graph through a safe, crash-safe API — no hand-editing of node files.
