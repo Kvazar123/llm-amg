@@ -143,3 +143,23 @@ compaction:
 near_duplicate_sim: 0.82           # Jaccard threshold to flag two nodes as merge candidates
 episodic_types: [section, note]    # node types treated as episodic (summarize / salience)
 stale_age_days: 30                 # recency basis for the salience freshness signal
+
+# -----------------------------------------------------------------------------
+# Eval gate: compaction must not silently hurt retrieval. When `apply` carries a
+# compression action, the actions are measured on a CLONE of the graph first; the
+# real graph is touched only if recall holds. Measured on labeled cases (pack
+# recall + hop-recall), before vs after.
+#
+# Robust by default: if `cases` is missing / empty / none of its gold_ids resolve
+# in this graph (e.g. the shipped template), the gate SKIPS with a note — it never
+# falsely rejects. Point `cases` at your own labeled file to arm it (ids from
+# inspect_graph.py). Deltas are (after - before): a drop below the threshold fails.
+# on_fail: reject (don't apply) | warn (apply + record warning) | revert (= reject:
+# measuring before commit makes a post-commit rollback unnecessary).
+# -----------------------------------------------------------------------------
+eval_gate:
+  enabled: true
+  cases: .claude/skills/amg-retrieve/evals/cases.json   # template ships unresolved -> skip
+  min_recall_delta: -0.02       # tolerated pack-recall drop (after - before)
+  min_hop_recall_delta: -0.02   # tolerated hop-recall drop
+  on_fail: reject               # reject | warn | revert (revert == reject here)

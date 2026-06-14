@@ -38,7 +38,9 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import sys
+import tempfile
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -79,6 +81,17 @@ DEFAULTS = {
     "near_duplicate_sim": 0.82,
     "episodic_types": ["section", "note"],
     "stale_age_days": 30,
+    # Eval gate: measure a compaction on a graph CLONE before touching the real graph;
+    # apply only if recall holds. Robust to missing/dead cases (skip, never false-reject).
+    # on_fail reject|warn|revert (revert == reject: we measure before commit, so there is
+    # nothing to roll back). See config.yml and apply_actions for the mechanism.
+    "eval_gate": {
+        "enabled": True,
+        "cases": ".claude/skills/amg-retrieve/evals/cases.json",
+        "min_recall_delta": -0.02,
+        "min_hop_recall_delta": -0.02,
+        "on_fail": "reject",
+    },
 }
 
 # Actions that COMPRESS the graph (vs. promote, which only raises a status). When
@@ -117,6 +130,8 @@ def load_config(amg_root: Path) -> dict:
                 cfg[key] = raw["weights"][key]
         if "compaction" in raw:
             cfg["compaction"].update(raw["compaction"] or {})
+        if "eval_gate" in raw:
+            cfg["eval_gate"].update(raw["eval_gate"] or {})
         # plan tunables previously frozen in code (1.17): now overridable from config
         for key in ("near_duplicate_sim", "episodic_types", "stale_age_days"):
             if key in raw:
@@ -485,24 +500,189 @@ def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# eval gate: compaction must not silently hurt retrieval
+# --------------------------------------------------------------------------- #
+
+def _load_eval_modules():
+    """Soft-import the eval harness (eval_retrieval -> retrieve) from the sibling
+    amg-retrieve skill. Returns (E, R) or (None, None) when unavailable, so weights/
+    plan and a no-gate apply never hard-depend on it (the gate then skips)."""
+    try:
+        retrieve_dir = Path(__file__).resolve().parents[2] / "amg-retrieve" / "scripts"
+        if str(retrieve_dir) not in sys.path:
+            sys.path.insert(0, str(retrieve_dir))
+        import eval_retrieval as E
+        import retrieve as R
+        return E, R
+    except Exception:
+        return None, None
+
+
+def _clone_for_eval(amg: Path) -> Path:
+    """Copy the graph (nodes/ + config.yml + cases) into a throwaway store, so the
+    proposed actions can be applied and MEASURED there without touching the real graph
+    — the gate measures on the would-be result, then commits to the real graph only if
+    recall holds (so 'reject' needs no rollback). Returns the clone's amg root."""
+    tmp = Path(tempfile.mkdtemp(prefix="amg-gate-"))
+    clone = tmp / "amg"
+    (clone / "nodes").mkdir(parents=True)
+    if (amg / "nodes").exists():
+        shutil.copytree(amg / "nodes", clone / "nodes", dirs_exist_ok=True)
+    for fn in ("config.yml", "cases.json"):
+        if (amg / fn).exists():
+            shutil.copy2(amg / fn, clone / fn)
+    return clone
+
+
+def _gate_cases(amg: Path, cases_path, project_root: Path, R) -> List[dict]:
+    """Load labeled cases and keep only those whose gold_ids resolve in THIS graph.
+    Returns [] for missing / empty / dead cases — the gate then SKIPS (never falsely
+    rejects), so the shipped unresolved template leaves a fresh install safe."""
+    if not cases_path:
+        return []
+    p = Path(cases_path)
+    if not p.is_absolute():                       # roadmap default is project-relative
+        p = project_root / cases_path
+    if not p.exists():
+        return []
+    try:
+        cases = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    graph_ids = set(R.load_nodes(amg).keys())
+    return [c for c in cases
+            if isinstance(c, dict) and c.get("query") and c.get("gold_ids")
+            and (set(c["gold_ids"]) & graph_ids)]
+
+
+def _action_ids(act: dict) -> set:
+    """Every node id an action references — for attributing a lost gold node to it."""
+    ids = {act[k] for k in ("id", "keep_id", "new_id", "hub_id") if act.get(k)}
+    for k in ("drop_ids", "archive_ids", "member_ids"):
+        ids.update(act.get(k) or [])
+    return ids
+
+
+def _gate_regressions(baseline: dict, after: dict, actions: List[dict]) -> List[dict]:
+    """Per case: gold that was in the pack before and is gone after, with the actions
+    that referenced each lost id (best-effort attribution for the report)."""
+    after_by_id = {r["id"]: r for r in after["per_case"]}
+    out = []
+    for rb in baseline["per_case"]:
+        ra = after_by_id.get(rb["id"])
+        if not ra:
+            continue
+        lost = sorted(set(rb.get("pack_gold", [])) - set(ra.get("pack_gold", [])))
+        if not lost:
+            continue
+        attribution = [{"gold_id": nid,
+                        "actions": sorted({a.get("action") for a in actions
+                                           if isinstance(a, dict) and nid in _action_ids(a)})}
+                       for nid in lost]
+        out.append({"case": rb["id"], "lost_gold": lost, "attribution": attribution})
+    return out
+
+
+def _gate_decide(baseline: dict, after: dict, gate_cfg: dict,
+                 actions: List[dict]) -> dict:
+    """Compare before/after aggregates and decide. recall is PACK recall (compaction
+    changes pack composition, not just top-K ranking); hop_recall isolates the edge
+    contribution. on_fail reject|revert -> 'rejected' (revert == reject: we measured
+    before commit); warn -> apply anyway with the regression recorded."""
+    b, a = baseline["aggregate"], after["aggregate"]
+    b_rec, a_rec = b.get("amg_pack_recall"), a.get("amg_pack_recall")
+    rec_delta = round((a_rec or 0.0) - (b_rec or 0.0), 4)
+    b_hop = (b.get("amg") or {}).get("hop_recall")
+    a_hop = (a.get("amg") or {}).get("hop_recall")
+    hop_delta = (round(a_hop - b_hop, 4)
+                 if a_hop is not None and b_hop is not None else None)
+    min_rec = gate_cfg.get("min_recall_delta", -0.02)
+    min_hop = gate_cfg.get("min_hop_recall_delta", -0.02)
+    failed = rec_delta < min_rec or (hop_delta is not None and hop_delta < min_hop)
+    on_fail = str(gate_cfg.get("on_fail", "reject")).lower()
+    status = "ok" if not failed else ("warn" if on_fail == "warn" else "rejected")
+    return {"status": status, "on_fail": on_fail, "cases": b.get("cases", 0),
+            "pack_recall_before": b_rec, "pack_recall_after": a_rec,
+            "recall_delta": rec_delta, "hop_recall_delta": hop_delta,
+            "min_recall_delta": min_rec, "min_hop_recall_delta": min_hop,
+            "regressions": _gate_regressions(baseline, after, actions)}
+
+
+def _eval_gate(project_root: Path, amg: Path, actions_path: Path,
+               actions: List[dict], cfg: dict, enabled: bool) -> Optional[dict]:
+    """Run the gate, or return None when it does not apply (disabled, or no compression
+    action will actually run). On a fail it returns a decision dict; callers apply or
+    reject accordingly. Measurement uses a graph clone and never touches the real graph
+    or the co-activation journal (evaluate_case runs retrieve with writes off)."""
+    gate_cfg = cfg.get("eval_gate") or {}
+    if not gate_cfg.get("enabled", True):
+        return None
+    will_compress = any(a.get("action") in COMPACTION_ACTIONS and (enabled or a.get("force"))
+                        for a in actions if isinstance(a, dict))
+    if not will_compress:
+        return None                               # nothing destructive -> no gate needed
+    E, R = _load_eval_modules()
+    if E is None:
+        return {"status": "skipped",
+                "reason": "eval harness unavailable (amg-retrieve scripts not importable)"}
+    cases = _gate_cases(amg, gate_cfg.get("cases"), project_root, R)
+    if not cases:
+        return {"status": "skipped",
+                "reason": "no resolvable labeled cases — gate disarmed; point "
+                          "eval_gate.cases at your own file (ids from inspect_graph.py)"}
+    eval_cfg = R.load_config(amg)
+    baseline = E.run(amg, cases, eval_cfg)
+    clone = _clone_for_eval(amg)
+    try:
+        apply_actions(project_root, actions_path, clone, _run_gate=False)
+        after = E.run(clone, cases, eval_cfg)
+    finally:
+        shutil.rmtree(clone.parent, ignore_errors=True)
+    return _gate_decide(baseline, after, gate_cfg, actions)
+
+
+def _write_gate_report(store: gs.GraphStore, report: dict) -> None:
+    try:
+        gs.atomic_write_text(store.root / "work" / "eval-gate-report.json",
+                             json.dumps(report, ensure_ascii=False, indent=2))
+    except OSError:
+        pass
+
+
+# --------------------------------------------------------------------------- #
 # apply: enact the consolidator subagent's actions (transactional + archived)
 # --------------------------------------------------------------------------- #
 
 def apply_actions(project_root: Path, actions_path: Path,
-                  amg_root: Optional[Path] = None) -> dict:
+                  amg_root: Optional[Path] = None, _run_gate: bool = True) -> dict:
     amg = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     store = gs.GraphStore(amg)
     cfg = load_config(amg)
     archive_dir = cfg["compaction"]["archive_dir"]
     actions = json.loads(Path(actions_path).read_text(encoding="utf-8"))
     counts: Dict[str, int] = defaultdict(int)
+    cmp_cfg = cfg["compaction"]
+    enabled = cmp_cfg.get("enabled", True)
 
     with store.lock():
         store.recover()
         nodes = load_nodes(store)
+
+        # Eval gate: measure the proposed compaction on a graph clone and reject (or
+        # warn) on a recall drop BEFORE building the real transaction (_run_gate is
+        # off for the clone's own apply, so there is no recursion). Skips robustly.
+        gate = _eval_gate(project_root, amg, actions_path, actions, cfg, enabled) \
+            if _run_gate else None
+        if gate is not None:
+            _write_gate_report(store, gate)
+            if gate["status"] == "rejected":
+                _log(store, "eval-gate REJECTED compaction "
+                            f"(Δrecall={gate['recall_delta']}, Δhop={gate['hop_recall_delta']})",
+                     None)
+                return {"gate": "rejected", "recall_delta": gate["recall_delta"],
+                        "hop_recall_delta": gate["hop_recall_delta"]}
+
         tx = store.transaction()
-        cmp_cfg = cfg["compaction"]
-        enabled = cmp_cfg.get("enabled", True)
         renorm = bool(cfg.get("part_of_renormalize", True))
         degree, max_deg = _degree_map(nodes)
 
@@ -693,9 +873,16 @@ def apply_actions(project_root: Path, actions_path: Path,
                 counts["introduce_subhub"] += 1
 
         txid = tx.commit()
-        _log(store, f"consolidation applied: {dict(counts)}", txid)
+        msg = f"consolidation applied: {dict(counts)}"
+        if gate is not None and gate["status"] == "warn":
+            msg += (f" | eval-gate WARNING applied despite recall drop "
+                    f"(Δrecall={gate['recall_delta']}, Δhop={gate['hop_recall_delta']})")
+        _log(store, msg, txid)
 
-    return dict(counts)
+    result = dict(counts)
+    if gate is not None:
+        result["gate"] = gate["status"]
+    return result
 
 
 # --------------------------------------------------------------------------- #

@@ -396,6 +396,136 @@ def test_branch_downward(proj):
     print("PASS  branch: hub reaches its branch downward via containment edges (1.20)")
 
 
+def _armed_demo(on_fail):
+    """A fresh demo store with the eval gate armed at an ABSOLUTE cases path (the demo
+    writes resolvable cases.json into the graph root)."""
+    proj = Path(tempfile.mkdtemp(prefix="amg-gate-"))
+    amg = proj / ".claude" / "amg"
+    amg.mkdir(parents=True)
+    E.build_demo_store(amg)
+    cp = amg / "config.yml"
+    cp.write_text(cp.read_text() + "eval_gate:\n  enabled: true\n"
+                  f"  cases: {(amg / 'cases.json').as_posix()}\n  on_fail: {on_fail}\n",
+                  encoding="utf-8")
+    return proj, amg
+
+
+def _write_actions(amg, actions):
+    (amg / "work").mkdir(exist_ok=True)
+    (amg / "work" / "a.json").write_text(json.dumps(actions))
+    return amg / "work" / "a.json"
+
+
+def test_eval_gate():
+    """A harmful compaction is rejected on the graph CLONE before the real graph is
+    touched; a safe one applies; on_fail:warn applies anyway and records the drop."""
+    gold = "code:src/billing.py::compute_total"      # a multi-hop gold node in the demo
+
+    # (1) harmful: retire a gold node -> pack recall drops -> rejected, graph intact
+    proj, amg = _armed_demo("reject")
+    try:
+        res = C.apply_actions(proj, _write_actions(amg, [
+            {"action": "retire", "id": gold, "force": True}]))
+        assert res.get("gate") == "rejected", res
+        assert gold in C.load_nodes(gs.GraphStore(amg)), "reject must not touch the real graph"
+        rep = json.loads((amg / "work" / "eval-gate-report.json").read_text())
+        assert rep["status"] == "rejected" and rep["recall_delta"] < 0, rep
+        assert any(gold in r["lost_gold"] for r in rep["regressions"]), rep
+        assert any("retire" in c["actions"]
+                   for r in rep["regressions"] for c in r["attribution"]), rep
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+    # (2) safe: retire a NON-gold distractor -> recall holds -> applied, gate ok
+    proj, amg = _armed_demo("reject")
+    try:
+        res = C.apply_actions(proj, _write_actions(amg, [
+            {"action": "retire", "id": "doc:doc/refunds.md::overview"}]))
+        assert res.get("gate") == "ok" and res.get("retire") == 1, res
+        assert "doc:doc/refunds.md::overview" not in C.load_nodes(gs.GraphStore(amg))
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+    # (3) on_fail: warn -> applied despite the drop, regression recorded
+    proj, amg = _armed_demo("warn")
+    try:
+        res = C.apply_actions(proj, _write_actions(amg, [
+            {"action": "retire", "id": gold, "force": True}]))
+        assert res.get("gate") == "warn" and res.get("retire") == 1, res
+        assert gold not in C.load_nodes(gs.GraphStore(amg)), "warn applies anyway"
+        rep = json.loads((amg / "work" / "eval-gate-report.json").read_text())
+        assert rep["status"] == "warn" and any(gold in r["lost_gold"] for r in rep["regressions"])
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+    print("PASS  eval-gate: harmful rejected (graph intact, attributed); safe applied; warn applies + records")
+
+
+def test_gate_robust():
+    """No/dead cases must SKIP the gate (apply proceeds) — never a false reject. The
+    default cases path is project-relative and unresolved in a bare temp project."""
+    proj = Path(tempfile.mkdtemp(prefix="amg-rob-"))
+    amg = proj / ".claude" / "amg"
+    amg.mkdir(parents=True)
+    E.build_demo_store(amg)
+    cp = amg / "config.yml"
+    cp.write_text(cp.read_text() + "eval_gate:\n  enabled: true\n"
+                  "  cases: .claude/skills/amg-retrieve/evals/cases.json\n  on_fail: reject\n",
+                  encoding="utf-8")
+    gold = "code:src/billing.py::compute_total"
+    try:
+        res = C.apply_actions(proj, _write_actions(amg, [
+            {"action": "retire", "id": gold, "force": True}]))
+        assert res.get("gate") == "skipped", res
+        assert gold not in C.load_nodes(gs.GraphStore(amg)), "skip must not block compaction"
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+    print("PASS  eval-gate: unresolved cases -> skip + apply (no false reject when disarmed)")
+
+
+def test_hebbian_demo():
+    """Mechanism correctness (NOT a default-on justification): a gold node behind a WEAK
+    edge is missed with static weights (hop-recall 0) and recovered after folding a
+    co-activation journal with apply_hebbian on (hop-recall 1). Negative control: on the
+    hand-optimal demo weights, Hebbian folding must not reduce recall."""
+    # positive control
+    proj = Path(tempfile.mkdtemp(prefix="amg-heb-"))
+    amg = proj / ".claude" / "amg"
+    amg.mkdir(parents=True)
+    try:
+        cases = E.build_hebbian_demo(amg)
+        off = E.run(amg, cases, R.load_config(amg))["aggregate"]
+        assert off["amg"]["hop_recall"] == 0.0, off       # weak edge: gold not reached
+        (amg / "work").mkdir(exist_ok=True)
+        pair = ["code:src/jobs.py::nightly_charge", "notes:decisions/backoff"]
+        (amg / "work" / "coactivation.log").write_text(
+            "".join(json.dumps({"coactivated": [pair]}) + "\n" for _ in range(5)))
+        cp = amg / "config.yml"
+        cp.write_text(cp.read_text() + "weights:\n  apply_hebbian: true\n", encoding="utf-8")
+        assert C.fold_weights(proj)["hebbian_applied"] is True
+        on = E.run(amg, cases, R.load_config(amg))["aggregate"]
+        assert on["amg"]["hop_recall"] == 1.0, on          # folded journal recovered it
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+    # negative control: Hebbian must not hurt recall on already-good weights
+    proj2 = Path(tempfile.mkdtemp(prefix="amg-negheb-"))
+    amg2 = proj2 / ".claude" / "amg"
+    amg2.mkdir(parents=True)
+    try:
+        cases2 = E.build_demo_store(amg2)
+        before = E.run(amg2, cases2, R.load_config(amg2))["aggregate"]["amg"]["recall"]
+        R.retrieve(amg2, cases2[0]["query"], config=R.load_config(amg2),
+                   write_pack=False, log_coactivation=True)       # generate a real journal
+        cp2 = amg2 / "config.yml"
+        cp2.write_text(cp2.read_text() + "weights:\n  apply_hebbian: true\n", encoding="utf-8")
+        C.fold_weights(proj2)
+        after = E.run(amg2, cases2, R.load_config(amg2))["aggregate"]["amg"]["recall"]
+        assert after >= before, (before, after)
+    finally:
+        shutil.rmtree(proj2, ignore_errors=True)
+    print("PASS  hebbian: weak-edge gold recovered off->on (hop 0->1); good weights keep recall")
+
+
 if __name__ == "__main__":
     proj = setup_project()
     try:
@@ -411,6 +541,9 @@ if __name__ == "__main__":
         test_consolidation_nodes_schema(proj)
         test_grounded_inbound()
         test_branch_downward(proj)
+        test_eval_gate()
+        test_gate_robust()
+        test_hebbian_demo()
         print("\nALL CONSOLIDATION CHECKS PASSED")
     finally:
         shutil.rmtree(proj, ignore_errors=True)

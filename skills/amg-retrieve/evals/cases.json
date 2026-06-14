@@ -1,34 +1,12 @@
 [
   {
-    "id": "controller-task",
-    "query": "как добавить новый контроллер во fastMVC",
+    "id": "example-replace-me",
+    "query": "describe a real task here, naming the function/module/subsystem it touches",
     "gold_ids": [
-      "doc:doc/guides/controllers.md::контроллеры",
-      "doc:doc/guides/controllers.md::классовый-контроллер",
-      "hub:controllers-routing",
-      "code:src/app/controllers/products.py"
+      "code:path/to/module.py::function_name",
+      "doc:path/to/guide.md::section-slug",
+      "hub:some-topic"
     ],
-    "note": "List the node ids that SHOULD appear in the pack for this query."
-  },
-  {
-    "id": "config-task",
-    "query": "что можно конфигурировать в fastmvc",
-    "gold_ids": [
-      "doc:doc/guides/config.md::конфигурация",
-      "doc:doc/guides/config.md::собственные-ключи",
-      "doc:doc/guides/config.md::компонентные-конфиги"
-    ],
-    "note": "List the node ids that SHOULD appear in the pack for this query."
-  },
-  {
-    "id": "routing-task",
-    "query": "роутинг и префиксы в контроллерах",
-    "gold_ids": [
-      "doc:doc/guides/controllers.md::роутинг",
-      "hub:controllers-routing",
-      "doc:doc/guides/routing-cookbook.md::slug-параметры-динамические-сегменты",
-      "doc:doc/guides/routing-cookbook.md::path-параметры-статические-сегменты"
-    ],
-    "note": "List the node ids that SHOULD appear in the pack for this query."
+    "note": "TEMPLATE — edit before use. List the node ids that SHOULD surface for this query; copy exact ids from `inspect_graph.py` (or `inspect_graph.py --grep <word>`). These placeholder ids resolve in no real graph, so eval_retrieval reports recall 0 here and the consolidation eval_gate SKIPS (it never falsely rejects on unresolved cases). Point retrieval/tuning and `eval_gate.cases` at this file once you have labeled a handful of real tasks, or at your own cases file."
   }
 ]

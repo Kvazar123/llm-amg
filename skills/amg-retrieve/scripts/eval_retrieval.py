@@ -91,6 +91,7 @@ def evaluate_case(store_root: Path, case: dict, cfg: dict) -> dict:
         "lexical": {"recall": recall(lex_set), "precision": prec(lex_set),
                     "hop_recall": hoprec(lex_set)},
         "pack_recall": recall(pack_set),
+        "pack_gold": sorted(pack_set & gold),   # gold present in the pack (gate attribution)
         "missed_by_amg": sorted(gold - amg_set),
     }
 
@@ -295,6 +296,73 @@ def build_embeddings_demo(root: Path) -> List[dict]:
                 "friend (OFF misses); a multilingual embedding picks the RU "
                 "encryption-keys node by meaning (ON recovers). Needs a multilingual "
                 "model that bridges languages well.",
+    }]
+    (root / "cases.json").write_text(json.dumps(cases, indent=2))
+    return cases
+
+
+def build_hebbian_demo(root: Path) -> List[dict]:
+    """A POSITIVE control for Hebbian weight folding, kept separate from the other
+    demos. A gold node is reachable ONLY through a WEAK structural edge that competes
+    against a stronger sibling edge and lexical distractors, so with static weights it
+    loses its top-K / pack slot (hop-recall 0). Replaying a co-activation journal for
+    that pair and folding with `weights.apply_hebbian: true` strengthens the weak edge
+    enough to recover the node (hop-recall 1) — the off→on flip isolates exactly what
+    Hebbian conductance learning adds (analogous to build_embeddings_demo 0→1).
+
+    This proves the MECHANISM is correct; it does NOT justify turning the default on —
+    a hand-built graph would always flatter Hebb. The default `apply_hebbian: false`
+    flips only on a measured uplift on a real graph with a real journal (THEORY §8.1).
+    The negative control (Hebb must not hurt recall on already-good weights) runs in
+    selftest_consolidate against build_demo_store, where the weights are hand-optimal.
+
+    Edges use `relates_to` (same prior β both sides), so activation share turns purely
+    on edge weight. Lexical seeding only: embeddings off, so it is deterministic."""
+    nd = root / "nodes"
+    for sub in ("code", "doc", "notes"):
+        (nd / sub).mkdir(parents=True, exist_ok=True)
+    (root / "config.yml").write_text(
+        "active: true\nworking_language: en\nretrieval:\n  embeddings:\n    enabled: off\n")
+
+    def w(rel_dir, fname, text):
+        (nd / rel_dir / fname).write_text(text, encoding="utf-8")
+
+    # seed (gold, lexical match): its outflow is split between a WEAK edge to the gold
+    # backoff note and a STRONGER edge to a non-gold sibling, so the weak target starves.
+    w("code", "nightly.md", _node(
+        "code:src/jobs.py::nightly_charge", "function",
+        "Nightly job that charges failed billing attempts on customer cards.",
+        source_path="src/jobs.py", lineno=10,
+        edges=[{"rel": "relates_to", "to": "notes:decisions/backoff", "w": 0.05},
+               {"rel": "relates_to", "to": "code:src/jobs.py::send_receipt", "w": 0.12}]))
+    # weak gold (hop: shares NO words with the query; reached only via the weak edge).
+    w("notes", "backoff.md", _node(
+        "notes:decisions/backoff", "decision",
+        "Exponential backoff with three attempts before surfacing an error.",
+        body="Wrap the gateway call in a 3x exponential backoff."))
+    # stronger sibling (NOT gold, no query words): soaks the seed's outflow when static.
+    w("code", "receipt.md", _node(
+        "code:src/jobs.py::send_receipt", "function",
+        "Renders and sends the receipt document.",
+        source_path="src/jobs.py", lineno=30))
+    # lexical distractors: match the query's words but are isolated and NOT gold, so
+    # they outrank the backoff note LEXICALLY (making it a hop node) while contributing
+    # no structural pull of their own.
+    w("doc", "faq.md", _node(
+        "doc:doc/faq.md::charges", "section",
+        "FAQ about failed charges and nightly billing on customer cards."))
+    w("code", "charge.md", _node(
+        "code:src/billing.py::charge", "function",
+        "Charges a customer card for the billing invoice.",
+        source_path="src/billing.py", lineno=5))
+
+    cases = [{
+        "id": "hebbian-backoff",
+        "query": "nightly job that charges failed billing attempts on customer cards",
+        "gold_ids": ["code:src/jobs.py::nightly_charge", "notes:decisions/backoff"],
+        "note": "backoff is gold but shares no words with the query and sits behind a "
+                "WEAK edge; static weights miss it (hop-recall 0), folding the "
+                "co-activation journal recovers it (hop-recall 1).",
     }]
     (root / "cases.json").write_text(json.dumps(cases, indent=2))
     return cases
