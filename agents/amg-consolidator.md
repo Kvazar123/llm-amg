@@ -64,8 +64,10 @@ Notes:
 
 ## Return to the caller
 3–5 lines: counts by action type, which branches you compacted and why, and anything
-notable promoted (e.g. a decision). Note that the caller should verify recall with the
-eval harness before/after if a branch was compacted.
+notable promoted (e.g. a decision). The driver **auto-gates compaction by recall** — it
+measures a labeled-case eval on a graph clone and rejects (or warns) if recall drops, so
+you need not run eval yourself; propose the smallest safe compaction and let the gate
+catch an over-aggressive cut (a rejected apply leaves the graph untouched).
 
 ## Rules
 - Read-only on the graph and on `src/`/`doc/`/`data/`; your only output is the actions

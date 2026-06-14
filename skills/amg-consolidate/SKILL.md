@@ -83,10 +83,15 @@ or shortened.
 - Steps run bottom-up and stop the moment the branch is back under budget:
   `summarize_episodes → merge_near_duplicates → introduce_subhub → lossy_shorten`.
 - Lossy shortening is the last resort and archives the full text first.
-- **Verify the compression was safe with the eval harness**: run recall before and
-  after on your labeled cases (`../amg-retrieve/scripts/eval_retrieval.py`). If recall
-  drops, the compaction was too aggressive — loosen the budget or revert (the archive
-  and git history make this trivial). Safety here is a measured number, not a hope.
+- **Compaction is auto-gated by recall.** `consolidate.py apply` measures a labeled-case
+  eval on a *clone* of the graph and commits the compaction to the real graph only if
+  recall holds (`pack_recall` + `hop_recall`); on a drop it rejects — or warns and applies —
+  per `eval_gate.on_fail`, writing `work/eval-gate-report.json` (which cases regressed,
+  which gold ids were lost, which actions caused it). It needs labeled cases
+  (`eval_gate.cases`); with none/empty/unresolved cases it skips safely — never a false
+  reject. You can still run the eval by hand (`../amg-retrieve/scripts/eval_retrieval.py`)
+  to tune budgets; the archive and git history make any revert trivial. Safety here is a
+  measured number, not a hope.
 
 ## Reference
 - `scripts/consolidate.py` — `weights`, `plan`, `apply` (+ `selftest_consolidate.py`).
