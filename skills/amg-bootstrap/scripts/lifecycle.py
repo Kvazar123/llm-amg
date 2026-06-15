@@ -12,10 +12,11 @@ active and `automation: on` (turning automation off leaves only the manual comma
                   before task work (so the entry point's import is current and exists).
   session-end   : fold the co-activation log into weights (deterministic; with
                   apply_hebbian off this only ACCUMULATES coact, never mutating
-                  conductance) and refresh the digest. The judgment half of
-                  consolidation — the amg-consolidator subagent + apply — and the
-                  session transcript dump (Stage 9) stay model-driven: a hook cannot
-                  run a subagent, so they live in the activation loop, not here.
+                  conductance), refresh the digest, and dump the session transcript
+                  to <store>/sessions (Stage 9; from the hook's stdin payload). The
+                  JUDGMENT half of consolidation — the amg-consolidator subagent +
+                  apply — stays model-driven: a hook cannot run a subagent, so it
+                  lives in the activation loop, not here.
 
 Four MANUAL commands, exposed as the `/amg <sub>` slash command (and reachable by
 verbal intent through the activation block):
@@ -33,6 +34,8 @@ weight folding <-> the amg-consolidate skill, the digest <-> consolidate.py dige
 CLI:
   python lifecycle.py session-start|session-end [<project_root>] [--root <agent_dir>]
   python lifecycle.py status|repair|on|off      [<project_root>] [--root <agent_dir>]
+  session-end also accepts the hook's JSON on stdin, or --transcript <path> to dump a
+  session manually in an environment without the SessionEnd hook.
 
 The graph root is <agent_dir>/amg, resolved by graph_store.resolve_amg_root (the same
 chain as reconcile/consolidate/notes).
@@ -49,6 +52,8 @@ from typing import Dict, List, Optional
 
 import graph_store as gs
 import reconcile as rc
+from extract_structure import (session_attachments_marker, session_dir,
+                               session_role_marker)
 
 # Cross-skill import of consolidate for weights + digest — the established pattern in
 # this codebase (consolidate itself imports graph_store from amg-bootstrap, and the
@@ -114,6 +119,153 @@ def _heal(amg: Path) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# Session transcript dump (Stage 9)
+#
+# Claude Code's SessionEnd hook pipes JSON on stdin with the path to the session
+# .jsonl; we render it to <store>/sessions as a role-marked markdown dump (the same
+# format the session chunker reads), which the next bootstrap ingests like any source.
+# Parsing the .jsonl is Claude-Code-specific BY NATURE; in an environment without that
+# transcript the portable "don't lose the dialogue" guarantee is capturing notes as
+# you go (notes.py) — see the activation block.
+# --------------------------------------------------------------------------- #
+
+# Harness-injected user-message wrappers (enumerated from real Claude Code
+# transcripts): slash-command plumbing, the `!` bash mode, and task notifications.
+# These are mechanical, not dialogue, so they are dropped from the dump. Genuine human
+# text never starts with one of these tags; an unknown future wrapper degrades to a
+# turn rather than crashing.
+_WRAPPER_PREFIXES = ("<local-command", "<command-name", "<command-message",
+                     "<command-args", "<command-contents", "<bash-input",
+                     "<bash-stdout", "<bash-stderr", "<task-notification")
+
+
+def _is_wrapper_text(s: str) -> bool:
+    """A user 'message' that is a Claude Code wrapper (slash command, bash mode, task
+    notification), not text the human actually typed."""
+    t = s.lstrip()
+    return any(t.startswith(p) for p in _WRAPPER_PREFIXES)
+
+
+def _render_transcript(transcript_path: Path) -> Optional[dict]:
+    """Parse a Claude Code .jsonl transcript into a role-marked markdown body.
+
+    Keeps human and assistant TEXT; cuts raw `thinking` (private reasoning, never
+    stored); counts tool calls / results / images as attachments (a `== Attachments
+    N ==` marker, not reproduced); drops meta entries and system/attachment plumbing.
+    Returns {markdown, turns, attachments, started, ended} or None when the file is
+    unreadable or holds no real dialogue (so an empty session writes no file).
+    """
+    try:
+        raw = transcript_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    out: List[str] = []
+    turns = 0
+    attach_total = 0
+    pending_attach = 0
+    started: Optional[str] = None
+    ended: Optional[str] = None
+
+    def flush_attach() -> None:
+        nonlocal pending_attach
+        if pending_attach:
+            out.append(session_attachments_marker(pending_attach))
+            pending_attach = 0
+
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            o = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if o.get("type") not in ("user", "assistant") or o.get("isMeta"):
+            continue
+        msg = o.get("message")
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        texts: List[str] = []
+        a = 0
+        if isinstance(content, str):
+            if _is_wrapper_text(content):
+                continue
+            if content.strip():
+                texts.append(content.strip())
+        elif isinstance(content, list):
+            for b in content:
+                if not isinstance(b, dict):
+                    continue
+                bt = b.get("type")
+                if bt == "text":
+                    t = (b.get("text") or "").strip()
+                    if t:
+                        texts.append(t)
+                elif bt in ("thinking", "redacted_thinking"):
+                    continue                       # cut raw model reasoning
+                else:
+                    a += 1                         # tool_use / tool_result / image / ...
+        else:
+            continue
+        ts = o.get("timestamp")
+        if ts:
+            started = started or ts
+            ended = ts
+        joined = "\n\n".join(texts).strip()
+        if joined:
+            flush_attach()                         # attachments accrued before this turn
+            label = "Assistant" if msg.get("role") == "assistant" else "Human"
+            out.append(session_role_marker(label))
+            out.append(joined)
+            turns += 1
+        pending_attach += a                        # this entry's own attachments follow it
+        attach_total += a
+    flush_attach()
+    if turns == 0:
+        return None
+    return {"markdown": "\n\n".join(out).rstrip() + "\n", "turns": turns,
+            "attachments": attach_total, "started": started, "ended": ended}
+
+
+def _dump_session(project_root: Path, amg: Path, cfg: dict,
+                  transcript_path: Optional[str], reason: Optional[str]) -> dict:
+    """Render the session transcript and write it to <store>/sessions as a dated dump
+    (atomic file write — it is a source, not graph data; the next bootstrap ingests it).
+    A missing transcript path (no hook payload) or an empty transcript is a no-op."""
+    if not transcript_path:
+        return {"skipped": "no transcript_path (no SessionEnd hook payload)"}
+    rendered = _render_transcript(Path(transcript_path))
+    if rendered is None:
+        return {"skipped": "empty or unreadable transcript"}
+    sessions = session_dir(project_root, cfg, amg)
+    if sessions is None:
+        return {"skipped": "no sessions dir"}
+    stamp = time.strftime("%Y-%m-%d-%H%M")
+    target = sessions / f"{stamp}.md"
+    i = 1
+    while target.exists():                         # same-minute collision: disambiguate
+        target = sessions / f"{stamp}-{i}.md"
+        i += 1
+    fm: Dict[str, object] = {
+        "session": target.stem, "source": Path(transcript_path).name,
+        "reason": reason or "unknown", "turns": rendered["turns"],
+        "attachments": rendered["attachments"]}
+    if rendered["started"]:
+        fm["started"] = rendered["started"]
+    if rendered["ended"]:
+        fm["ended"] = rendered["ended"]
+    body = ("---\n" + yaml.safe_dump(fm, sort_keys=False, allow_unicode=True).strip()
+            + "\n---\n\n" + rendered["markdown"])
+    gs.atomic_write_text(target, body)
+    try:
+        rel = target.relative_to(amg).as_posix()
+    except ValueError:
+        rel = str(target)
+    return {"file": rel, "turns": rendered["turns"], "attachments": rendered["attachments"]}
+
+
+# --------------------------------------------------------------------------- #
 # Automatic hooks
 # --------------------------------------------------------------------------- #
 
@@ -128,13 +280,16 @@ def session_start(project_root: Path, amg: Path) -> dict:
     return {"action": "session-start", **healed, "digest": digest}
 
 
-def session_end(project_root: Path, amg: Path) -> dict:
+def session_end(project_root: Path, amg: Path, transcript_path: Optional[str] = None,
+                reason: Optional[str] = None) -> dict:
     cfg = _read_config(amg)
     if not (_is_active(cfg) and _automation_on(cfg)):
         return {"skipped": "amg inactive or automation off"}
     weights = co.fold_weights(project_root, amg)
     digest = co.write_digest(project_root, amg)
-    return {"action": "session-end", "weights": weights, "digest": digest}
+    session = _dump_session(project_root, amg, cfg, transcript_path, reason)
+    return {"action": "session-end", "weights": weights, "digest": digest,
+            "session": session}
 
 
 # --------------------------------------------------------------------------- #
@@ -259,12 +414,36 @@ def format_status(d: dict) -> str:
 # CLI
 # --------------------------------------------------------------------------- #
 
+def _load_stdin_payload() -> dict:
+    """The SessionEnd hook pipes JSON on stdin (transcript_path, reason, cwd, ...).
+    Return {} when stdin is a TTY or empty (a manual run), so session-end still folds
+    weights + the digest without a dump and never blocks waiting on a terminal."""
+    try:
+        if sys.stdin is None or sys.stdin.isatty():
+            return {}
+        raw = sys.stdin.read()
+    except (OSError, ValueError):
+        return {}
+    if not raw.strip():
+        return {}
+    try:
+        d = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
 def main(argv: List[str]) -> int:
     args = list(argv[1:])
     cli_root: Optional[str] = None
     if "--root" in args:
         i = args.index("--root")
         cli_root = args[i + 1]
+        del args[i:i + 2]
+    cli_transcript: Optional[str] = None
+    if "--transcript" in args:                   # manual dump without the hook
+        i = args.index("--transcript")
+        cli_transcript = args[i + 1]
         del args[i:i + 2]
     cmd = args[0] if args else "help"
     root = Path(args[1]).resolve() if len(args) > 1 else Path.cwd()
@@ -273,7 +452,10 @@ def main(argv: List[str]) -> int:
     if cmd == "session-start":
         print(json.dumps(session_start(root, amg), indent=2)); return 0
     if cmd == "session-end":
-        print(json.dumps(session_end(root, amg), indent=2)); return 0
+        payload = _load_stdin_payload()
+        tp = cli_transcript or payload.get("transcript_path")
+        print(json.dumps(session_end(root, amg, transcript_path=tp,
+                                     reason=payload.get("reason")), indent=2)); return 0
     if cmd == "repair":
         print(json.dumps(repair(root, amg), indent=2)); return 0
     if cmd in ("on", "off"):

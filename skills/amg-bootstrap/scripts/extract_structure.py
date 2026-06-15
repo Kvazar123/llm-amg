@@ -535,6 +535,48 @@ def _data_units(path: Path, rel: str, policy: str) -> List[dict]:
     return units or [_file_unit(rel, "data", policy, text)]
 
 
+# --- captured sessions (Stage 9) ---------------------------------------------
+# The dump writer (lifecycle.py) and this chunker SHARE the role markers below — the
+# format contract; lifecycle imports these helpers so the two never drift apart.
+_SESSION_ROLE_RE = re.compile(r"^=== (Human|Assistant) ===\s*$")
+
+
+def session_role_marker(role: str) -> str:
+    """Turn delimiter (`=== Human ===` / `=== Assistant ===`) shared by the session
+    dump writer and the session chunker."""
+    return f"=== {role} ==="
+
+
+def session_attachments_marker(n: int) -> str:
+    """Marker for omitted mechanical content (tool calls/results, files) shared with
+    the dump writer; the chunker keeps it inside the turn it annotates."""
+    return f"== Attachments {n} =="
+
+
+def _session_units(path: Path, rel: str, policy: str) -> List[dict]:
+    """One unit per conversation turn in a captured session dump. Turns are split on
+    the role markers the dump writer emits; the leading frontmatter (everything before
+    the first marker) is skipped. Each turn is a `section` so it is episodic — a long
+    chat is ingested at conversational granularity and consolidation can summarize /
+    compact piled-up sessions (THEORY §13). Falls back to one file unit if no markers
+    are present (e.g. a hand-dropped chat export the writer did not format)."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines(keepends=True)
+    starts = [i for i, ln in enumerate(lines) if _SESSION_ROLE_RE.match(ln.rstrip("\n"))]
+    if not starts:
+        return [_file_unit(rel, "doc", policy, text, "session")]
+    bounds = starts + [len(lines)]
+    units = []
+    for n, (s, e) in enumerate(zip(bounds, bounds[1:]), 1):
+        chunk = "".join(lines[s:e]).strip()
+        if not chunk:
+            continue
+        units.append({"id": f"doc:{rel}::m{n}", "kind": "section", "source_path": rel,
+                      "category": "doc", "policy": policy, "qualname": f"m{n}",
+                      "lineno": s + 1, "lang": "session", "content_sha": _sha(chunk)})
+    return units or [_file_unit(rel, "doc", policy, text, "session")]
+
+
 # --- binary document formats (optional pure-Python libs; graceful skip) ------
 # Each returns units that CARRY the extracted `text`, so the builder can summarize
 # without re-opening the binary. Returns None when the library is absent or the
@@ -633,7 +675,55 @@ def _xlsx_units(path: Path, rel: str, policy: str) -> Optional[List[dict]]:
 
 CHUNKERS = {"python": _python_units, "treesitter": _treesitter_units,
             "headings": _markdown_units, "paragraphs": _text_units, "json": _data_units,
-            "pdf": _pdf_units, "docx": _docx_units, "xlsx": _xlsx_units}
+            "pdf": _pdf_units, "docx": _docx_units, "xlsx": _xlsx_units,
+            "session": _session_units}
+
+
+# --------------------------------------------------------------------------- #
+# Captured sessions as a source (Stage 9)
+# --------------------------------------------------------------------------- #
+
+def session_dir(project_root: Path, config: dict, amg_root: Optional[Path]) -> Optional[Path]:
+    """Resolve the captured-sessions folder. `config['sessions']` is an optional
+    project-relative override; by default it DERIVES as <store>/sessions from the
+    resolved root, so it is correct under any agent dir (.claude / .agents / ...) with
+    no installer dependency. Shared by the dump writer (lifecycle) and the chunker —
+    one source of truth, so writer and reader can never diverge."""
+    s = config.get("sessions")
+    if s:
+        return (project_root / str(s)).resolve()
+    return (Path(amg_root).resolve() / "sessions") if amg_root else None
+
+
+def _iter_session_files(base: Path) -> Iterable[Path]:
+    """Yield files under the sessions dir, filtering only junk BELOW it. The dir lives
+    inside the store (under the ignored agent dir), so — unlike iter_source_files — its
+    prefix is NOT subject to DEFAULT_IGNORE_DIRS / .gitignore: it is an opted-in
+    AMG-internal source. Without this, iter would silently drop every dump (audit 1.18)."""
+    if not base.exists():
+        return
+    for p in base.rglob("*"):
+        if p.is_file() and not any(part in DEFAULT_IGNORE_DIRS
+                                   for part in p.relative_to(base).parts):
+            yield p
+
+
+def _extract_sessions(project_root: Path, config: dict,
+                      amg_root: Optional[Path]) -> List[dict]:
+    """Captured session dumps as an ordinary source, routed to the session chunker.
+    Policy comes from `session_policy` (absorb by default)."""
+    base = session_dir(project_root, config, amg_root)
+    if base is None:
+        return []
+    policy = str(config.get("session_policy", "absorb"))
+    out: List[dict] = []
+    for p in _iter_session_files(base):
+        try:
+            rel = p.relative_to(project_root).as_posix()
+        except ValueError:                # an override outside the project tree
+            continue
+        out += _session_units(p, rel, policy)
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -664,6 +754,7 @@ def extract(project_root: Path, config: dict, amg_root: Optional[Path] = None) -
                 units += got
             else:
                 units += CHUNKERS[chunker](path, rel, policy)
+    units += _extract_sessions(project_root, config, amg_root)   # opted-in store source
     return units
 
 
@@ -686,6 +777,13 @@ def _stats(project_root: Path, config: dict, amg_root: Optional[Path] = None) ->
                 resolved.append(rel)            # ambiguity settled by amg-classifier
             elif amb:
                 ambiguous.append(rel)           # still unresolved -> prose default
+    sessions = 0
+    sess_base = session_dir(project_root, config, amg_root)
+    if sess_base:
+        for _p in _iter_session_files(sess_base):
+            cat["doc"] += 1
+            langs["session"] += 1
+            sessions += 1
     try:
         from tree_sitter_language_pack import get_parser
         get_parser("json")                    # attempt a real grammar load
@@ -703,7 +801,8 @@ def _stats(project_root: Path, config: dict, amg_root: Optional[Path] = None) ->
             extraction[fmt] = f"unavailable (pip install {'python-docx' if mod=='docx' else mod}) -> files skipped"
 
     out = {"by_category": dict(cat), "by_language": dict(langs),
-           "skipped_binary": skipped, "ambiguous_files": ambiguous[:20],
+           "skipped_binary": skipped, "sessions": sessions,
+           "ambiguous_files": ambiguous[:20],
            "resolved_by_override": resolved[:20],
            "tree_sitter": ts, "text_extraction": extraction}
     if ambiguous:

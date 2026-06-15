@@ -43,6 +43,21 @@ mirror_path:
 # absorb_path:
 #   - data
 
+# Captured sessions (Stage 9). At SessionEnd (a Claude Code hook) the dialogue is
+# dumped to <agent_dir>/amg/sessions/YYYY-MM-DD-HHMM.md — role markers, no raw model
+# thinking — and then ingested like any other source. The location is DERIVED from the
+# store root, so it is correct under any agent dir (.claude / .agents / ...) with no
+# extra config; uncomment `sessions` only to place the dumps elsewhere. In an agent
+# environment without the SessionEnd hook there is no auto-dump — the portable path is
+# the activation loop plus capturing notes as you go (notes survive regardless).
+#
+#   session_policy: absorb -> distill once; the dump file may be deleted later and the
+#                             summary stays.
+#                   mirror -> keep nodes while the file exists, so every detail of a
+#                             valuable dialogue stays retrievable in full.
+# sessions: .claude/amg/sessions     # optional override; default is <store>/sessions
+session_policy: absorb
+
 # Extra ignore globs on top of the built-in defaults (.git, node_modules, .venv,
 # __pycache__, dist, build, target, binaries, ...). The repo's .gitignore is also
 # honoured automatically. Usually leave empty.
