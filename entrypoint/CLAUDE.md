@@ -87,15 +87,18 @@ explicit request.
    **`amg-consolidate`** skill once to fold the session's co-activations into edge
    weights and maintain memory. Conclusions that live only in chat are lost on
    `/clear`; the graph is where they survive, so capture before clearing. With
-   automation on, the SessionEnd hook already folds weights and refreshes the digest
-   deterministically; running the skill adds the consolidator subagent's judgment —
-   promote, merge, compact — which a hook cannot do.
+   automation on, the SessionEnd hook already folds weights, refreshes the digest, and
+   dumps the session transcript to `sessions/` deterministically; running the skill
+   adds the consolidator subagent's judgment — promote, merge, compact — which a hook
+   cannot do. (The transcript dump needs Claude Code's SessionEnd hook; in another
+   environment your notes are what preserve the dialogue.)
 
 ### Where things are
 - The graph: `.claude/amg/nodes/` — the source of truth, one file per node — plus
   `work/` (scratch), `journal/` (crash-recovery state, empty when idle), `archive/`,
-  `log.md` (the human-readable action log), and `digest.md` (the auto-generated
-  standing-decisions block imported above).
+  `sessions/` (auto-dumped session transcripts, ingested as a source), `log.md` (the
+  human-readable action log), and `digest.md` (the auto-generated standing-decisions
+  block imported above).
 - Activation / sources / tunables: `.claude/amg/config.yml`.
 - Your source folders (whatever `mirror_path` / `absorb_path` point to) are
   **read-only**. Never modify them as a side effect of maintaining the graph; they

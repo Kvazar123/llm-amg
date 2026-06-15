@@ -105,11 +105,19 @@ What feeds memory is listed in `config.yml` under two keys; each file's type (co
 
 **A trick for important material.** Absorption keeps a distillate (the gist, not every word), so if you delete an absorbed source only the summary remains. When you need guaranteed access to **all** the detail, declare the material a **mirror** even without editing it: the graph then holds summaries and pointers, while the full text is always reachable via the link in the file itself (the price: the source must stay on disk). This is especially useful for valuable conversations — keeping them as a mirror is safer than absorbing them.
 
+## Saving sessions
+
+A conversation is memory too: decisions and conclusions that surface in the dialogue would be lost on `/clear`. So at the end of a session the `SessionEnd` hook dumps the transcript to `<store>/sessions/YYYY-MM-DD-HHMM.md` — the turns' text with role markers, **with the model's raw thinking cut out**; tool calls and attachments are not reproduced but counted. The dump is then ingested like any other source.
+
+The write policy is set by the **`session_policy`** key — the same one sources use: `absorb` (the default) takes the dialogue in as a distillate (the dump file may be deleted later and the summary stays), while `mirror` keeps it as a live projection (nodes live as long as the file does, so any detail stays retrievable in full — the trick for valuable conversations). The folder defaults to `<store>/sessions` and is correct under any agent directory.
+
+The automatic dump relies on Claude Code's hook and transcript format; in an environment without the hook, capturing notes as you go (`notes.py`) takes its place — and that is the portable "don't lose the dialogue" guarantee in any environment.
+
 ## Modes and control
 
 How much memory does on its own is set by the `automation` key in the config (on by default):
 
-- **automatic mode** (`automation: true`) — memory runs itself: the `SessionStart`/`SessionEnd` hooks (a Claude Code mechanism) deterministically heal the graph after crashes and fold weights, while the model's loop gathers context before each task, files conclusions along the way, and runs consolidation at the end;
+- **automatic mode** (`automation: true`) — memory runs itself: the `SessionStart`/`SessionEnd` hooks (a Claude Code mechanism) deterministically heal the graph after crashes, fold weights, and dump the session transcript, while the model's loop gathers context before each task, files conclusions along the way, and runs consolidation at the end;
 - **manual mode** (`automation: false`) — memory does nothing on its own, only on a command or an explicit request.
 
 All control goes through one `/amg <verb>` command (and the same words in an ordinary request: the model matches intent and synonyms, not the exact verb):
@@ -144,9 +152,9 @@ For **non-English projects** the engine picks a multilingual default model on it
 
 ## What's implemented and what's planned
 
-The base path is implemented and stabilized (roadmap stages 0–8): the transactional store, structure extraction with a classifier and chunkers, `mirror`/`absorb` reconciliation, retrieval (BM25 + embeddings + Personalized PageRank + a tiered pack), consolidation (weights, salience, compaction under an eval guard), safe note capture, and the lifecycle layer (session hooks, `/amg` commands, `automation` modes, an always-on digest).
+The base path is implemented and stabilized (roadmap stages 0–9): the transactional store, structure extraction with a classifier and chunkers, `mirror`/`absorb` reconciliation, retrieval (BM25 + embeddings + Personalized PageRank + a tiered pack), consolidation (weights, salience, compaction under an eval guard), safe note capture, the lifecycle layer (session hooks, `/amg` commands, `automation` modes, an always-on digest), and session saving (an auto-dumped dialogue with a write policy).
 
-Planned ([roadmap](docs/en/architecture/11-roadmap.md)): an automatic installer; session saving; broader input formats; an index and scaling; a provenance and fact-verification layer; contradiction arbitration; a 3D graph viewer; a team mode over git; an advanced semantic layer; and the English translation of the documentation.
+Planned ([roadmap](docs/en/architecture/11-roadmap.md)): an automatic installer; broader input formats; an index and scaling; a provenance and fact-verification layer; contradiction arbitration; a 3D graph viewer; a team mode over git; an advanced semantic layer; and the English translation of the documentation.
 
 The project is pre-1.0 (`0.y`): the data schema may still change, and work proceeds in stages.
 
