@@ -11,6 +11,8 @@ Checks:
   5. status   : the report carries every field (active, automation, counts, pending,
                 lock, queue, last pack/consolidation) without reading files by hand.
   6. on/off   : /amg on|off flips `active` in config.yml in place; status reflects it.
+  7. heal-note: format_heal_note is silent on a clean heal, summarizes otherwise.
+  8. unclean  : session-start reports a healed stale lock (task 9), then stays silent.
 
 Run:  python selftest_lifecycle.py
 """
@@ -18,6 +20,7 @@ import json
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -138,6 +141,36 @@ def case_on_off(proj: Path) -> None:
     print("PASS  on/off: /amg on|off flips active in place, other config preserved")
 
 
+def case_heal_note() -> None:
+    assert LC.format_heal_note({"recovered": [], "stale_lock_cleared": False}) is None
+    n = LC.format_heal_note({"recovered": ["t1:redone", "t2:redone"],
+                             "stale_lock_cleared": True})
+    assert n and "2 unfinished" in n and "stale lock" in n and "notes.py" in n, n
+    print("PASS  heal-note: silent on a clean heal; summarizes replays + stale lock otherwise")
+
+
+def case_unclean_shutdown() -> None:
+    proj = setup_project()
+    try:
+        amg = amg_root(proj)
+        store = gs.GraphStore(amg)
+        store.init()
+        # plant a stale lock as if a prior session died holding it: a dead pid + an old
+        # ts, so it reads stale on POSIX (pid probe) and on Windows (age check).
+        gs.atomic_write_text(store.lock_path, json.dumps(
+            {"pid": 999999, "host": "dead-host", "ts": time.time() - 7200}))
+        res = LC.session_start(proj, amg)
+        assert res.get("stale_lock_cleared") is True, res
+        assert res.get("note") and "stale lock" in res["note"], res
+        assert not store.lock_path.exists(), "heal must clear the stale lock"
+        # a clean start right after is silent: nothing healed, no note
+        res2 = LC.session_start(proj, amg)
+        assert "note" not in res2 and res2.get("stale_lock_cleared") is False, res2
+        print("PASS  unclean: session-start reports a healed stale lock, then stays silent")
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+
 if __name__ == "__main__":
     proj = setup_project()
     try:
@@ -148,6 +181,8 @@ if __name__ == "__main__":
         case_session_end(proj)
         case_status(proj)
         case_on_off(proj)
+        case_heal_note()
+        case_unclean_shutdown()
         print("\nALL LIFECYCLE CHECKS PASSED")
     finally:
         shutil.rmtree(proj, ignore_errors=True)

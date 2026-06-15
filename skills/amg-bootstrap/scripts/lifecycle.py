@@ -9,7 +9,8 @@ as Claude Code hooks. They self-gate on config, so they are no-ops unless AMG is
 active and `automation: on` (turning automation off leaves only the manual commands):
 
   session-start : heal the store (recover + verify --repair) and refresh the digest
-                  before task work (so the entry point's import is current and exists).
+                  before task work (so the entry point's import is current and exists);
+                  report an unclean prior shutdown when one is healed, else stay silent.
   session-end   : fold the co-activation log into weights (deterministic; with
                   apply_hebbian off this only ACCUMULATES coact, never mutating
                   conductance), refresh the digest, and dump the session transcript
@@ -109,13 +110,39 @@ def _automation_on(cfg: dict) -> bool:
 
 def _heal(amg: Path) -> dict:
     """recover + verify --repair under a single lock. Idempotent and cheap; this is
-    what makes a crashed or interrupted prior session a non-event."""
+    what makes a crashed or interrupted prior session a non-event.
+
+    A read-only probe runs FIRST, before the lock: lock() steals a stale lock on
+    acquisition and recover() empties the journal, so by the time we hold the lock the
+    evidence of an unclean shutdown is already gone. The probe is what lets
+    session-start / repair report that they healed one (Stage 9, task 9)."""
     store = gs.GraphStore(amg)
     store.init()
+    pre = store.verify(repair=False)
     with store.lock():
         recovered = store.recover()
         problems = store.verify(repair=True)
-    return {"recovered": recovered, "verify": problems}
+    return {"recovered": recovered, "verify": problems,
+            "stale_lock_cleared": bool(pre.get("stale_lock"))}
+
+
+def format_heal_note(healed: dict) -> Optional[str]:
+    """A friendly one-liner when a prior unclean shutdown was just healed (Stage 9,
+    task 9), else None — so a clean session-start stays silent (no per-session noise).
+    A hard kill (closed terminal, killed process) skips SessionEnd, so the store
+    self-heals on the next start; this surfaces that it happened, in plain words."""
+    recovered = healed.get("recovered") or []
+    stale = bool(healed.get("stale_lock_cleared"))
+    if not recovered and not stale:
+        return None
+    parts = []
+    if recovered:
+        parts.append(f"replayed {len(recovered)} unfinished transaction(s)")
+    if stale:
+        parts.append("cleared a stale lock")
+    return ("Previous session ended uncleanly: " + "; ".join(parts)
+            + ". Recovered automatically — continuing. Any notes captured via notes.py "
+            "are intact (each is its own committed transaction).")
 
 
 # --------------------------------------------------------------------------- #
@@ -277,7 +304,11 @@ def session_start(project_root: Path, amg: Path) -> dict:
     # Refresh the digest so the entry point's import is current and the file exists
     # (a session-end may have been skipped by a hard kill of the prior session).
     digest = co.write_digest(project_root, amg)
-    return {"action": "session-start", **healed, "digest": digest}
+    out = {"action": "session-start", **healed, "digest": digest}
+    note = format_heal_note(healed)
+    if note:
+        out["note"] = note
+    return out
 
 
 def session_end(project_root: Path, amg: Path, transcript_path: Optional[str] = None,
@@ -297,7 +328,12 @@ def session_end(project_root: Path, amg: Path, transcript_path: Optional[str] = 
 # --------------------------------------------------------------------------- #
 
 def repair(project_root: Path, amg: Path) -> dict:
-    return {"action": "repair", **_heal(amg)}
+    healed = _heal(amg)
+    out = {"action": "repair", **healed}
+    note = format_heal_note(healed)
+    if note:
+        out["note"] = note
+    return out
 
 
 def set_active(amg: Path, value: bool) -> dict:
@@ -450,14 +486,19 @@ def main(argv: List[str]) -> int:
     amg = gs.resolve_amg_root(cli_root, root)
 
     if cmd == "session-start":
-        print(json.dumps(session_start(root, amg), indent=2)); return 0
+        res = session_start(root, amg)
+        if res.get("note"):
+            print(res["note"])     # inject context ONLY when an unclean shutdown was healed
+        return 0                   # clean start (or AMG off): stay silent, no per-session noise
     if cmd == "session-end":
         payload = _load_stdin_payload()
         tp = cli_transcript or payload.get("transcript_path")
         print(json.dumps(session_end(root, amg, transcript_path=tp,
                                      reason=payload.get("reason")), indent=2)); return 0
     if cmd == "repair":
-        print(json.dumps(repair(root, amg), indent=2)); return 0
+        res = repair(root, amg)
+        print(res.get("note") or "AMG store is consistent; nothing to repair.")
+        return 0
     if cmd in ("on", "off"):
         print(json.dumps(set_active(amg, cmd == "on"), indent=2)); return 0
     if cmd == "status":
