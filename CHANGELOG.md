@@ -4,6 +4,23 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-06-15
+
+Stage 7 closed: the documentation is synced once with the implemented stage 0–6 tract; forward descriptions of future features are kept and bound to their stages. Showcase READMEs (RU + EN) are written, and the Russian docs are cleaned of calques per roadmap section 3.
+
+### Added
+- `README_RU.md` and the English `README.md` (mirror; links to `docs/en/*` filled at stage 18): what AMG is (best of RAG + Karpathy's llm-wiki), two planes, graph-over-tree, per-request PPR retrieval, tier budgets + branch-compaction/forgetting, capture→consolidate, crash safety, conservative defaults, local/global install + `CLAUDE.md` entry point (with the `.claude`/`.agents` environment caveat), the semi-manual quick-start, mirror/absorb (+optional, +mirror-trick), modes & `/amg` commands, optional deps.
+- `selftest_graph_store.case_documented_layout` pins "documented layout == `graph_store.init()`" (the five buckets, no phantom `index.md`/`graph.json`, on-demand dirs absent).
+
+### Changed
+- Section-3 language sweep across all docs, grammar-correct (gender/case agreement) with code identifiers preserved: `деривация`→`семантическое обогащение` (05 retitled, English gloss at first mention), `лок`→`блокировка`, `крэш-безопасность`→`устойчивость к сбоям`, `харнесс`→`измерительный стенд`, `хеш-гейт`→`фильтр по хешу`, `сырьё`→`материал`, `фронтматтер`→`frontmatter`, and the rest of the section-3 list.
+- Architecture 01–10 synced to verified code: `cache/` + `log.md` in the layout; honest selftest claim; RST/NDJSON fall back to one file unit (parsers → stage 11); precise hashing (function/class/module slices); `--no-pack` also disables the co-activation log (1.28); `models` is declarative (1.14); `--make-demo` creates a demo graph; the eval-gate is implemented (removed from the unimplemented list).
+- `consistency-model.md` (read by the model during bootstrap): phantom `index.md`/`graph.json` removed from §4/§6/§7/§12 and the `graph_store.py` docstring; layout `code/ doc/ data/ notes/ _hubs/`; node class `derived`→`synthesized`; absorb survives via `policy`, not `source_kind`; §11 logging is best-effort outside the journal (1.15); id prefix `docs:`→`doc:`.
+- THEORY/GUIDE/INSTALL: `absorb` survives source deletion (not "once & frozen"); mirror move/rename keeps the earned trail; weights "not learned by gradient descent"; the decision-log is marked planned; GUIDE gains the `gap-report.md` description and stage-bindings for forward sections (`/amg`+automation→8, sessions→9, 3D→15, structured models→1.14).
+
+### Fixed
+- All relative links verified across docs; zero residual calques; nine selftests green.
+
 ## [0.8.0] — 2026-06-15
 
 Stage 6 closed: the `amg-classifier` verdict is now applied in code — ambiguous files route to the right chunker through overrides instead of defaulting to prose; an integration sandbox is built; and the Hebbian-weights question is settled by measurement — the blind rule is *harmful* on a realistic sparse graph, so the default stays off pending a redesigned rule.
