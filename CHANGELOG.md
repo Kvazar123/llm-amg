@@ -4,6 +4,25 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-06-15
+
+Stage 8 closed: AMG is driven both automatically and manually with no implicit behavior. A thin `lifecycle.py` orchestrator carries the Claude Code session hooks and the `/amg` commands, and consolidation emits an always-on digest that the entry point imports every session — so the memory surfaces even before any retrieval.
+
+### Added
+- `lifecycle.py` (new, in `skills/amg-bootstrap/scripts/`): the control plane. Hook entrypoints `session-start` (recover + verify --repair + refresh digest) and `session-end` (fold weights + refresh digest), self-gated on `active` + `automation`; manual commands `status` / `repair` / `on` / `off`. `status` gathers every field — active, automation, graph root, node/stale counts, pending transactions, stale lock, queue size, last pack, last consolidation, eval summary — without reading files. It carries no graph logic of its own: it calls `graph_store` (healing) and `consolidate` (weights, digest).
+- Always-on digest: `consolidate.write_digest` + the `digest` command write `<amg>/digest.md` — the most salient standing decisions and open questions (`decision`/`adr`/`open_question`, active/captured, ranked by salience, up to 6 + 4). The entry point imports it via `@.claude/amg/digest.md` every session (insurance against the loop's main failure: memory that exists but is never retrieved). Refreshed by `weights`/`apply` and by both hooks.
+- `entrypoint/settings.json` — the `SessionStart`/`SessionEnd` hooks. `entrypoint/commands/amg.md` — `/amg` as one front door: control verbs (`status`/`on`/`off`/`repair`) run `lifecycle.py`, work verbs (`sync`/`retrieve`/`consolidate`) delegate to the amg-bootstrap/retrieve/consolidate skills; `disable-model-invocation` (user-only), synonym-tolerant.
+- `selftest_lifecycle.py` — digest selection/placeholder, automation gate, hook heal + weight fold, status fields, on/off in-place flip.
+- `config.yml`: `automation` (boolean, like `active`).
+
+### Changed
+- The activation block (`entrypoint/CLAUDE.md`) is now env-aware: the digest import, a full operations table (`/amg` verb + skill + verbal intent, with synonyms), `automation` behavior, SessionStart/SessionEnd hook notes, and a caveat that `.claude`/`CLAUDE.md` are Claude Code defaults and that hooks/commands/import are Claude-Code-specific, with the model loop as the portable substitute.
+- `sync_testbed.py` also lays down `settings.json` + `commands/` and seeds an empty `digest.md` so the import resolves before the first consolidation.
+- Docs synced to the implemented layer: `08-agents-skills.md` (the "Слой жизненного цикла" section, in depth), `09-config.md` (`automation` live), `02-data-model.md` (`digest.md` in the layout), `GUIDE.md`, `THEORY.md` §13 (the digest as a passive memory channel — new rationale), and README/README_RU (mirrored EN). The roadmap §5 Stage 8 is folded; the portability "deeper point" (hooks/slash-commands/@import are Claude-Code-specific; the portable substrate is the model loop + verbal triggers + direct calls; the Stage 10 installer both renders paths and deploys the env-appropriate mechanism) is recorded across 4.9, Stage 10 task 8, 2.13/2.15/2.16, 08, GUIDE, both READMEs, and the activation block. The Stage 8 control-plane artifacts are registered for the Stage 10 installer.
+
+### Fixed
+- Closes section-2 items 2.9 п.6, 2.12 п.1, 2.16 п.3: hooks, `/amg` commands, `automation`, and the digest were forward-written; they are now realized and the docs are synced to the code. Ten selftests green.
+
 ## [0.9.0] — 2026-06-15
 
 Stage 7 closed: the documentation is synced once with the implemented stage 0–6 tract; forward descriptions of future features are kept and bound to their stages. Showcase READMEs (RU + EN) are written, and the Russian docs are cleaned of calques per roadmap section 3.
