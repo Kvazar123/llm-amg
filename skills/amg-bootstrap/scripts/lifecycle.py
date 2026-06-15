@@ -8,7 +8,8 @@ Two AUTOMATIC entry points, wired by the installer into the agent dir's settings
 as Claude Code hooks. They self-gate on config, so they are no-ops unless AMG is both
 active and `automation: on` (turning automation off leaves only the manual commands):
 
-  session-start : heal the store (recover + verify --repair) before task work.
+  session-start : heal the store (recover + verify --repair) and refresh the digest
+                  before task work (so the entry point's import is current and exists).
   session-end   : fold the co-activation log into weights (deterministic; with
                   apply_hebbian off this only ACCUMULATES coact, never mutating
                   conductance) and refresh the digest. The judgment half of
@@ -87,9 +88,10 @@ def _is_active(cfg: dict) -> bool:
 
 
 def _automation_on(cfg: dict) -> bool:
-    """automation on/off. Default ON (the shipped template sets it; an absent key on
-    an older config means on). YAML parses a bare `on`/`off` as a bool, so handle both
-    the bool and a quoted string."""
+    """automation true/false (boolean, like `active`). Default ON (the shipped template
+    sets `automation: true`; an absent key on an older config means on). Tolerates a
+    string `on`/`off` too — YAML already parses a bare on/off as a bool, this just
+    covers a quoted value."""
     v = cfg.get("automation", True)
     if isinstance(v, bool):
         return v
@@ -119,7 +121,11 @@ def session_start(project_root: Path, amg: Path) -> dict:
     cfg = _read_config(amg)
     if not (_is_active(cfg) and _automation_on(cfg)):
         return {"skipped": "amg inactive or automation off"}
-    return {"action": "session-start", **_heal(amg)}
+    healed = _heal(amg)
+    # Refresh the digest so the entry point's import is current and the file exists
+    # (a session-end may have been skipped by a hard kill of the prior session).
+    digest = co.write_digest(project_root, amg)
+    return {"action": "session-start", **healed, "digest": digest}
 
 
 def session_end(project_root: Path, amg: Path) -> dict:

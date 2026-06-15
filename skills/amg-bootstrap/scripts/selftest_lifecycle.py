@@ -30,7 +30,7 @@ import notes as NT
 import lifecycle as LC
 import consolidate as CO
 
-CONFIG = ("active: true\nautomation: on\nworking_language: ru\nmirror_path: src\n"
+CONFIG = ("active: true\nautomation: true\nworking_language: ru\nmirror_path: src\n"
           "retrieval:\n  embeddings:\n    enabled: off\n")
 PY_SRC = "def charge(card):\n    return card\n"
 
@@ -80,7 +80,7 @@ def case_digest_empty() -> None:
 
 
 def case_gate() -> None:
-    for cfg, why in ((CONFIG.replace("automation: on", "automation: off"), "automation off"),
+    for cfg, why in ((CONFIG.replace("automation: true", "automation: false"), "automation off"),
                      (CONFIG.replace("active: true", "active: false"), "inactive")):
         proj = setup_project(cfg)
         try:
@@ -97,7 +97,8 @@ def case_session_start(proj: Path) -> None:
     assert res.get("action") == "session-start", res
     assert res["verify"]["pending_transactions"] == [], res
     assert not res["verify"]["stale_lock"], res
-    print("PASS  start: session-start heals (recover + verify --repair), store clean")
+    assert "digest" in res and (amg_root(proj) / "digest.md").exists(), res
+    print("PASS  start: session-start heals (recover + verify --repair) + refreshes digest")
 
 
 def case_session_end(proj: Path) -> None:

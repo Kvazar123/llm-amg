@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/skills/amg-bootstrap/scripts/lifecycle.py session-start",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/skills/amg-bootstrap/scripts/lifecycle.py session-end",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

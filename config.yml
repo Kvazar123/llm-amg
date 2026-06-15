@@ -8,11 +8,11 @@
 active: true
 schema_version: 2
 
-# Lifecycle automation. on: the model runs the session loop itself, and the
-# SessionStart/SessionEnd hooks (settings.json) heal the store, fold weights, and
-# refresh the digest automatically. off: nothing runs on its own — only the /amg
-# commands or an explicit request act. Every automatic step has a manual analog.
-automation: on
+# Lifecycle automation (boolean, like `active`). true: the model runs the session loop
+# itself, and the SessionStart/SessionEnd hooks (settings.json) heal the store, fold
+# weights, and refresh the digest automatically. false: nothing runs on its own — only
+# the /amg commands or an explicit request act. Every automatic step has a manual analog.
+automation: true
 
 # Human-facing memory language for doc/notes summaries. Structural metadata,
 # edge-type names, and code identifiers stay English regardless. ISO 639-1.
