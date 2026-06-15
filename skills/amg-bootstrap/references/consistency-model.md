@@ -46,18 +46,22 @@ deleting things it must not:
 - **`authored`** — created from chat pasted into context, or from the model's own
   conclusions/decisions/forward plans. It has no backing file. Reconcile **never**
   purges it. Only consolidation may merge or retire it.
-- **`derived`** — summary/overview/hub nodes derived from *other nodes*. Rebuilt by
-  consolidation, never purged by source diff.
+- **`synthesized`** — summary/overview/hub nodes the judgment layer derives from
+  *other nodes*. Stored in `_hubs/`, rebuilt by consolidation, never purged by a
+  source diff (their "source" is the graph itself).
 
 Source `policy` reinforces this. `mirror` sources are projected bidirectionally.
-`absorb` sources (e.g. `data/`) are read once into `authored` notes that then live
-independently — **deleting an `absorb` source changes nothing**, which is exactly
-the requested behavior for the `data/` folder.
+`absorb` sources (e.g. `data/`) are ingested into `derived_from_file` nodes that
+carry `policy: absorb` (not "authored notes"): while the source exists its changes
+are re-reconciled, but **deleting an `absorb` source changes nothing** — the deletion
+pass purges only `derived_from_file` + `policy: mirror` nodes, so survival is decided
+by `policy`, not by `source_kind`. That is exactly the requested behavior for the
+`data/` folder.
 
 ## 3. Identity and content hashing
 
 - **Identity** is stable and path-derived, e.g. `code:src/db/pool.py::get_conn`,
-  `docs:doc/db.md::pooling`. The same source unit always maps to the same node id.
+  `doc:doc/db.md::pooling`. The same source unit always maps to the same node id.
 - **`source_hash`** = sha256 of the unit's current source text.
 - **`derived_from_hash`** = the source hash the node's *summary/edges* were derived
   from.
@@ -81,13 +85,14 @@ on an unchanged repo does zero model work and produces zero changes.
 .claude/amg/
   config.yml          activation + sources + policies + tunables
   nodes/              one markdown file per node (YAML frontmatter + body)
-    code/ docs/ notes/ _hubs/
-  index.md            catalog (derived from nodes; rebuildable)
-  graph.json          edge manifest / connectome (earned state — protected)
-  log.md              append-only history
+    code/ doc/ data/ notes/ _hubs/
   work/queue.json     units awaiting semantic derivation
+  work/derived-*.json subagent output awaiting apply
   journal/            write-ahead log; EMPTY when the store is at rest
+  archive/            originals evicted by compaction (reversible)
   cache/pack.md       last assembled retrieval context pack (disposable)
+  cache/embeddings.json  node embedding cache (disposable)
+  log.md              best-effort, human-readable consolidation audit log (outside the journal)
   LOCK                single-writer lock (absent when no writer holds it)
 ```
 
@@ -103,9 +108,10 @@ concurrent reader sees either the old bytes or the new bytes — never a torn fi
 
 ## 6. Transactions: the write-ahead journal
 
-A logical change usually touches several files at once (a node, the index, the
-log). We must not let a crash apply only some of them. The store uses a write-ahead
-journal with **declarative redo** (record the desired end state, not a sequence of
+A logical change usually touches several files at once (a node plus the neighbors
+whose inbound edges or memberships it rewrites). We must not let a crash apply only
+some of them. The store uses a write-ahead journal with **declarative redo**
+(record the desired end state, not a sequence of
 deltas):
 
 A `commit()` proceeds in four phases:
@@ -134,9 +140,10 @@ For each journal entry it inspects three durable signals:
   (Crash during phase 3.)
 - **`COMMITTED` present** → already applied → just clean up. (Crash during phase 4.)
 
-`verify(repair=True)` runs recovery, clears a stale lock, and reports dangling edge
-targets. `index.md` and the structural parts of `graph.json` are *derivable from
-the nodes*, so they can be rebuilt by a scan if ever found inconsistent.
+`verify(repair=True)` runs recovery, clears a stale lock, and reports any dangling
+path references it is handed. The whole graph is *derivable from the source files*,
+so in the worst case (total graph loss) the structural skeleton is rebuilt by
+`reconcile bootstrap` and the summaries/edges are re-derived.
 
 ## 8. Reconcile: the diff that converges
 
@@ -190,11 +197,14 @@ mid-apply and asserting consistency after `recover()`.
 
 ## 11. Logging
 
-`log.md` is append-only. Each entry begins with a transaction id, e.g.
-`## [2026-05-31T12:00] <txid> reconcile +3 ~1 -0`. The append is the last op of a
-committed transaction; recovery re-applies it guarded by txid, and a duplicate is
-detected by the txid already being present, so logging is at-least-once with
-de-duplication — no double entries, no lost entries.
+`log.md` is a **best-effort**, human-readable audit log — deliberately *outside* the
+transaction. Each entry begins with a transaction id, e.g.
+`## [2026-05-31T12:00] <txid> consolidate | ...`. It is written by a plain append
+(not through the journal) and only by `consolidate.py`; `reconcile.py` does not write
+it. Because the log carries no load — graph integrity rests on the journal, not on
+`log.md` — a torn or lost line after a crash is harmless, so no transactional
+de-duplication is attempted. (A txid-guarded transactional log remains a possible
+future enhancement; see the roadmap, item 1.15.)
 
 ## 12. What is *not* auto-recoverable, and the mitigations
 
@@ -203,9 +213,9 @@ from source. **Earned state** — model-written summaries, semantic edges, and
 learned weights — is expensive and cannot be regenerated identically. It is
 protected by: the journal (every write is transactional), the keep-old-until-new
 rule (§8), and periodic snapshots (the whole store is a git repo, so a tagged
-commit after each consolidation is a restore point). If `graph.json` is ever lost,
-structural edges are rebuilt by reconcile; semantic edges are restored from the
-latest snapshot or re-derived.
+commit after each consolidation is a restore point). If the graph is ever lost,
+structural nodes and edges are rebuilt by `reconcile bootstrap`; the earned
+summaries and semantic edges are restored from the latest snapshot or re-derived.
 
 ## 13. Operator commands
 

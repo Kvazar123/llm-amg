@@ -124,10 +124,36 @@ def case_lock_reentry():
     print("PASS  write lock acquired and released")
 
 
+def case_documented_layout():
+    """The on-disk layout documented in 02-data-model.md and consistency-model.md
+    must match exactly what graph_store.init() creates: the five node buckets plus
+    journal/, and NO phantom files (index.md / graph.json are written and read by no
+    code). Everything else (work/, archive/, cache/, log.md, LOCK) is created on
+    demand, not by init()."""
+    store = fresh_store()                       # fresh_store() already calls init()
+    expected = {store.root, store.journal_dir, store.nodes_dir,
+                store.nodes_dir / "code", store.nodes_dir / "doc",
+                store.nodes_dir / "data", store.nodes_dir / "notes",
+                store.nodes_dir / "_hubs"}
+    for d in expected:
+        assert d.is_dir(), f"init() must create {d}"
+    buckets = {p.name for p in store.nodes_dir.iterdir() if p.is_dir()}
+    assert buckets == {"code", "doc", "data", "notes", "_hubs"}, \
+        f"node buckets drifted from the documented set: {buckets}"
+    for phantom in ("index.md", "graph.json"):
+        assert not (store.root / phantom).exists(), \
+            f"{phantom} is documented nowhere and must not exist"
+    for p in ("work", "archive", "cache", "log.md", "LOCK"):
+        assert not (store.root / p).exists(), f"{p} must be created on demand, not by init()"
+    shutil.rmtree(store.root, ignore_errors=True)
+    print("PASS  documented layout == graph_store.init() (5 buckets, no phantom files)")
+
+
 if __name__ == "__main__":
     case_begin_crash()
     case_middle_crash()
     case_end_crash()
     case_delete_and_idempotent_rerun()
     case_lock_reentry()
+    case_documented_layout()
     print("\nALL CRASH-SAFETY CHECKS PASSED")

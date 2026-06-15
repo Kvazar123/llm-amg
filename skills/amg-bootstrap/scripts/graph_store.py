@@ -17,8 +17,9 @@ Design (see ../references/consistency-model.md for the full rationale):
      sees a half-written file: it sees either the old bytes or the new bytes.
 
   2. Write-ahead journal with DECLARATIVE redo (not undo)
-     A logical change usually touches several files (a node, the index, the
-     log). We stage the *desired end state* of every touched file as a content
+     A logical change usually touches several files (a node plus the neighbors
+     whose inbound references it rewrites). We stage the *desired end state* of
+     every touched file as a content
      blob, record the intent durably, then apply. Because the journal records
      the target content (addressed by hash), re-applying it any number of times
      converges to the same state. Recovery is therefore "redo to target",
