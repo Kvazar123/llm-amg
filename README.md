@@ -107,12 +107,27 @@ What feeds memory is listed in `config.yml` under two keys; each file's type (co
 
 ## Modes and control
 
-How much memory does on its own is set in the config by the `automation` key:
+How much memory does on its own is set by the `automation` key in the config (on by default):
 
-- **automatic mode** — the model runs the lifecycle itself: at session start it heals the graph after crashes (replays unfinished writes, reconciles against disk), before each task it gathers context, along the way it files conclusions, and at the end it consolidates and saves the session;
-- **manual mode** — memory does nothing on its own, only on an explicit command or request.
+- **automatic mode** (`automation: true`) — memory runs itself: the `SessionStart`/`SessionEnd` hooks (a Claude Code mechanism) deterministically heal the graph after crashes and fold weights, while the model's loop gathers context before each task, files conclusions along the way, and runs consolidation at the end;
+- **manual mode** (`automation: false`) — memory does nothing on its own, only on a command or an explicit request.
 
-Every automatic operation has a manual counterpart — by command or by words. Control works both through short commands and through verbal triggers: `/amg on` and `/amg off` (enable/disable), `/amg status` (state: active flag, graph size, pending operations, a stale lock), `/amg repair` (restore consistency with disk). The model also catches intent: "turn memory on", "check the graph", "repair it", "show memory status". The lifecycle, automation, and commands are on the [roadmap](docs/en/architecture/11-roadmap.md) (Stage 8).
+All control goes through one `/amg <verb>` command (and the same words in an ordinary request: the model matches intent and synonyms, not the exact verb):
+
+| Command | Action |
+|---|---|
+| `/amg status` | state on one screen: active flag, automation, graph size, `stale`, pending operations, lock, queue, last pack and last consolidation |
+| `/amg on` · `off` | enable / disable AMG |
+| `/amg repair` | restore consistency with disk (`recover` + `verify --repair`) |
+| `/amg sync` | build or reconcile the graph with the sources |
+| `/amg retrieve <query>` | assemble a context pack |
+| `/amg consolidate` | fold weights, file conclusions, compact over-budget branches |
+
+Control verbs (`status`/`on`/`off`/`repair`) are run by a helper script; work verbs (`sync`/`retrieve`/`consolidate`) delegate to the dedicated skills (also invocable directly). Every automatic operation has such a manual counterpart. Note: `on` only enables memory — **the graph is built by `sync`**.
+
+**A digest in every session.** The loop's main failure is "the memory exists but was never consulted." So consolidation keeps a small `digest.md` next to the entry point — 5–10 of the most salient decisions and open questions — loaded into **every** session: the essentials are visible at once, before the first retrieval.
+
+> Portability here is more than renaming a folder: slash commands, hooks, and the digest `@`-import are Claude Code mechanisms, and another agent environment (`.agents` / `AGENTS.md`) may not have them at all. The universal substrate that works everywhere is the **model-driven activation loop + verbal triggers + direct script and skill calls**; hooks and commands are merely a convenience layer on top. Baseline functionality does not depend on the environment; the set of conveniences does.
 
 ## Optional dependencies
 
@@ -129,9 +144,9 @@ For **non-English projects** the engine picks a multilingual default model on it
 
 ## What's implemented and what's planned
 
-The base path is implemented and stabilized (roadmap stages 0–6): the transactional store, structure extraction with a classifier and chunkers, `mirror`/`absorb` reconciliation, retrieval (BM25 + embeddings + Personalized PageRank + a tiered pack), consolidation (weights, salience, compaction under an eval guard), and safe note capture.
+The base path is implemented and stabilized (roadmap stages 0–8): the transactional store, structure extraction with a classifier and chunkers, `mirror`/`absorb` reconciliation, retrieval (BM25 + embeddings + Personalized PageRank + a tiered pack), consolidation (weights, salience, compaction under an eval guard), safe note capture, and the lifecycle layer (session hooks, `/amg` commands, `automation` modes, an always-on digest).
 
-Planned ([roadmap](docs/en/architecture/11-roadmap.md)): an automatic installer; the lifecycle, automation modes, and `/amg` commands; session saving; broader input formats; an index and scaling; a provenance and fact-verification layer; contradiction arbitration; a 3D graph viewer; a team mode over git; an advanced semantic layer; and the English translation of the documentation.
+Planned ([roadmap](docs/en/architecture/11-roadmap.md)): an automatic installer; session saving; broader input formats; an index and scaling; a provenance and fact-verification layer; contradiction arbitration; a 3D graph viewer; a team mode over git; an advanced semantic layer; and the English translation of the documentation.
 
 The project is pre-1.0 (`0.y`): the data schema may still change, and work proceeds in stages.
 
