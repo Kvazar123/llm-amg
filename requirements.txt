@@ -1,0 +1,25 @@
+# AMG dependencies. Only `base` is required; everything else is optional and degrades
+# gracefully when absent (a missing extractor skips its files, a missing embedding
+# backend falls back to pure BM25, non-Python code without tree-sitter becomes one unit
+# per file). Install all:  pip install -r requirements.txt
+# Or a single group with the installer:  install.py --deps embeddings,text,treesitter
+#
+# The installer maps these same groups (see install.py DEP_GROUPS).
+
+# --- base (required) ---------------------------------------------------------
+pyyaml
+
+# --- embeddings (optional semantic seed) -------------------------------------
+# Light static model, CPU-only, multilingual default for non-English projects.
+model2vec
+# Transformer backend (heavier, pulls in torch) — uncomment to use instead/as well:
+# sentence-transformers
+
+# --- text-extraction (optional PDF / DOCX / XLSX) ----------------------------
+pypdf
+python-docx
+openpyxl
+
+# --- tree-sitter (optional: non-Python code -> function-level units + calls) --
+tree-sitter
+tree-sitter-language-pack
