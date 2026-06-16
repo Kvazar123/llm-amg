@@ -4,6 +4,8 @@
 
 > Documentation: [Theory](docs/en/THEORY.md) · [Architecture](docs/en/architecture/README.md) · [Guide](docs/en/GUIDE.md) · [Install](INSTALL.md) · [Roadmap](docs/en/architecture/11-roadmap.md) · Русский: [README_RU.md](README_RU.md)
 
+> ⚠️ **TESTED ON CLAUDE CODE ONLY.** The installer can also set the memory up in other agent environments (Codex, Qwen Coder, and others that read `AGENTS.md`) via a portable skill-less block. But **functionality and stability on Codex and any other non-Claude-Code environment are NOT yet tested or guaranteed** — all testing so far was on Claude Code. Verification of these environments is roadmap Stage 19.
+
 ## What it is
 
 A language model remembers nothing between sessions, and its working memory — the context window — is bounded: when it overflows or the session ends, the accumulated context is lost. AMG gives the model an **external long-term memory shaped as a graph** of linked note-nodes that live as ordinary files on disk.
@@ -117,7 +119,7 @@ Control verbs (`status`/`on`/`off`/`repair`) are run by a helper script; work ve
 
 **A digest in every session.** The loop's main failure is "the memory exists but was never consulted." So consolidation keeps a small `digest.md` next to the entry point — 5–10 of the most salient decisions and open questions — loaded into **every** session: the essentials are visible at once, before the first retrieval.
 
-> Portability here is more than renaming a folder: slash commands, hooks, and the digest `@`-import are Claude Code mechanisms, and another agent environment (`.agents` / `AGENTS.md`) may not have them at all. The universal substrate that works everywhere is the **model-driven activation loop + verbal triggers + direct script and skill calls**; hooks and commands are merely a convenience layer on top. Baseline functionality does not depend on the environment; the set of conveniences does.
+> Portability is more than renaming a folder: slash commands, hooks, and the digest `@`-import are Claude Code mechanisms, and other environments (Codex, Qwen Coder, and others that read `AGENTS.md`) may not have them. So the installer (`--env generic`) injects a **separate block with no skills** (`AGENTS.md`): the same loop via direct script calls, no hooks/commands (the model reads `agents/*.md` as guidance). Baseline functionality does not depend on the environment; the set of conveniences does. **But** this mode is **untested and not guaranteed stable** on Codex / Qwen Coder or any other non-Claude-Code environment — tested only on Claude Code (see the note at the top; verification: Stage 19).
 
 ## Optional dependencies
 

@@ -24,6 +24,8 @@ verbal triggers plus direct script calls; the block carries that loop regardless
 CLI (the model fills these from the user's answers):
   python install.py --target <proj> [--scope local|global]
       [--agent-dir .claude] [--entrypoint CLAUDE.md]
+      [--env claude-code|generic]   # generic = any other agent env (Codex, Qwen Coder, ...):
+                                    # the portable skill-less AGENTS.md block, no hooks/command
       [--mirror a,b] [--absorb c,d] [--exclude "*.x,*.y"]
       [--set active=false] [--set working_language=ru] [--set automation=true] ...
       [--deps base,embeddings,text,treesitter] [--no-verify]
@@ -78,6 +80,14 @@ def _engine_abs(agent_dir: str) -> str:
     """Absolute home-based engine dir for a global install, POSIX-style so the path
     works in both bash and PowerShell command lines."""
     return (Path.home() / agent_dir).as_posix()
+
+
+def _is_claude_code(env: str) -> bool:
+    """The default Claude Code environment (skills, subagents, slash commands, hooks,
+    @import). Anything else (e.g. codex / generic) gets the portable SKILL-LESS block
+    (entrypoint/AGENTS.md) and no hooks or /amg command — the model drives the loop with
+    direct script calls."""
+    return env.strip().lower() in ("claude-code", "claude", "cc", "")
 
 
 def render_control_text(text: str, agent_dir: str, entrypoint: str,
@@ -300,7 +310,8 @@ def build_graph(engine_agent_dir: Path, project_root: Path, graph_agent_dir: Pat
 def install(target: Path, scope: str, agent_dir: str, entrypoint: str,
             mirror: List[str], absorb: List[str], exclude: List[str],
             scalars: Dict[str, str], deps: List[str], verify: bool,
-            build: bool = False, project_only: bool = False) -> None:
+            build: bool = False, project_only: bool = False,
+            env: str = "claude-code") -> None:
     target = target.resolve()
     # project_only adds a project to an existing GLOBAL install, so the engine it
     # verifies/builds with lives in the home dir, not under the new project.
@@ -314,30 +325,40 @@ def install(target: Path, scope: str, agent_dir: str, entrypoint: str,
         # digest; the engine, block, hooks and command are already in place and untouched.
         print(f"add project to existing install -> graph {graph_agent_dir / 'amg'} (engine untouched)")
     else:
-        print(f"install AMG ({scope}) -> engine {engine_agent_dir}, graph {graph_agent_dir / 'amg'}")
+        cc = _is_claude_code(env)
+        print(f"install AMG ({scope}, env={env}) -> engine {engine_agent_dir}, "
+              f"graph {graph_agent_dir / 'amg'}")
         place_engine(engine_agent_dir)
         print(f"  engine  amg-* skills/ + agents/ -> {engine_agent_dir} (other skills kept)")
 
-        block = render_control_text(_block_body((REPO / "entrypoint" / "CLAUDE.md").read_text(
+        # Claude Code gets the skill/hook/command block; any other environment gets the
+        # portable skill-less block (direct script calls, model-driven orchestration).
+        tpl = "CLAUDE.md" if cc else "AGENTS.md"
+        block = render_control_text(_block_body((REPO / "entrypoint" / tpl).read_text(
             encoding="utf-8")), agent_dir, entrypoint, scope)
         inject_block(entry_path, block)
-        print(f"  block   -> {entry_path} (between {BEGIN} / {END})")
+        print(f"  block   {tpl} ({'skill-based' if cc else 'skill-less / portable'}) "
+              f"-> {entry_path}")
 
-        settings_tpl = render_control_text(
-            (REPO / "entrypoint" / "settings.json").read_text(encoding="utf-8"),
-            agent_dir, entrypoint, scope)
-        merge_settings(engine_agent_dir / "settings.json", json.loads(settings_tpl))
-        print(f"  hooks   merged -> {engine_agent_dir / 'settings.json'}")
-
-        cmd_src = REPO / "entrypoint" / "commands"
-        if cmd_src.is_dir():
-            cmd_dest = engine_agent_dir / "commands"
-            cmd_dest.mkdir(parents=True, exist_ok=True)
-            for f in sorted(cmd_src.glob("*.md")):
-                cmd_dest.joinpath(f.name).write_text(
-                    render_control_text(f.read_text(encoding="utf-8"), agent_dir, entrypoint, scope),
-                    encoding="utf-8")
-            print(f"  command /amg -> {cmd_dest}")
+        if cc:
+            settings_tpl = render_control_text(
+                (REPO / "entrypoint" / "settings.json").read_text(encoding="utf-8"),
+                agent_dir, entrypoint, scope)
+            merge_settings(engine_agent_dir / "settings.json", json.loads(settings_tpl))
+            print(f"  hooks   merged -> {engine_agent_dir / 'settings.json'}")
+            cmd_src = REPO / "entrypoint" / "commands"
+            if cmd_src.is_dir():
+                cmd_dest = engine_agent_dir / "commands"
+                cmd_dest.mkdir(parents=True, exist_ok=True)
+                for f in sorted(cmd_src.glob("*.md")):
+                    cmd_dest.joinpath(f.name).write_text(
+                        render_control_text(f.read_text(encoding="utf-8"), agent_dir, entrypoint, scope),
+                        encoding="utf-8")
+                print(f"  command /amg -> {cmd_dest}")
+        else:
+            print("  env     skill-less: the SessionStart/SessionEnd hooks and the /amg "
+                  "command are Claude-Code-only and were NOT written; the block drives the "
+                  "loop with direct script calls (the digest is read, not @import-ed).")
 
     wrote = write_config(graph_agent_dir / "amg", agent_dir, entrypoint,
                          mirror, absorb, exclude, scalars)
@@ -413,8 +434,8 @@ def uninstall(target: Path, agent_dir: str, entrypoint: str,
 
 def _parse(argv: List[str]) -> dict:
     args = {"target": None, "scope": "local", "agent_dir": ".claude", "entrypoint": "CLAUDE.md",
-            "mirror": [], "absorb": [], "exclude": [], "scalars": {}, "deps": [],
-            "verify": True, "build": False, "project_only": False,
+            "env": "claude-code", "mirror": [], "absorb": [], "exclude": [], "scalars": {},
+            "deps": [], "verify": True, "build": False, "project_only": False,
             "uninstall": False, "purge_graph": False}
     i = 0
     while i < len(argv):
@@ -427,6 +448,8 @@ def _parse(argv: List[str]) -> dict:
             args["agent_dir"] = argv[i + 1]; i += 2
         elif a == "--entrypoint":
             args["entrypoint"] = argv[i + 1]; i += 2
+        elif a == "--env":
+            args["env"] = argv[i + 1]; i += 2
         elif a in ("--mirror", "--absorb", "--exclude"):
             args[a[2:]] = [s for s in argv[i + 1].split(",") if s.strip()]; i += 2
         elif a == "--set":                       # repeatable: --set key=value
@@ -463,7 +486,7 @@ def main(argv: List[str]) -> int:
         return 0
     install(target, a["scope"], a["agent_dir"], a["entrypoint"],
             a["mirror"], a["absorb"], a["exclude"], a["scalars"], a["deps"], a["verify"],
-            build=a["build"], project_only=a["project_only"])
+            build=a["build"], project_only=a["project_only"], env=a["env"])
     return 0
 
 

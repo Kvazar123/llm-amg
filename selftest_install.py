@@ -200,6 +200,27 @@ def test_project_only_global():
             shutil.rmtree(d, ignore_errors=True)
 
 
+def test_generic_env():
+    t = Path(tempfile.mkdtemp(prefix="amg-inst9-"))
+    try:
+        # any non-claude-code env (codex, qwen, ...) -> the portable skill-less AGENTS.md
+        # block, no Claude-Code-only hooks or /amg command
+        I.main(["--target", str(t), "--env", "codex", "--agent-dir", ".agents",
+                "--entrypoint", "AGENTS.md", "--mirror", "src", "--no-verify"])
+        assert (t / ".agents/skills/amg-bootstrap/scripts/reconcile.py").exists(), "engine placed"
+        entry = (t / "AGENTS.md").read_text(encoding="utf-8")
+        assert I.BEGIN in entry and "portable block" in entry.lower(), "skill-less block written"
+        assert "@.agents/amg/digest.md" not in entry and "@.claude" not in entry, "no @import"
+        assert "are absent here" in entry, "block notes the Claude-Code-only conveniences are absent"
+        assert ".claude" not in entry, "rendered to .agents, no leftover .claude"
+        assert not (t / ".agents/settings.json").exists(), "no hooks in a skill-less env"
+        assert not (t / ".agents/commands").exists(), "no /amg command in a skill-less env"
+        assert (t / ".agents/amg/config.yml").exists() and (t / ".agents/amg/digest.md").exists()
+        print("PASS  install: --env generic writes the portable AGENTS.md block (no hooks/command)")
+    finally:
+        shutil.rmtree(t, ignore_errors=True)
+
+
 def test_uninstall():
     t = Path(tempfile.mkdtemp(prefix="amg-inst5-"))
     try:
@@ -229,5 +250,6 @@ if __name__ == "__main__":
     test_preserve_other_skills()
     test_build()
     test_project_only_global()
+    test_generic_env()
     test_uninstall()
     print("\nALL INSTALL CHECKS PASSED")
