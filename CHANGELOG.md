@@ -4,6 +4,23 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-06-16
+
+Stage 9 closed: valuable dialogues are no longer lost on `/clear`. At session end the transcript is dumped to `<store>/sessions` and ingested like any other source; a hard kill that skips `SessionEnd` is now surfaced (not silent) on the next start.
+
+### Added
+- Session capture: `lifecycle.py session-end` reads the `SessionEnd` hook's stdin (`transcript_path`/`reason`) or `--transcript`, parses the Claude Code `.jsonl`, and writes a role-marked markdown dump to `<store>/sessions/YYYY-MM-DD-HHMM.md` — human/assistant text kept, raw `thinking` cut, each tool call/result/image marked individually as `== Attachment N: <kind> ==` (numbered, so several attachments in one message stay distinct), and meta / slash-command / `!`-bash / task-notification wrappers filtered (enumerated from 49 real transcripts). The `.jsonl` parser is isolated as a Claude-Code adapter.
+- Session chunker `_session_units` (`extract_structure`, `CHUNKERS`): one `section` unit per turn (`doc:path::m{n}`), sharing the role-marker format with the writer (`session_role_marker` / `session_attachment_marker`); `section` makes turns episodic so consolidation compacts piled-up chat. The sessions dir DERIVES as `<store>/sessions` (portable across any agent dir); `sessions` is an optional override, `session_policy` (`absorb` / `mirror`, default `absorb`).
+- Unclean-shutdown note (task 9): `session-start` / `repair` detect a healed crash — replayed transactions or a cleared stale lock, via a read-only probe taken BEFORE the lock — and report it in plain words; `session-start` prints only when something was healed (a clean start stays silent).
+- `selftest_sessions.py` (chunk + 1.18 ignore-fix + non-`.claude` portability + dump round-trip); `selftest_lifecycle.py` gains heal-note and unclean-shutdown cases.
+- `config.yml`: `session_policy`.
+
+### Changed
+- Docs synced to the implemented code: `04-ingest.md` (the session chunker + the 1.18 ignore exemption), `02-data-model.md` (session id-form row + `sessions/`), `05-reconcile.md` (sessions consumed as ordinary mirror/absorb), `08-agents-skills.md` (the SessionEnd dump and the unclean-shutdown note; planned item closed), `09-config.md` (`sessions`/`session_policy` now live), `THEORY.md` §13 (sessions as the broad episodic capture channel; capture-vs-dump by portability — new rationale), `GUIDE.md`/`INSTALL.md`/the activation block, and README_RU + README (a "Saving sessions" section). Roadmap §5 Stage 9 folded; section-2 items 2.9 п.2 / 2.12 / 2.13 п.6 / 2.16 п.4 closed.
+
+### Fixed
+- Audit 1.18: a source inside the store (the sessions dir, under the ignored agent dir and often in `.gitignore`) was silently dropped by `iter_source_files`; it is now walked by a dedicated `_iter_session_files` that bypasses the ignore prefix while normal sources keep full ignore semantics (anchored `.gitignore` rules still apply). Eleven selftests green.
+
 ## [0.10.0] — 2026-06-15
 
 Stage 8 closed: AMG is driven both automatically and manually with no implicit behavior. A thin `lifecycle.py` orchestrator carries the Claude Code session hooks and the `/amg` commands, and consolidation emits an always-on digest that the entry point imports every session — so the memory surfaces even before any retrieval.
