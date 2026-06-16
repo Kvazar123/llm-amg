@@ -58,10 +58,25 @@ mirror_path:
 # sessions: .claude/amg/sessions     # optional override; default is <store>/sessions
 session_policy: absorb
 
-# Extra ignore globs on top of the built-in defaults (.git, node_modules, .venv,
-# __pycache__, dist, build, target, binaries, ...). The repo's .gitignore is also
-# honoured automatically. Usually leave empty.
+# What gets ignored (the pre-semantic hygiene filter). Three stacking layers:
+#   1. built-in defaults: the agent dir (.claude / .agents / your configured one),
+#      .git, node_modules, .venv, __pycache__, dist, build, target, binaries, ...
+#   2. the repo's .gitignore, IF present - honoured as a plain file (no git needed).
+#      An EXPLICITLY listed source whose root is gitignored is still ingested (you named
+#      it on purpose, e.g. absorb_path: logs where .gitignore has logs/); .gitignore
+#      still filters junk inside a wide source like mirror_path: . - set
+#      respect_gitignore: false to ignore .gitignore entirely (fully config-driven).
+#   3. these config globs (bash-style, like .gitignore lines), all OPTIONAL:
+#        exclude        - applies to every source
+#        mirror_exclude - applies to mirror_path sources only
+#        absorb_exclude - applies to absorb_path sources only
+#      (per-intent lists are ADDED on top of the global exclude.)
+respect_gitignore: true
 exclude: []
+# mirror_exclude:
+#   - "**/*.generated.*"
+# absorb_exclude:
+#   - "*.tmp"
 
 # -----------------------------------------------------------------------------
 # Optional, for the most out of non-Python code. If `tree-sitter-language-pack`

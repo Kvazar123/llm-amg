@@ -410,17 +410,20 @@ class Transaction:
 # CLI
 # --------------------------------------------------------------------------- #
 
-def _default_root() -> Path:
-    # scripts/ lives at .claude/skills/amg-bootstrap/scripts/ ; the store is at
-    # .claude/amg/ . Resolve relative to this file so the CLI works from anywhere.
-    here = Path(__file__).resolve()
-    claude_dir = here.parents[3]            # .../.claude
-    return claude_dir / "amg"
-
-
 def main(argv: List[str]) -> int:
-    cmd = argv[1] if len(argv) > 1 else "help"
-    root = Path(os.environ.get("AMG_ROOT", _default_root()))
+    args = list(argv[1:])
+    cli_root: Optional[str] = None
+    if "--root" in args:                       # explicit agent dir
+        i = args.index("--root")
+        cli_root = args[i + 1]
+        del args[i:i + 2]
+    cmd = args[0] if args else "help"
+    # Resolve the store like reconcile/consolidate/notes: --root -> AMG_AGENT_DIR ->
+    # config search upward from cwd -> engine location -> default .claude. This is what
+    # lets a GLOBAL engine (~/.claude/skills) heal a project's LOCAL graph from the
+    # project's cwd. AMG_ROOT stays as an explicit full-path override (e.g. for tests).
+    env_root = os.environ.get("AMG_ROOT")
+    root = Path(env_root) if env_root else resolve_amg_root(cli_root, Path.cwd())
     store = GraphStore(root)
 
     if cmd == "init":

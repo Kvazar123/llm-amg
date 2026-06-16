@@ -117,8 +117,18 @@ _STALE_MARK = "  ⟨stale: summary may lag — open the source to verify⟩"
 # --------------------------------------------------------------------------- #
 
 def _default_store() -> Path:
-    here = Path(__file__).resolve()
-    return here.parents[3] / "amg"        # .../.claude/amg
+    """Resolve the graph store when --store is not given. Mirrors graph_store.
+    resolve_amg_root (kept dependency-free here): config search upward from cwd — so a
+    global engine finds the project's LOCAL graph — then the engine's own location, then
+    the .claude default. The retriever subagent passes --store explicitly; this only
+    backs a bare manual run."""
+    for d in (Path.cwd(), *Path.cwd().parents):
+        if (d / "amg" / "config.yml").exists():
+            return d / "amg"
+        if (d / ".claude" / "amg" / "config.yml").exists():
+            return d / ".claude" / "amg"
+    here = Path(__file__).resolve().parents[3] / "amg"   # engine location (dev / local)
+    return here if here.is_dir() else Path.cwd() / ".claude" / "amg"
 
 
 def _deep_merge(base: dict, over: dict) -> dict:

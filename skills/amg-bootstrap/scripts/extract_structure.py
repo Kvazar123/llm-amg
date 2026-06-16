@@ -60,9 +60,11 @@ except (AttributeError, ValueError):
 # --------------------------------------------------------------------------- #
 
 # Directories never indexed (hygiene, not meaning): a cheap pre-semantic filter,
-# like sensory gating. The repo's .gitignore is honoured on top of this.
+# like sensory gating. Both common agent dirs (.claude / .agents) are here so the
+# memory never indexes itself; the CONFIGURED agent dir is added on top at run time
+# (_effective_ignore_dirs), covering a custom name. The repo's .gitignore stacks too.
 DEFAULT_IGNORE_DIRS = {
-    ".git", ".hg", ".svn", ".claude", "node_modules", ".venv", "venv", "env",
+    ".git", ".hg", ".svn", ".claude", ".agents", "node_modules", ".venv", "venv", "env",
     "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox",
     "dist", "build", "target", "out", ".next", ".nuxt", ".cache", "vendor",
     "site-packages", ".idea", ".vscode", ".gradle", "coverage", ".terraform",
@@ -160,18 +162,65 @@ def _gitignored(rel: str, patterns: List[str]) -> bool:
     return False
 
 
-def iter_source_files(project_root: Path, base_rel: str,
-                      extra_excludes: List[str], gitignore: List[str]) -> Iterable[Path]:
+def _norm_globs(vals) -> List[str]:
+    """Normalize an exclude list the way gitignore patterns are read: drop blanks and a
+    trailing '/' so 'raw/scratch/' matches like the gitignore rule would (via the
+    pat + '/*' branch in _gitignored). Used for `exclude` and the per-intent variants."""
+    return [v.rstrip("/") for v in _as_list(vals) if str(v).strip()]
+
+
+def _excludes_for_policy(config: dict, policy: str) -> List[str]:
+    """Global `exclude` plus the per-intent `mirror_exclude` / `absorb_exclude` for this
+    source's policy (additive). All are glob patterns matched by the same engine as
+    .gitignore. Empty by default, so behavior is unchanged until the keys are set."""
+    out = _norm_globs(config.get("exclude"))
+    key = {"mirror": "mirror_exclude", "absorb": "absorb_exclude"}.get(policy)
+    if key:
+        out = out + _norm_globs(config.get(key))
+    return out
+
+
+def _effective_ignore_dirs(amg_root: Optional[Path]) -> set:
+    """DEFAULT_IGNORE_DIRS plus the RESOLVED agent dir, so the engine never indexes its
+    own directory whatever it is named (.claude / .agents / custom; roadmap 4.9). The
+    name is derived from the store location <agent_dir>/amg, which is authoritative —
+    independent of the (advisory) `agent_dir` config key."""
+    dirs = set(DEFAULT_IGNORE_DIRS)
+    if amg_root is not None:
+        dirs.add(Path(amg_root).resolve().parent.name)
+    return dirs
+
+
+def _gitignore_for_source(base_rel: str, gitignore: List[str]) -> List[str]:
+    """The .gitignore patterns that still apply under an EXPLICITLY configured source
+    `base_rel`. A pattern matching the source ROOT itself is dropped: naming a path in
+    mirror_path/absorb_path is a deliberate opt-in, so it is ingested even when
+    .gitignore lists it (e.g. absorb_path: logs where .gitignore has logs/). Patterns
+    matching only deeper junk still apply, so a wide source (mirror_path: .) keeps full
+    .gitignore hygiene. DEFAULT_IGNORE_DIRS is a separate hard layer and is NOT relaxed
+    here — the agent dir must never be indexed."""
+    norm = base_rel.strip("/").replace("\\", "/")
+    if not norm or norm == ".":
+        return gitignore                      # whole-project source: keep every pattern
+    return [p for p in gitignore if not _gitignored(norm, [p])]
+
+
+def iter_source_files(project_root: Path, base_rel: str, extra_excludes: List[str],
+                      gitignore: List[str], ignore_dirs: set) -> Iterable[Path]:
+    """Yield ingestible files under a configured source. Filtering, in order: the hard
+    DEFAULT_IGNORE / agent-dir set (ignore_dirs), then .gitignore minus the patterns the
+    explicit source opted past, then the source's effective excludes."""
     base = (project_root / base_rel).resolve()
     if not base.exists():
         return
+    src_gitignore = _gitignore_for_source(base_rel, gitignore)
     for p in base.rglob("*"):
         if not p.is_file():
             continue
-        if any(part in DEFAULT_IGNORE_DIRS for part in p.parts):
+        if any(part in ignore_dirs for part in p.parts):
             continue
         rel = p.relative_to(project_root).as_posix()
-        if _gitignored(rel, gitignore) or _gitignored(rel, extra_excludes):
+        if _gitignored(rel, src_gitignore) or _gitignored(rel, extra_excludes):
             continue
         yield p
 
@@ -734,12 +783,13 @@ def _extract_sessions(project_root: Path, config: dict,
 # --------------------------------------------------------------------------- #
 
 def extract(project_root: Path, config: dict, amg_root: Optional[Path] = None) -> List[dict]:
-    gitignore = load_gitignore(project_root)
-    extra = _as_list(config.get("exclude"))
+    gitignore = load_gitignore(project_root) if config.get("respect_gitignore", True) else []
+    ignore_dirs = _effective_ignore_dirs(amg_root)
     overrides = load_overrides(amg_root)
     units: List[dict] = []
     for base_rel, policy in resolve_sources(config):
-        for path in iter_source_files(project_root, base_rel, extra, gitignore):
+        extra = _excludes_for_policy(config, policy)
+        for path in iter_source_files(project_root, base_rel, extra, gitignore, ignore_dirs):
             rel = path.relative_to(project_root).as_posix()
             category, chunker, lang, _amb, _ov = _classify_path(path, rel, overrides)
             if chunker == "skip":
@@ -762,13 +812,18 @@ def extract(project_root: Path, config: dict, amg_root: Optional[Path] = None) -
 
 
 def _stats(project_root: Path, config: dict, amg_root: Optional[Path] = None) -> dict:
-    gitignore = load_gitignore(project_root)
-    extra = _as_list(config.get("exclude"))
+    gitignore = load_gitignore(project_root) if config.get("respect_gitignore", True) else []
+    ignore_dirs = _effective_ignore_dirs(amg_root)
     overrides = load_overrides(amg_root)
     from collections import Counter
     cat, langs, skipped, ambiguous, resolved = Counter(), Counter(), 0, [], []
-    for base_rel, _policy in resolve_sources(config):
-        for path in iter_source_files(project_root, base_rel, extra, gitignore):
+    by_source: Dict[str, dict] = {}
+    for base_rel, policy in resolve_sources(config):
+        extra = _excludes_for_policy(config, policy)
+        found = (project_root / base_rel).exists()
+        matched = 0
+        for path in iter_source_files(project_root, base_rel, extra, gitignore, ignore_dirs):
+            matched += 1                        # passed every ignore filter
             rel = path.relative_to(project_root).as_posix()
             category, chunker, lang, amb, overridden = _classify_path(path, rel, overrides)
             if chunker == "skip":
@@ -780,6 +835,7 @@ def _stats(project_root: Path, config: dict, amg_root: Optional[Path] = None) ->
                 resolved.append(rel)            # ambiguity settled by amg-classifier
             elif amb:
                 ambiguous.append(rel)           # still unresolved -> prose default
+        by_source[base_rel] = {"policy": policy, "found": found, "files": matched}
     sessions = 0
     sess_base = session_dir(project_root, config, amg_root)
     if sess_base:
@@ -804,6 +860,7 @@ def _stats(project_root: Path, config: dict, amg_root: Optional[Path] = None) ->
             extraction[fmt] = f"unavailable (pip install {'python-docx' if mod=='docx' else mod}) -> files skipped"
 
     out = {"by_category": dict(cat), "by_language": dict(langs),
+           "by_source": by_source,             # per-source file counts (0 / not-found visible)
            "skipped_binary": skipped, "sessions": sessions,
            "ambiguous_files": ambiguous[:20],
            "resolved_by_override": resolved[:20],
@@ -821,7 +878,13 @@ def _stats(project_root: Path, config: dict, amg_root: Optional[Path] = None) ->
 def main(argv: List[str]) -> int:
     project_root = Path(argv[1]).resolve() if len(argv) > 1 else Path.cwd()
     rest = [a for a in argv[2:] if not a.startswith("--")]
-    amg_root = Path(rest[0]).resolve() if rest else project_root / ".claude" / "amg"
+    if rest:
+        amg_root = Path(rest[0]).resolve()
+    else:
+        # Resolve the store like every other CLI (reconcile/consolidate/notes) so a
+        # global engine or a non-.claude agent dir still finds the project's graph.
+        from graph_store import resolve_amg_root
+        amg_root = resolve_amg_root(start=project_root)
     config = load_config(amg_root)
     if "--stats" in argv:
         print(json.dumps(_stats(project_root, config, amg_root), ensure_ascii=False, indent=2))
