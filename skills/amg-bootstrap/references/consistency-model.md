@@ -30,7 +30,8 @@ guarantees are exercised by `scripts/selftest_graph_store.py`.
 
 `src/`, `doc/`, and `data/` are the source of truth for **what exists**. The graph
 under `.claude/amg/` is a **derived projection** of them plus earned, model-made
-knowledge. This single decision is what makes the system robust: because the graph
+knowledge. (`.claude` is the Claude Code default agent dir; another environment uses
+its configured name, e.g. `.agents` — the store root is resolved, not hard-coded.) This single decision is what makes the system robust: because the graph
 is derived, it can always be *reconciled back* to the truth. We never have to trust
 the graph's own record of what exists — we recompute the diff against the files. In
 the worst case (total graph loss) the structural graph can be rebuilt from source.

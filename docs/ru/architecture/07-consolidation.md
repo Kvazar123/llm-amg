@@ -162,7 +162,7 @@ flowchart LR
 | `python consolidate.py plan [<project_root>] [--root <agent_dir>]` | разметить план для субагента | — (только чтение + запись плана) |
 | `python consolidate.py apply <actions.json> [<project_root>] [--root <agent_dir>]` | внести действия субагента | под блокировкой |
 
-Корень графа разрешается цепочкой `graph_store.resolve_amg_root` (`--root` → `AMG_AGENT_DIR` → поиск конфига вверх → каталог движка → умолчание `.claude`; см. [Хранилище и транзакции](./03-storage.md)) — литерал `.claude` в коде не зашит.
+Корень графа разрешается цепочкой `graph_store.resolve_amg_root` (`--root` → `AMG_AGENT_DIR` → поиск конфига вверх → каталог движка → умолчание `.claude`; см. [Хранилище и транзакции](./03-storage.md)) — литерал `.claude` в коде не зашит (`.claude` — умолчание Claude Code; в иной среде — настроенный каталог агента, например `.agents`).
 
 ## Дальше
 

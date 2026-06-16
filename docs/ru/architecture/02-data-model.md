@@ -185,7 +185,7 @@ nodes/{бакет}/{слаг}-{хеш8}.md
 
 ## Раскладка каталогов
 
-Корень хранилища — `.claude/amg/`. При инициализации (`graph_store.init`) создаются только `journal/` и `nodes/<бакет>/` (пять бакетов: `code/ doc/ data/ notes/ _hubs/`). Всё остальное — `work/`, `archive/`, `cache/`, `sessions/` и файлы `log.md`, `digest.md` — рождается по необходимости, при первой записи.
+Корень хранилища — `.claude/amg/` (`.claude` — умолчание Claude Code для каталога агента; в иной среде это настроенное имя, например `.agents`). При инициализации (`graph_store.init`) создаются только `journal/` и `nodes/<бакет>/` (пять бакетов: `code/ doc/ data/ notes/ _hubs/`). Всё остальное — `work/`, `archive/`, `cache/`, `sessions/` и файлы `log.md`, `digest.md` — рождается по необходимости, при первой записи.
 
 ```mermaid
 flowchart TD

@@ -51,52 +51,32 @@ The entry point is the project's root **`CLAUDE.md`**: a small file the model re
 
 The names `.claude` and `CLAUDE.md` are the defaults **for Claude Code**. The engine itself is environment-agnostic: in other agent environments (e.g. OpenAI Codex) their names are substituted — the agent directory `.agents` and the entry point `AGENTS.md`. The commands and paths below use `.claude`/`CLAUDE.md` as an illustration of the default.
 
-Planned: an **automatic installer** that surveys the key config keys (local or global; the agent directory and entry point; mirror and absorb paths; working language; embedding backend; session policy; tier budgets; the automation mode) and sets everything up itself. For now installation is manual — the full procedure is in [INSTALL.md](INSTALL.md).
+The **installer** `install.py` surveys the key settings (local or global; agent directory and entry point; mirror and absorb paths; what to ignore; working language; embedding backend; session policy; tier budgets; automation; whether to activate memory) and sets everything up: it places the engine, injects the block between the markers, writes `config.yml`, installs dependencies, and verifies the store. The model drives it from "install AMG per INSTALL.md," or you run it directly. A reinstall replaces only the block and the `amg-*` engine, leaving your instructions and graph untouched; uninstall is provided too (optionally with the graph). The full procedure, flags, and modes are in [INSTALL.md](INSTALL.md).
+
+Main `config.yml` keys: `active` (on/off) and `automation` (how autonomous it is); `working_language`; the sources `mirror_path` / `absorb_path`; what to ignore — `exclude` / `mirror_exclude` / `absorb_exclude` / `respect_gitignore`; `session_policy`; the tier budgets `retrieval.token_budget`; the semantic seed `retrieval.embeddings`; and the environment names `agent_dir` / `entrypoint`. Full reference — [09-config](docs/en/architecture/09-config.md).
 
 ## Quick start
 
-The flow is semi-manual: some steps are console commands, some are requests to the model in Claude Code (the model writes the semantic part, not you).
+From install to memory's first answer is five steps; the manual scripts of earlier versions are gone — the model does the work itself.
 
-**Step 0 — environment.** Install the one mandatory dependency and move to the project root (where `.claude/` lives):
+**Step 1 — environment.** You need Python 3. The one mandatory dependency is `pyyaml` (the rest is optional and installed for you):
 ```bash
-python3 -m pip install pyyaml --break-system-packages
-cd /path/to/project
+python3 -m pip install pyyaml
 ```
 
-**Step 1 — sources.** In `config.yml`, declare what feeds memory and fill those folders: `src/` with real code, `doc/` with markdown documentation (folder names are arbitrary — memory detects each file's type itself):
-```yaml
-# .claude/amg/config.yml
-active: true
-working_language: ru
-mirror_path: [src, doc]   # mirror (what you edit) — the graph is kept equal
-absorb_path: [logs]       # absorb (one-off material) — ingested once
+**Step 2 — what you feed memory.** Decide which folders memory will keep (the installer will ask): **mirrors** (`mirror_path`) — what you edit (code, docs); **absorb** (`absorb_path`) — one-off material (logs, dumps, exported dialogues). Folder names are arbitrary — memory detects each file's type itself.
+
+**Step 3 — install.** Tell the model in Claude Code: **"install AMG per INSTALL.md."** It asks a few questions (local or global, the sources from step 2, working language, embeddings, automation, what to ignore) and sets everything up. At the end it asks whether to **activate memory** — say yes; you can build the graph right away too. (To run it without the model: `python install.py …`, see [INSTALL.md](INSTALL.md).)
+
+**Step 4 — check.** Look at the state and meet the commands at the same time:
 ```
-
-**Step 2 — structural skeleton (`bootstrap`).** Build the graph from the sources; this is a deterministic, model-free step:
-```bash
-python .claude/skills/amg-bootstrap/scripts/reconcile.py bootstrap .
+/amg status
 ```
+One screen: whether memory is active, graph size, queue, recent operations. Every operation is available through the single `/amg <verb>` command — or the same words in an ordinary request.
 
-**Step 3 — semantics (via Claude Code).** This needs the model. Start Claude Code in this folder and ask:
+**Step 5 — work.** From here, **just ask the model anything about your project** — it assembles the right context from the graph itself (the strategic surround plus the specifics) and files conclusions as it goes. No manual build or retrieval commands.
 
-> AMG is active. Run semantic enrichment over the queue in `work/queue.json`: for each node write a summary and local edges, then apply.
-
-Following the `amg-bootstrap` skill, the model spawns `amg-builder` subagents in batches (summaries and edges), then `amg-synth` builds the overview and hubs, cross-domain "code ↔ docs" edges, and a **gap report** (undocumented code, docs that have drifted from the code, contradictions). After applying, the nodes become `active` with summaries.
-
-**Step 4 — check retrieval.** Confirm a pack assembles — ask the model to gather context, or do it by hand:
-```bash
-python .claude/skills/amg-retrieve/scripts/retrieve.py "describe a real task on part of the project" --store .claude/amg
-```
-
-**Step 5 — a working session.** From here memory runs itself: after `/clear`, give a task — the activation loop in `CLAUDE.md` first gathers context (`amg-retrieve`), then work begins. As you go, ask it to file conclusions and decisions as notes (`notes`).
-
-**Step 6 — consolidation (end of session).** Close the memory loop:
-```bash
-python .claude/skills/amg-consolidate/scripts/consolidate.py weights .   # fold co-activations, maintain weights
-python .claude/skills/amg-consolidate/scripts/consolidate.py plan .       # mark the plan (over-budget branches, duplicates, salience)
-# following the amg-consolidate skill, the model runs amg-consolidator on the plan → writes actions.json, then:
-python .claude/skills/amg-consolidate/scripts/consolidate.py apply .claude/amg/work/actions.json .
-```
+> **`/amg on` ≠ building the graph.** Activation only turns memory on; the graph is built by the activation loop. If you didn't choose to build during install, the graph builds **in a new session** before the first task (with automation on) or right away via `/amg sync` (or the words "build / sync / index the graph"). So after activating, don't wait for it to run in the same session — start a new one or say `sync`.
 
 ## Sources: mirror and absorb
 
@@ -154,16 +134,16 @@ For **non-English projects** the engine picks a multilingual default model on it
 
 ## What's implemented and what's planned
 
-The base path is implemented and stabilized (roadmap stages 0–9): the transactional store, structure extraction with a classifier and chunkers, `mirror`/`absorb` reconciliation, retrieval (BM25 + embeddings + Personalized PageRank + a tiered pack), consolidation (weights, salience, compaction under an eval guard), safe note capture, the lifecycle layer (session hooks, `/amg` commands, `automation` modes, an always-on digest), and session saving (an auto-dumped dialogue with a write policy).
+The base path is implemented and stabilized (roadmap stages 0–10): the transactional store, structure extraction with a classifier and chunkers, `mirror`/`absorb` reconciliation, retrieval (BM25 + embeddings + Personalized PageRank + a tiered pack), consolidation (weights, salience, compaction under an eval guard), safe note capture, the lifecycle layer (session hooks, `/amg` commands, `automation` modes, an always-on digest), session saving (an auto-dumped dialogue with a write policy), and **packaging with an installer** (`install.py`: local/global, reinstall and uninstall, portability across the agent directory).
 
-Planned ([roadmap](docs/en/architecture/11-roadmap.md)): an automatic installer; broader input formats; an index and scaling; a provenance and fact-verification layer; contradiction arbitration; a 3D graph viewer; a team mode over git; an advanced semantic layer; and the English translation of the documentation.
+Planned ([roadmap](docs/en/architecture/11-roadmap.md)): broader input formats; an index and scaling; a provenance and fact-verification layer; contradiction arbitration; a 3D graph viewer; a team mode over git; an advanced semantic layer; and the English translation of the documentation.
 
-The project is pre-1.0 (`0.y`): the data schema may still change, and work proceeds in stages.
+Version 1.0 fixes a stable data schema and a working install; later stages are additive or come with a migration (under SemVer, breaking the data contract without a migration would be a MAJOR bump).
 
 ## Documentation map
 
 - [Theory](docs/en/THEORY.md) — the rationale: memory, associative retrieval, plasticity.
 - [Architecture](docs/en/architecture/README.md) — how it's built in code: modules, data formats, algorithms, configuration.
 - [Guide](docs/en/GUIDE.md) — how to use every capability.
-- [Install](INSTALL.md) — manual installation (automatic is planned).
+- [Install](INSTALL.md) — install with the installer (model-driven or by command), reinstall, uninstall.
 - [Roadmap](docs/en/architecture/11-roadmap.md) — what's implemented and what's ahead.
