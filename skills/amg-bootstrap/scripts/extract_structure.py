@@ -547,10 +547,13 @@ def session_role_marker(role: str) -> str:
     return f"=== {role} ==="
 
 
-def session_attachments_marker(n: int) -> str:
-    """Marker for omitted mechanical content (tool calls/results, files) shared with
-    the dump writer; the chunker keeps it inside the turn it annotates."""
-    return f"== Attachments {n} =="
+def session_attachment_marker(n: int, label: str = "") -> str:
+    """One marker per omitted attachment (tool call/result, image, file), numbered
+    sequentially — so several attachments in one message stay distinct (e.g. a chat
+    export where a user turn carries many files), not collapsed into a count. Writer-
+    only in practice: the chunker keeps it inside the turn (it splits on role markers,
+    not these)."""
+    return f"== Attachment {n}: {label} ==" if label else f"== Attachment {n} =="
 
 
 def _session_units(path: Path, rel: str, policy: str) -> List[dict]:

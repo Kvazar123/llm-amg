@@ -53,7 +53,7 @@ from typing import Dict, List, Optional
 
 import graph_store as gs
 import reconcile as rc
-from extract_structure import (session_attachments_marker, session_dir,
+from extract_structure import (session_attachment_marker, session_dir,
                                session_role_marker)
 
 # Cross-skill import of consolidate for weights + digest — the established pattern in
@@ -188,16 +188,17 @@ def _render_transcript(transcript_path: Path) -> Optional[dict]:
         return None
     out: List[str] = []
     turns = 0
-    attach_total = 0
-    pending_attach = 0
+    attach_seq = 0
+    pending: List[str] = []                        # attachment labels awaiting a flush
     started: Optional[str] = None
     ended: Optional[str] = None
 
     def flush_attach() -> None:
-        nonlocal pending_attach
-        if pending_attach:
-            out.append(session_attachments_marker(pending_attach))
-            pending_attach = 0
+        nonlocal attach_seq
+        for label in pending:                      # one numbered marker PER attachment
+            attach_seq += 1
+            out.append(session_attachment_marker(attach_seq, label))
+        pending.clear()
 
     for line in raw.splitlines():
         line = line.strip()
@@ -214,7 +215,7 @@ def _render_transcript(transcript_path: Path) -> Optional[dict]:
             continue
         content = msg.get("content")
         texts: List[str] = []
-        a = 0
+        att: List[str] = []                        # this entry's omitted attachments
         if isinstance(content, str):
             if _is_wrapper_text(content):
                 continue
@@ -231,8 +232,14 @@ def _render_transcript(transcript_path: Path) -> Optional[dict]:
                         texts.append(t)
                 elif bt in ("thinking", "redacted_thinking"):
                     continue                       # cut raw model reasoning
+                elif bt == "tool_use":
+                    att.append(f"tool call ({b.get('name') or 'tool'})")
+                elif bt == "tool_result":
+                    att.append("tool result")
+                elif bt == "image":
+                    att.append("image")
                 else:
-                    a += 1                         # tool_use / tool_result / image / ...
+                    att.append(str(bt or "attachment"))   # file / unknown blob
         else:
             continue
         ts = o.get("timestamp")
@@ -242,17 +249,16 @@ def _render_transcript(transcript_path: Path) -> Optional[dict]:
         joined = "\n\n".join(texts).strip()
         if joined:
             flush_attach()                         # attachments accrued before this turn
-            label = "Assistant" if msg.get("role") == "assistant" else "Human"
-            out.append(session_role_marker(label))
+            role = "Assistant" if msg.get("role") == "assistant" else "Human"
+            out.append(session_role_marker(role))
             out.append(joined)
             turns += 1
-        pending_attach += a                        # this entry's own attachments follow it
-        attach_total += a
+        pending.extend(att)                        # this entry's own attachments follow it
     flush_attach()
     if turns == 0:
         return None
     return {"markdown": "\n\n".join(out).rstrip() + "\n", "turns": turns,
-            "attachments": attach_total, "started": started, "ended": ended}
+            "attachments": attach_seq, "started": started, "ended": ended}
 
 
 def _dump_session(project_root: Path, amg: Path, cfg: dict,

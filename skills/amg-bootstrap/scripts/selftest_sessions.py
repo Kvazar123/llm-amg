@@ -145,7 +145,9 @@ def case_dump_round_trip():
         text = f.read_text(encoding="utf-8")
         assert "secret reasoning" not in text, "raw thinking must be cut"
         assert "=== Human ===" in text and "=== Assistant ===" in text, text
-        assert "== Attachments" in text, text
+        # one numbered marker PER attachment, not a collapsed count
+        assert "== Attachment 1:" in text and "== Attachment 2:" in text, text
+        assert "tool call (Bash)" in text and "tool result" in text, text
         assert "<local-command-caveat>" not in text, "meta wrapper must be filtered"
         # round trip: the chunker re-parses the dump the writer produced
         cfg = ex.load_config(amg)
