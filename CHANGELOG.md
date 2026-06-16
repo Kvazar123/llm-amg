@@ -4,6 +4,26 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-06-16
+
+Stage 10 closed — **v1.0.0**: AMG installs locally or globally with no manual file copying, the engine is portable across the agent directory, and what enters the graph is fully controllable per intent. This release fixes a stable data schema and a working install (under SemVer, breaking the data contract without a migration would now be a MAJOR bump).
+
+### Added
+- `install.py` — the installer (successor to `sync_testbed.py`, which stays for the dev sandbox). Config-driven: the model conducts the Q&A and calls it with the answers. It copies only the `amg-*` skills/agents (a shared `~/.claude` keeps the user's other skills), renders `entrypoint/CLAUDE.md` / `settings.json` / `commands/amg.md` per `agent_dir`/`entrypoint` (`render_control_text`; global → an absolute engine path, the `@digest` import → a loop note, the graph stays local), injects the block between `<!-- AMG:BEGIN/END -->` (reinstall replaces only the block; the `# Project memory` preamble is stripped), merges `settings.json` (the user's hooks kept), writes `config.yml` from the template (editing real keys, not prose comments; never clobbering an existing config), installs dependency groups, and finishes with `verify --repair` — never an auto-build.
+- Installer options: `--build` (build the structural graph during install, ready this session), `--project-only` (add a project to a global install — local config only), `--uninstall [--scope global] [--purge-graph]` (strips the block, removes only `amg-*` and the AMG hooks, keeps the graph unless purged). `requirements.txt` with `base` / `embeddings` / `text` / `treesitter` groups.
+- Per-intent ignore controls: `mirror_exclude` / `absorb_exclude` config keys (additive over the global `exclude`), `respect_gitignore` (default true; false makes ignoring fully config-driven, no git needed), and an explicitly configured source whose root is gitignored is still ingested (`_gitignore_for_source` — `absorb_path: logs` with `logs/` in `.gitignore` no longer vanishes). `--stats` reports per-source file counts (`by_source`), so a silently-filtered or missing source is visible.
+- `selftest_ignore.py` (5 cases) and `selftest_install.py` (8 cases, headless). 13 selftests green.
+
+### Changed
+- Environment parameterization (roadmap 4.9 completed): `DEFAULT_IGNORE_DIRS` gains `.agents` and the resolved agent dir (`_effective_ignore_dirs`), so the engine never indexes its own directory under any name. `graph_store.main`, `retrieve._default_store` and `inspect_graph` now resolve the store via `resolve_amg_root` (upward config search), so a global engine heals and reads a project's LOCAL graph from the project cwd; the dead `graph_store._default_root` is removed.
+- Docs synced and the 2.15 sweep done: `INSTALL.md` rewritten for the installer; README_RU + README Quick Start reworked (install → `/amg status` → just ask the model; `/amg on` ≠ index); GUIDE, `04-ingest` (the ignore section), `09-config` (new keys + `agent_dir`/`entrypoint` made real), `08-agents-skills` (the control-plane install realized), `03-storage`/`06-retrieval` (CLI root resolution), THEORY §11; a "`.claude`/`CLAUDE.md` are Claude Code defaults" caveat across the docs. Roadmap §5 Stage 10 folded; section-2 items 2.13 / 2.15 closed, 2.16 item 5 closed.
+- `config.yml`: `respect_gitignore`, `mirror_exclude`, `absorb_exclude`, and the documented `agent_dir` / `entrypoint` keys.
+
+### Fixed
+- A global install would have resolved the wrong (global) graph root from the activation block's direct `graph_store.py` calls — it now resolves the project's local graph via the upward config search (the global-install DoD).
+- `place_engine` no longer deletes the whole `skills/` directory — it replaces only `amg-*`, so a shared agent dir keeps the user's other skills across install and reinstall.
+- A configured source whose root is gitignored (e.g. `absorb_path: logs`) was silently dropped from the graph; it is now ingested — explicit intent beats the generic ignore convention.
+
 ## [0.11.0] — 2026-06-16
 
 Stage 9 closed: valuable dialogues are no longer lost on `/clear`. At session end the transcript is dumped to `<store>/sessions` and ingested like any other source; a hard kill that skips `SessionEnd` is now surfaced (not silent) on the next start.
