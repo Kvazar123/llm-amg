@@ -93,6 +93,7 @@ Error checklist — run EVERY file through it:
 4. **Inconsistency (the narrative "jumps").** Each subsection is a self-contained, finished block with one idea; strictly general → specific. If a topic is smeared across the file — reassemble it into one coherent subsection.
 5. **Unexplained terms.** Every new term / concept / core file name is explained in two words at first mention. Introduce a term — explain it on the spot.
 6. **Misplaced anglicisms and calques.** Both stray English insertions AND word-for-word translations that sound unnatural in Russian. See the rules below.
+7. **Prose register — complete and plain, neither stubs nor purple prose.** Aim for the register of a competent spoken explanation: full, well-formed sentences that name their subject and carry a verb, with no filler — but no clipped, verbless stubs either (`AMG's consolidated memory applies to more than code`, not a bare `Memory, not only code.`). Two bounds at once: not telegraphic theses, and not novelistic embellishment. A clipped phrase punctuated as a sentence reads as unfinished and jars the reader; an over-literary one wastes their attention. Write the way you would clearly explain the thing to a colleague. (Reinforces §3.4 of the roadmap, "write for humans, not as an outline.")
 
 Anglicism and calque rules (apply in both directions, including translation):
 
