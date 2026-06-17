@@ -82,7 +82,7 @@ DEFAULTS = {
         "documents": 0.9, "specifies": 0.9, "implements": 0.9,
         "calls": 0.8, "depends_on": 0.8, "defines": 0.7, "part_of": 0.7,
         "imports": 0.6, "refines": 0.6, "exemplifies": 0.6, "relates_to": 0.5,
-        "supersedes": 0.3, "contradicts": 0.3,
+        "follows": 0.4, "supersedes": 0.3, "contradicts": 0.3,
     },
     "relation_prior_default": 0.5,
     # Per-status activation prior, applied AFTER PPR (re-ranking by node validity,

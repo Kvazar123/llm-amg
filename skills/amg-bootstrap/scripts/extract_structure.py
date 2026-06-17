@@ -20,6 +20,7 @@ Pipeline per file:
        log         episodes      -> one block per bounded window of timestamped lines
        json/yaml   records       -> one unit per entry; large nests split by key path
        ndjson      records       -> one unit per JSON line
+       (json/ndjson that look like a chat export -> one section per message + follows)
        csv/tsv     table         -> one structural unit (headers + sample rows)
        pdf/docx/xlsx/pptx         -> page / section / sheet / slide   (OPTIONAL libs)
   4. tag          each unit carries `category` (code|doc|data) -> physical node bucket,
@@ -859,6 +860,155 @@ def _session_units(path: Path, rel: str, policy: str) -> List[dict]:
     return units or [_file_unit(rel, "doc", policy, text, "session")]
 
 
+# --- external chat exports (Stage 11) ----------------------------------------
+# A structured chat log (JSON array / a {messages: [...]} object / NDJSON) of message
+# objects -> one episodic `section` per message, with role/time/thread folded into the
+# unit text (so the builder summarizes WITH attribution) and a weak `follows` edge to
+# the previous turn IN THE SAME THREAD (conversation adjacency: roadmap 4.2). This is the
+# common OpenAI/Anthropic `messages` shape and tolerant synonyms; our own flat dump
+# (=== Human === markers) is handled by _session_units, reached via _has_role_markers.
+_CHAT_ROLE_KEYS = ("role", "author", "speaker", "from", "sender", "name")
+_CHAT_TEXT_KEYS = ("content", "text", "message", "body", "value")
+_CHAT_TIME_KEYS = ("timestamp", "time", "ts", "created_at", "create_time", "date")
+_CHAT_ID_KEYS = ("id", "message_id", "msg_id", "uuid")
+_CHAT_THREAD_KEYS = ("conversation_id", "thread_id", "session_id", "channel", "chat_id",
+                     "conversation")
+_CHAT_CONTAINER_KEYS = ("messages", "conversation", "conversations", "turns", "history", "log")
+
+
+def _msg_get(d: dict, keys: Tuple[str, ...]) -> Optional[object]:
+    """First present, non-empty value among `keys` (synonym-tolerant field lookup)."""
+    for k in keys:
+        v = d.get(k)
+        if v not in (None, ""):
+            return v
+    return None
+
+
+def _chat_text(content: object) -> str:
+    """Flatten a message's content to text. A string is itself; a list of blocks (the
+    OpenAI/Anthropic shape) joins its text blocks and replaces each non-text block
+    (tool_use, image) with a numbered attachment marker, the same convention the session
+    dump uses; a {parts: [...]} / {text: ...} dict is unwrapped."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts, att = [], 0
+        for blk in content:
+            if isinstance(blk, str):
+                parts.append(blk)
+            elif isinstance(blk, dict) and blk.get("text"):
+                parts.append(str(blk["text"]))
+            elif isinstance(blk, dict) and isinstance(blk.get("content"), str):
+                parts.append(blk["content"])
+            else:
+                att += 1
+                kind = blk.get("type") if isinstance(blk, dict) else "attachment"
+                parts.append(session_attachment_marker(att, str(kind or "attachment")))
+        return "\n".join(p for p in parts if p)
+    if isinstance(content, dict):
+        if isinstance(content.get("parts"), list):
+            return _chat_text(content["parts"])
+        if content.get("text"):
+            return str(content["text"])
+    return "" if content is None else str(content)
+
+
+def _chat_messages(obj: object) -> Optional[List[dict]]:
+    """Extract the message list from a parsed chat export, or None if it does not look
+    like one. Accepts a bare list or a dict carrying a messages-ish list; requires at
+    least two dict records, most of which have a role-ish AND a text-ish field — so an
+    ordinary JSON array of records is NOT misread as a chat."""
+    seq: Optional[list] = None
+    if isinstance(obj, list):
+        seq = obj
+    elif isinstance(obj, dict):
+        for k in _CHAT_CONTAINER_KEYS:
+            if isinstance(obj.get(k), list):
+                seq = obj[k]
+                break
+    if not seq:
+        return None
+    msgs = [m for m in seq if isinstance(m, dict)]
+    if len(msgs) < 2 or len(msgs) < 0.6 * len(seq):
+        return None
+    roled = sum(1 for m in msgs if _msg_get(m, _CHAT_ROLE_KEYS) is not None)
+    texted = sum(1 for m in msgs if _msg_get(m, _CHAT_TEXT_KEYS) is not None)
+    if roled < 0.6 * len(msgs) or texted < 0.6 * len(msgs):
+        return None
+    return msgs
+
+
+def _chat_qual(mid: str) -> str:
+    q = re.sub(r"[^\w.-]+", "_", mid).strip("_")[:48]
+    return q or "m"
+
+
+def _chat_units(path: Path, rel: str, policy: str) -> Optional[List[dict]]:
+    """One `section` unit per message of a structured chat export (JSON or NDJSON).
+    Returns None when the file is not a recognizable chat -> the caller falls back to the
+    json / ndjson record chunker. Each message carries `follows` (the previous turn in
+    the same thread) so consecutive turns form a weak conversational chain in the graph;
+    its id is the message's own id field when present (stable across re-exports), else
+    m{seq}. role/timestamp/thread are folded into the unit text for the summary."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    try:
+        obj: object = json.loads(text)
+    except ValueError:                       # maybe NDJSON: one message object per line
+        rows = []
+        for line in text.splitlines():
+            s = line.strip()
+            if not s:
+                continue
+            try:
+                rows.append(json.loads(s))
+            except ValueError:
+                return None                  # not clean NDJSON -> let ndjson chunker handle it
+        obj = rows
+    msgs = _chat_messages(obj)
+    if not msgs:
+        return None
+
+    units: List[dict] = []
+    seen: Dict[str, int] = {}
+    last_by_thread: Dict[str, str] = {}
+    for n, m in enumerate(msgs, 1):
+        role = str(_msg_get(m, _CHAT_ROLE_KEYS) or "unknown")
+        body = _chat_text(_msg_get(m, _CHAT_TEXT_KEYS))
+        ts = _msg_get(m, _CHAT_TIME_KEYS)
+        thread = _msg_get(m, _CHAT_THREAD_KEYS)
+        mid = _msg_get(m, _CHAT_ID_KEYS)
+        base = _chat_qual(str(mid)) if mid is not None else f"m{n}"
+        c = seen.get(base, 0)
+        seen[base] = c + 1
+        qual = base if c == 0 else f"{base}-{c}"
+        header = (f"[{role}]" + (f" {ts}" if ts else "")
+                  + (f" (thread {thread})" if thread is not None else ""))
+        full = (header + "\n" + body).strip()
+        unit = {"id": f"doc:{rel}::{qual}", "kind": "section", "source_path": rel,
+                "category": "doc", "policy": policy, "qualname": qual, "lineno": 1,
+                "lang": "chat", "content_sha": _sha(full), "text": full}
+        tkey = str(thread) if thread is not None else "_"
+        prev = last_by_thread.get(tkey)
+        if prev:
+            unit["follows"] = prev           # weak adjacency to the previous turn in-thread
+        last_by_thread[tkey] = unit["id"]
+        units.append(unit)
+    return units or None
+
+
+def _has_role_markers(path: Path) -> bool:
+    """True if a prose file is actually a session/chat dump in the shared flat format
+    (=== Human === / === Assistant ===). Lets a dump dropped into an ordinary
+    mirror/absorb source route to the session chunker instead of being read as plain
+    markdown/text. Cheap: only the head is scanned."""
+    try:
+        head = path.read_text(encoding="utf-8", errors="replace")[:4096]
+    except OSError:
+        return False
+    return any(_SESSION_ROLE_RE.match(ln) for ln in head.splitlines())
+
+
 # --- binary document formats (optional pure-Python libs; graceful skip) ------
 # Each returns units that CARRY the extracted `text`, so the builder can summarize
 # without re-opening the binary. Returns None when the library is absent or the
@@ -1069,11 +1219,15 @@ def extract(project_root: Path, config: dict, amg_root: Optional[Path] = None) -
                 units += got
             elif chunker == "log":
                 units += _log_units(path, rel, policy, group_lines=log_lines)
-            elif chunker == "json":
-                units += _data_units(path, rel, policy, max_depth=j_depth,
-                                     recurse_min=j_min, cap=j_cap)
-            elif chunker == "ndjson":
-                units += _ndjson_units(path, rel, policy, cap=j_cap)
+            elif chunker in ("json", "ndjson"):
+                got = _chat_units(path, rel, policy)       # structured chat export?
+                if got is None:
+                    got = (_ndjson_units(path, rel, policy, cap=j_cap) if chunker == "ndjson"
+                           else _data_units(path, rel, policy, max_depth=j_depth,
+                                            recurse_min=j_min, cap=j_cap))
+                units += got
+            elif chunker in ("headings", "paragraphs") and _has_role_markers(path):
+                units += _session_units(path, rel, policy)  # a dropped flat role-marker dump
             else:
                 units += CHUNKERS[chunker](path, rel, policy)
     units += _extract_sessions(project_root, config, amg_root)   # opted-in store source

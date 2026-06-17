@@ -314,6 +314,10 @@ def _structural_edges(unit: dict, module_map: Optional[Dict[str, str]] = None) -
         # does not exist, so cross-file calls are simply ignored until resolved.
         edges.append({"rel": "calls", "to": f"code:{rel}::{callee}", "w": 0.7, "coact": 0,
                       "origin": "structural"})
+    prev = unit.get("follows")             # chat/session adjacency: this turn -> previous
+    if prev:
+        edges.append({"rel": "follows", "to": prev, "w": 0.3, "coact": 0,
+                      "origin": "structural"})
     seen, out = set(), []
     for e in edges:
         k = (e["rel"], e["to"])

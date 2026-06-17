@@ -150,6 +150,7 @@ retrieval:
     refines: 0.6                  # a sharpening/refinement link (builder)
     exemplifies: 0.6              # an example-of link: concrete -> concept (builder)
     relates_to: 0.5
+    follows: 0.4                 # conversation adjacency: a turn to the previous one; weak
     supersedes: 0.3              # like contradicts: links a retired claim; conducts weakly
     contradicts: 0.3
   # Per-status multiplier on the FINAL activation (re-ranks by node validity).
