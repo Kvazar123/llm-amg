@@ -43,6 +43,13 @@ mirror_path:
 # absorb_path:
 #   - data
 
+#   absorb_once_path : ingest ONCE and FREEZE. Like absorb (deleting the source keeps the
+#                 node), but later CHANGES to the source are ignored too - the node is
+#                 never re-derived. Use for a one-shot snapshot you never want re-synced.
+#                 On overlap with mirror/absorb the most-preserving policy wins (this one).
+# absorb_once_path:
+#   - snapshots
+
 # Captured sessions (Stage 9). At SessionEnd (a Claude Code hook) the dialogue is
 # dumped to <agent_dir>/amg/sessions/YYYY-MM-DD-HHMM.md — role markers, no raw model
 # thinking — and then ingested like any other source. The location is DERIVED from the

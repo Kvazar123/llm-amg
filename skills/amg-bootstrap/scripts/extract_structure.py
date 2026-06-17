@@ -125,12 +125,15 @@ def _as_list(val) -> List[str]:
 
 
 def resolve_sources(config: dict) -> List[Tuple[str, str]]:
-    """Return [(path, policy)]. Prefers mirror_path/absorb_path; falls back to a
-    legacy `sources:` dict so existing configs keep working."""
+    """Return [(path, policy)]. Prefers mirror_path/absorb_path/absorb_once_path; falls
+    back to a legacy `sources:` dict so existing configs keep working. Order matters: on
+    an overlap the dedup in reconcile.plan keeps the LAST, so the most-preserving policy
+    (absorb_once, then absorb, then mirror) wins."""
     out: List[Tuple[str, str]] = []
-    if "mirror_path" in config or "absorb_path" in config:
+    if any(k in config for k in ("mirror_path", "absorb_path", "absorb_once_path")):
         out += [(p, "mirror") for p in _as_list(config.get("mirror_path"))]
         out += [(p, "absorb") for p in _as_list(config.get("absorb_path"))]
+        out += [(p, "absorb_once") for p in _as_list(config.get("absorb_once_path"))]
         return out
     # legacy form: sources: {name: {path, policy}}
     for _, src in (config.get("sources") or {}).items():
@@ -195,7 +198,8 @@ def _excludes_for_policy(config: dict, policy: str) -> List[str]:
     source's policy (additive). All are glob patterns matched by the same engine as
     .gitignore. Empty by default, so behavior is unchanged until the keys are set."""
     out = _norm_globs(config.get("exclude"))
-    key = {"mirror": "mirror_exclude", "absorb": "absorb_exclude"}.get(policy)
+    key = {"mirror": "mirror_exclude", "absorb": "absorb_exclude",
+           "absorb_once": "absorb_exclude"}.get(policy)
     if key:
         out = out + _norm_globs(config.get(key))
     return out

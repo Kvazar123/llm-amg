@@ -432,6 +432,44 @@ def case_root_resolution(proj: Path) -> None:
     print("PASS  root: cli > env > config-upward (.claude/.agents) > engine dir > default .claude")
 
 
+def case_absorb_once() -> None:
+    """absorb_once (Stage 11): ingested once, then FROZEN — a later source change is not
+    re-derived (no requeue, no drift) and deletion never purges it, unlike absorb which
+    re-derives on change."""
+    proj = Path(tempfile.mkdtemp(prefix="amg-once-"))
+    try:
+        amg = proj / ".claude" / "amg"
+        amg.mkdir(parents=True)
+        (amg / "config.yml").write_text(
+            "active: true\nworking_language: en\nabsorb_once_path: snap\n", encoding="utf-8")
+        snap = proj / "snap"
+        snap.mkdir()
+        f = snap / "note.txt"
+        f.write_text("first version\n", encoding="utf-8")
+        nid = "doc:snap/note.txt::b1"
+        s = RC.plan(proj, amg)
+        assert s["added"] == 1 and s["queued_for_semantic"] == 1, s
+        n = RC.load_nodes(gs.GraphStore(amg))[nid]
+        assert n["policy"] == "absorb_once" and n["status"] == "stale", n
+        work = amg / "work"
+        (work / "d.json").write_text(json.dumps([{"id": nid, "summary": "snapshot note"}]),
+                                     encoding="utf-8")
+        RC.apply_derivation(proj, work / "d.json", amg)
+        assert RC.load_nodes(gs.GraphStore(amg))[nid]["status"] == "active"
+        f.write_text("second version, edited\n", encoding="utf-8")     # change -> frozen
+        s = RC.plan(proj, amg)
+        assert s["frozen"] == 1 and s["requeued_stale"] == 0 and s["changed"] == 0, s
+        n = RC.load_nodes(gs.GraphStore(amg))[nid]
+        assert n["status"] == "active" and n["summary"] == "snapshot note", n
+        assert json.loads((work / "queue.json").read_text())["units"] == [], "frozen not queued"
+        f.unlink()                                                     # delete -> kept (absorb-like)
+        s = RC.plan(proj, amg)
+        assert s["deleted"] == 0 and nid in RC.load_nodes(gs.GraphStore(amg)), s
+        print("PASS  absorb_once: ingested once then frozen (changes ignored, deletion kept)")
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+
 if __name__ == "__main__":
     proj = setup_project()
     try:
@@ -451,6 +489,7 @@ if __name__ == "__main__":
         case_markdown_fences()
         case_lineno_in_pack(proj)
         case_root_resolution(proj)
+        case_absorb_once()
         print("\nALL RECONCILE CHECKS PASSED")
     finally:
         shutil.rmtree(proj, ignore_errors=True)

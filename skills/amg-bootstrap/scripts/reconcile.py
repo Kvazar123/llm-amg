@@ -17,6 +17,9 @@ matter when sources change:
                transaction and the queue write heals on the next bootstrap.
   * deleted  : a mirror node whose source unit is gone -> purge
   * unchanged: same hash -> do nothing (no LLM call; truly idempotent and cheap)
+  * frozen   : an absorb_once node already exists -> ignore the source entirely
+               (ingest ONCE, then freeze: later changes are not re-derived and the
+               pointer is not drifted); like absorb it is never purged on deletion
 
 Crucial safety rules (see ../references/consistency-model.md):
   * Only `derived_from_file` nodes from MIRROR sources are ever purged by source
@@ -122,7 +125,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
     raw_units = extract(project_root, config, amg_root)
     units = {u["id"]: u for u in raw_units}
     summary = {"added": 0, "changed": 0, "moved": 0, "deleted": 0, "unchanged": 0,
-               "requeued_stale": 0, "pointer_refreshed": 0}
+               "requeued_stale": 0, "pointer_refreshed": 0, "frozen": 0}
     queue: List[dict] = []
 
     with store.lock():
@@ -180,6 +183,15 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
             if uid in moved_new:
                 continue                   # already written by the migration above
             node = nodes.get(uid)
+            if node is not None and unit["policy"] == "absorb_once":
+                # absorb_once = ingested once, then frozen: source changes are ignored
+                # (no re-derivation, no pointer drift); deletion never purges it (the
+                # deleted pass is mirror-only). The FIRST ingest falls through below.
+                if node.get("source_hash") != unit["content_sha"]:
+                    summary["frozen"] += 1     # source changed but the node is frozen
+                else:
+                    summary["unchanged"] += 1
+                continue
             kind_dir = _dir_for(unit["category"])
             relpath = node["_path"] if node else node_relpath(uid, kind_dir)
 
