@@ -86,13 +86,33 @@ exclude: []
 # -----------------------------------------------------------------------------
 
 # -----------------------------------------------------------------------------
-# Model tiering for subagents. Strongest model only for foundational synthesis.
+# Model tiering for subagents. The strongest model only for foundational synthesis.
+# This block is the SINGLE SOURCE OF TRUTH: install (and reinstall) renders each
+# role's model + reasoning effort into the matching agent's frontmatter:
+#   discovery      -> amg-classifier, amg-retriever
+#   module_summary -> amg-builder
+#   synthesis      -> amg-synth, amg-consolidator
+#   structural_extraction -> none (deterministic, no model)
+# A role is a flat model string OR a {model, reasoning_effort} mapping, e.g.
+#   synthesis: {model: opus, reasoning_effort: high}
+# model: any string the environment accepts - a Claude alias (opus/sonnet/haiku/
+#   fable), a pinned id (claude-opus-4-8), or another provider's id (gpt-5.5) when
+#   Claude Code is pointed at a gateway/Bedrock/Vertex. AMG passes it through; it
+#   does not route providers (that is a deployment/env concern).
+# reasoning_effort: minimal|low|medium|high|xhigh|max - clamped to what the env
+#   supports (Claude Code `effort`: low..max; Codex `model_reasoning_effort`:
+#   minimal..xhigh). Omit it to keep the model/tool default (Claude Code: high).
+# Caveat (Claude Code #44385): a subagent's frontmatter `model:` is currently
+#   ignored unless passed explicitly on spawn; `effort` is honored. We still render
+#   `model:` (documented, forward-compatible).
 # -----------------------------------------------------------------------------
 models:
   structural_extraction: none      # extract_structure.py - exact, reproducible
   discovery:            haiku       # read-only file discovery / search
   module_summary:       sonnet      # per-file / per-section summaries (bulk)
   synthesis:            opus        # architecture overview, cross-domain edges, gaps
+  # structured form (model + reasoning effort), e.g.:
+  # synthesis: {model: opus, reasoning_effort: high}
 
 # -----------------------------------------------------------------------------
 # Spreading-activation retrieval (amg-retrieve). Query-biased Personalized PageRank.

@@ -124,10 +124,10 @@ def resolve_amg_root(cli_root: os.PathLike | str | None = None,
       1. explicit --root (the agent dir, e.g. `.claude` or `.agents`);
       2. the AMG_AGENT_DIR environment variable (same meaning);
       3. the first ancestor of `start` (default: cwd) holding amg/config.yml —
-         that directory IS the agent dir. The default agent-dir name is also
-         probed one level down (<ancestor>/.claude/amg/config.yml): this is
-         what lets a globally-installed engine find a project's graph from the
-         project's cwd;
+         that directory IS the agent dir. The known agent-dir presets are also
+         probed one level down (<ancestor>/{.claude,.agents}/amg/config.yml): this
+         is what lets a globally-installed engine find a project's graph from the
+         project's cwd, under any environment (a fully custom dir uses AMG_AGENT_DIR);
       4. the engine's own location (scripts live at
          <agent_dir>/skills/amg-bootstrap/scripts -> <agent_dir>/amg), only if
          that amg/ already exists — covers the dev layout and a local install
@@ -143,8 +143,9 @@ def resolve_amg_root(cli_root: os.PathLike | str | None = None,
     for d in (base, *base.parents):
         if (d / "amg" / "config.yml").exists():
             return d / "amg"
-        if (d / ".claude" / "amg" / "config.yml").exists():
-            return d / ".claude" / "amg"
+        for adir in (".claude", ".agents"):      # known agent-dir presets (1.32)
+            if (d / adir / "amg" / "config.yml").exists():
+                return d / adir / "amg"
     engine_root = Path(__file__).resolve().parents[3] / "amg"
     if engine_root.is_dir():
         return engine_root

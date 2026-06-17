@@ -120,13 +120,15 @@ def _default_store() -> Path:
     """Resolve the graph store when --store is not given. Mirrors graph_store.
     resolve_amg_root (kept dependency-free here): config search upward from cwd — so a
     global engine finds the project's LOCAL graph — then the engine's own location, then
-    the .claude default. The retriever subagent passes --store explicitly; this only
-    backs a bare manual run."""
+    the .claude default. Probes both agent-dir presets (.claude / .agents) so a non-Claude
+    environment resolves too (1.32). The retriever subagent passes --store explicitly; this
+    only backs a bare manual run."""
     for d in (Path.cwd(), *Path.cwd().parents):
         if (d / "amg" / "config.yml").exists():
             return d / "amg"
-        if (d / ".claude" / "amg" / "config.yml").exists():
-            return d / ".claude" / "amg"
+        for adir in (".claude", ".agents"):
+            if (d / adir / "amg" / "config.yml").exists():
+                return d / adir / "amg"
     here = Path(__file__).resolve().parents[3] / "amg"   # engine location (dev / local)
     return here if here.is_dir() else Path.cwd() / ".claude" / "amg"
 

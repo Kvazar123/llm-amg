@@ -99,7 +99,7 @@ DEFAULTS = {
     # nothing to roll back). See config.yml and apply_actions for the mechanism.
     "eval_gate": {
         "enabled": True,
-        "cases": ".claude/skills/amg-retrieve/evals/cases.json",
+        "cases": "",          # resolved from the store root in load_config (portable, 1.32)
         "min_recall_delta": -0.02,
         "min_hop_recall_delta": -0.02,
         "on_fail": "reject",
@@ -133,6 +133,10 @@ HUB_DOWN_RELS = {"documents", "defines", "specifies", "implements", "contains"}
 def load_config(amg_root: Path) -> dict:
     cfg = json.loads(json.dumps(DEFAULTS))               # deep copy
     cfg["working_language"] = "en"          # summaries' language for created nodes
+    # Portable default for eval_gate.cases, derived from the store location (1.32): the
+    # shipped template's value is rendered to the agent dir at install; this covers a
+    # config that omits it, with no hard-coded `.claude`.
+    cfg["eval_gate"]["cases"] = str(amg_root.parent / "skills" / "amg-retrieve" / "evals" / "cases.json")
     f = amg_root / "config.yml"
     if f.exists():
         raw = yaml.safe_load(f.read_text(encoding="utf-8")) or {}

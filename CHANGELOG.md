@@ -4,6 +4,25 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-06-17
+
+Sub-stage between Stage 10 and Stage 11 (control-plane / portability): the `config.yml` `models` block becomes a working setting (audit 1.14), a third installer environment `--env codex` is added (Codex is not skill-less), and the engine prompts are made portable (audit 1.32). Additive, no data-contract change (MINOR).
+
+### Added
+- Structured model tiering (audit 1.14): `models.<role>: {model, reasoning_effort}` (backward-compatible with a flat model string) is rendered by the installer into the subagent definitions — Claude Code: `model`/`effort` in `agents/amg-*.md` frontmatter; Codex: `model`/`model_reasoning_effort` in `.codex/agents/*.toml`. `reasoning_effort` (`minimal|low|medium|high|xhigh|max`) is clamped per environment (no `off`; unset → omitted, the tool default applies). `model` is an opaque pass-through string (a Claude alias, a pinned id like `claude-opus-4-8`, or another provider's id); multi-provider routing is a deployment concern (gateway / Bedrock / Vertex), not a model string, so AMG does not implement it. Role→agent map: discovery→{classifier,retriever}, module_summary→{builder}, synthesis→{synth,consolidator}. `install.py`: `render_agent_models` / `render_codex_agents` / `_resolve_role` / `_clamp_effort` / `_set_agent_field` / `_read_models`.
+- Installer environment `--env codex` (3-way `_env_kind`: claude-code | codex | generic). Codex is NOT skill-less — it has skills (`.agents/skills`) and subagents (TOML in `.codex/agents`). The codex mode places skills under `.agents/skills`, renders the subagents as TOML in `.codex/agents` (model + model_reasoning_effort from `models`; Claude-alias defaults omitted for Codex), and injects a skill-aware block from the new template `entrypoint/AGENTS.codex.md`; Claude hooks and the `/amg` command are not written. The skill-less `--env generic` block is retained (Qwen Coder and other AGENTS.md envs). `agent_dir`/`entrypoint` default per environment (codex/generic → `.agents`/`AGENTS.md`). Reinstall/uninstall are env-aware (uninstall clears `.codex/agents/amg-*.toml`).
+- New architecture doc `docs/ru/architecture/12-install.md` — the installer's internals (engine/graph planes, the install matrix, path rendering, block injection, settings merge, config templating, model tiering, reinstall/uninstall), distinct from the user-facing INSTALL.md; registered in the architecture map.
+- `selftest_install.py`: `test_models_render` and `test_codex_env` (new); `test_generic_env` switched to `--env generic`; `test_agents_env` asserts the engine prompts + `eval_gate.cases` are rendered. `selftest_reconcile.py` root test covers the `.agents` config probe. 13 selftests green; generated Codex TOML parses with `tomllib`.
+
+### Changed
+- Engine prompts made portable (audit 1.32): `install.py place_engine` now RENDERS each skill's `SKILL.md` and the `agents/amg-*.md` prompts (for Codex, the TOML subagent bodies) via `render_control_text`, like the entry templates — previously they were copied verbatim, leaving wrong `.claude/...` command paths under any other agent dir and relative script paths under a global install.
+- `resolve_amg_root` (`graph_store.py`, `retrieve.py`) probes both agent-dir presets `.claude` and `.agents` in its upward config search, so a non-`.claude` project resolves.
+- `eval_gate.cases` is portable: `consolidate.load_config` derives the default from the store root; `install.write_config` renders the shipped value to the agent dir for a non-`.claude` install.
+- Docs synced to the implemented mechanism: `09-config.md` (the `models` block is now a working setting — structured form, `reasoning_effort`, clamp, the #44385 caveat; the planned `models` entry removed), `08-agents-skills.md` (the 3 env modes + prompt rendering), `GUIDE.md` (model selection → `reasoning_effort`; the installation section reworked into the full guide form; the env note), README_RU + README (the Installation section reworked: deps → install ways → config-as-code → other environments; the portability note moved into Installation; a "what gets ignored" line). Roadmap §1 items 1.14 / 1.16 / 1.28 / 1.32 collapsed; every open §1 item attached to a stage.
+
+### Notes
+- Codex (`--env codex`) and the skill-less generic mode remain **untested** on a live non-Claude-Code environment — verification is roadmap Stage 19. The Claude Code path is unchanged in behavior. Upstream Claude Code bug [#44385](https://github.com/anthropics/claude-code/issues/44385): a subagent's frontmatter `model:` is honored only when passed explicitly at spawn (the `effort` field works); this is documented, with the `CLAUDE_CODE_SUBAGENT_MODEL` / per-call workaround.
+
 ## [1.0.0] — 2026-06-16
 
 Stage 10 closed — **v1.0.0**: AMG installs locally or globally with no manual file copying, the engine is portable across the agent directory, and what enters the graph is fully controllable per intent. This release fixes a stable data schema and a working install (under SemVer, breaking the data contract without a migration would now be a MAJOR bump).

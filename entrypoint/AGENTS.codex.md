@@ -1,0 +1,95 @@
+# Project memory
+
+<!-- Skill-AWARE AMG activation block for OpenAI Codex. Codex HAS skills (.agents/skills),
+     subagents (TOML in .codex/agents), and reads AGENTS.md — but lacks Claude Code's
+     SessionStart/SessionEnd hooks, the /amg slash command, and the CLAUDE.md @import. So
+     the model drives the loop via skills + subagents, and lifecycle (heal at start,
+     consolidate at end) is loop discipline, not hooks. The installer writes this for
+     `--env codex` and renders the paths to the configured agent dir. NOTE: this mode is
+     not yet verified on a live Codex — Stage 19; stability is not guaranteed. -->
+
+## AMG — Associative Memory Graph
+
+This project uses AMG: a persistent, typed knowledge graph with hierarchical summaries
+and spreading-activation retrieval, stored under `.claude/amg/`. It lets you work on one
+part of the project in a clean context window while still seeing the strategic surround —
+purpose, related code, prior decisions — instead of loading the whole codebase.
+
+Paths below use `.claude` (the agent dir) and `CLAUDE.md` (this entry point) as the Claude
+Code defaults; here they are your configured names — skills live under `.claude/skills`,
+the graph under `.claude/amg`, and the **subagents are TOML files under `.codex/agents`**.
+Codex HAS skills and subagents, so use them; what it lacks versus Claude Code is the auto
+hooks, the `/amg` command, and the digest `@`-import — replaced here by loop discipline and
+reading the digest yourself.
+
+### Memory digest (read at session start)
+At the start of every session, **read `.claude/amg/digest.md`** — a small auto-generated
+block of the most salient standing decisions and open questions, refreshed by
+consolidation. Reading it surfaces the memory before any retrieval (the loop's main failure
+is memory that exists but is never consulted). It is empty until the first consolidation.
+
+### Activation gate
+Check whether `.claude/amg/config.yml` exists with `active: true`.
+- **Not present or `active: false`** → AMG is OFF. Behave normally; do not create the graph.
+- **Present and active** → AMG is ON. Follow the operating loop below.
+
+### Operations — skills + subagents, by intent
+Trigger by meaning and synonyms, not an exact command:
+
+| Operation | Skill | Subagents (TOML in `.codex/agents`) |
+|---|---|---|
+| Build / sync the graph | **amg-bootstrap** | amg-classifier, amg-builder, amg-synth |
+| Retrieve context | **amg-retrieve** | amg-retriever |
+| Consolidate memory | **amg-consolidate** | amg-consolidator |
+| Capture a note | `notes.py add` (direct) | — |
+| Repair the graph | `graph_store.py recover` + `verify --repair` (direct) | — |
+
+### Operating loop (when AMG is ON)
+There are no SessionStart/SessionEnd hooks here, so **you** run each step at the right moment.
+
+1. **Heal, then sync.** At session start, replay any unfinished write and check the store
+   (this is how a crash or interrupted session self-recovers):
+   ```
+   python .claude/skills/amg-bootstrap/scripts/graph_store.py recover
+   python .claude/skills/amg-bootstrap/scripts/graph_store.py verify --repair
+   ```
+   Then, if the source folders (`mirror_path` / `absorb_path`) may have changed — or it is
+   the first session — run the **amg-bootstrap** skill to build/sync the graph; it spawns
+   the builder/synth subagents for the semantic half. Building from empty and reconciling
+   are the same operation — crash-safe and idempotent.
+
+2. **Retrieve before you work.** For each task, FIRST assemble a context pack via the
+   **amg-retrieve** skill (it spawns amg-retriever), then read `.claude/amg/cache/pack.md`
+   and work from it. Re-run when the focus shifts. For code the pack gives `path:line`
+   pointers — edit the real file; the graph is not a copy of the code.
+
+3. **Capture as you go; consolidate at the end.** Capture decisions, conclusions, open
+   questions, and forward-looking plans with the safe note API — do NOT hand-edit `nodes/`:
+   ```
+   python .claude/skills/amg-bootstrap/scripts/notes.py add --type decision --summary "..." [--body "..."] [--tags "a,b"]
+   ```
+   (types: `note` / `decision` / `adr` / `open_question` / `plan`; cheap, transactional).
+   At session end, or before clearing context, run the **amg-consolidate** skill (it spawns
+   amg-consolidator) to fold weights, file the session's conclusions, and compact
+   over-budget branches. Conclusions that live only in chat are lost when context clears.
+
+### Where things are
+- The graph: `.claude/amg/nodes/` — the source of truth, one file per node — plus `work/`
+  (scratch), `journal/` (crash-recovery state), `archive/`, `sessions/`, `log.md` (the
+  action log), and `digest.md` (read above).
+- Activation / sources / tunables: `.claude/amg/config.yml`.
+- Your source folders (`mirror_path` / `absorb_path`) are **read-only** for memory upkeep —
+  never modify them as a side effect of maintaining the graph.
+- AMG's own skills, subagents, and scripts (`.claude/skills/amg-*`, the TOML in
+  `.codex/agents`) are infrastructure. Do **not** edit them as task work; report a bug to
+  the user instead, so the canonical, tested version stays authoritative.
+
+### If anything looks inconsistent
+Run, from the project root:
+```
+python .claude/skills/amg-bootstrap/scripts/graph_store.py recover
+python .claude/skills/amg-bootstrap/scripts/graph_store.py verify --repair
+python .claude/skills/amg-bootstrap/scripts/reconcile.py bootstrap .
+```
+This replays any unfinished write, clears a stale lock, and re-establishes equality with
+the code/docs on disk.

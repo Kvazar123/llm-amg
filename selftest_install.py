@@ -19,6 +19,7 @@ Run:  python selftest_install.py
 """
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -114,8 +115,14 @@ def test_agents_env():
         assert ".agents/skills" in entry and ".claude" not in entry, "rendered to .agents, no .claude"
         cmd = (t / ".agents/commands/amg.md").read_text(encoding="utf-8")
         assert ".agents/skills" in cmd and ".claude" not in cmd, cmd
+        # 1.32: the engine PROMPTS (SKILL.md, agents/*.md) are rendered too, not copied verbatim
+        smd = (t / ".agents/skills/amg-bootstrap/SKILL.md").read_text(encoding="utf-8")
+        assert ".agents/skills" in smd and ".claude" not in smd, "SKILL.md prompt rendered (1.32)"
+        amd = (t / ".agents/agents/amg-builder.md").read_text(encoding="utf-8")
+        assert ".agents/amg" in amd and ".claude" not in amd, "agent prompt rendered (1.32)"
+        assert _cfg(t, ".agents")["eval_gate"]["cases"].startswith(".agents/"), "eval_gate.cases rendered (1.32)"
         assert _cfg(t, ".agents")["agent_dir"] == ".agents", "agent_dir recorded"
-        print("PASS  install: .agents/AGENTS.md renders every path, no leftover .claude")
+        print("PASS  install: .agents renders AGENTS.md + command + SKILL.md + agent prompts + eval cases, no .claude")
     finally:
         shutil.rmtree(t, ignore_errors=True)
 
@@ -203,9 +210,9 @@ def test_project_only_global():
 def test_generic_env():
     t = Path(tempfile.mkdtemp(prefix="amg-inst9-"))
     try:
-        # any non-claude-code env (codex, qwen, ...) -> the portable skill-less AGENTS.md
-        # block, no Claude-Code-only hooks or /amg command
-        I.main(["--target", str(t), "--env", "codex", "--agent-dir", ".agents",
+        # a skill-less AGENTS.md env (Qwen Coder, ...) -> the portable block, no
+        # Claude-Code-only hooks or /amg command (codex is its own skill-AWARE mode now)
+        I.main(["--target", str(t), "--env", "generic", "--agent-dir", ".agents",
                 "--entrypoint", "AGENTS.md", "--mirror", "src", "--no-verify"])
         assert (t / ".agents/skills/amg-bootstrap/scripts/reconcile.py").exists(), "engine placed"
         entry = (t / "AGENTS.md").read_text(encoding="utf-8")
@@ -217,6 +224,76 @@ def test_generic_env():
         assert not (t / ".agents/commands").exists(), "no /amg command in a skill-less env"
         assert (t / ".agents/amg/config.yml").exists() and (t / ".agents/amg/digest.md").exists()
         print("PASS  install: --env generic writes the portable AGENTS.md block (no hooks/command)")
+    finally:
+        shutil.rmtree(t, ignore_errors=True)
+
+
+def test_codex_env():
+    t = Path(tempfile.mkdtemp(prefix="amg-codex-"))
+    try:
+        # codex is skill-AWARE: skills in .agents/skills, TOML subagents in .codex/agents,
+        # a skill-aware AGENTS.md block, NO Claude hooks/command. agent_dir defaults to .agents.
+        I.main(["--target", str(t), "--env", "codex", "--mirror", "src", "--no-verify"])
+        assert (t / ".agents/skills/amg-bootstrap/scripts/reconcile.py").exists(), "skills in .agents"
+        assert not (t / ".agents/agents").exists(), "codex uses TOML subagents, not .md agents"
+        toml = (t / ".codex/agents/amg-builder.toml").read_text(encoding="utf-8")
+        assert 'name = "amg-builder"' in toml and "developer_instructions" in toml, toml
+        assert ".agents/amg" in toml and ".claude" not in toml, "prompt + description rendered to .agents"
+        entry = (t / "AGENTS.md").read_text(encoding="utf-8")
+        assert I.BEGIN in entry and ".agents/skills" in entry and ".claude" not in entry
+        assert "skill" in entry.lower() and ".codex/agents" in entry, "codex block is skill-aware"
+        assert not (t / ".agents/settings.json").exists() and not (t / ".agents/commands").exists()
+        assert (t / ".agents/amg/config.yml").exists() and (t / ".agents/amg/digest.md").exists()
+        # default template models are Claude aliases -> model omitted for codex; set a real
+        # codex model + level and reinstall -> both render into the TOML (max clamps to xhigh)
+        cfgf = t / ".agents/amg/config.yml"
+        cfgf.write_text(re.sub(r"(?m)^  synthesis:.*$",
+                               "  synthesis: {model: gpt-5.5, reasoning_effort: max}",
+                               cfgf.read_text(encoding="utf-8")), encoding="utf-8")
+        I.main(["--target", str(t), "--env", "codex", "--mirror", "src", "--no-verify"])
+        synth = (t / ".codex/agents/amg-synth.toml").read_text(encoding="utf-8")
+        synth_head = synth.split("developer_instructions")[0]
+        assert 'model = "gpt-5.5"' in synth_head, synth_head
+        assert 'model_reasoning_effort = "xhigh"' in synth_head, "max clamps to xhigh in Codex"
+        assert len(list((t / ".codex/agents").glob("amg-*.toml"))) == 5, "reinstall: no dup TOML"
+        builder_head = (t / ".codex/agents/amg-builder.toml").read_text(encoding="utf-8").split("developer_instructions")[0]
+        assert "model =" not in builder_head, "a Claude-alias default is omitted for codex"
+        # uninstall clears the codex TOML subagents
+        I.main(["--target", str(t), "--env", "codex", "--uninstall"])
+        assert not list((t / ".codex/agents").glob("amg-*.toml")), "uninstall clears codex TOML"
+        print("PASS  install: --env codex -> skills + TOML subagents (model/effort) + skill-aware block")
+    finally:
+        shutil.rmtree(t, ignore_errors=True)
+
+
+def test_models_render():
+    t = Path(tempfile.mkdtemp(prefix="amg-inst-models-"))
+    try:
+        def fm(agent):
+            txt = (t / ".claude/agents" / agent).read_text(encoding="utf-8")
+            return yaml.safe_load(re.match(r"(?s)^---\n(.*?)\n---", txt).group(1))
+        # fresh install renders the template's (flat) models into agent frontmatter,
+        # by the role -> agent map (discovery/module_summary/synthesis)
+        I.main(["--target", str(t), "--mirror", "src", "--no-verify"])
+        assert fm("amg-builder.md")["model"] == "sonnet", "module_summary -> amg-builder"
+        assert fm("amg-synth.md")["model"] == "opus", "synthesis -> amg-synth"
+        assert fm("amg-classifier.md")["model"] == "haiku", "discovery -> amg-classifier"
+        assert "effort" not in fm("amg-builder.md"), "flat role: no effort field added"
+        # switch synthesis to the structured form (with a Codex-only level) and reinstall:
+        # model passes through verbatim, reasoning_effort clamps to the Claude Code set
+        cfgf = t / ".claude/amg/config.yml"
+        c = re.sub(r"(?m)^  synthesis:.*$",
+                   "  synthesis: {model: claude-opus-4-8, reasoning_effort: minimal}",
+                   cfgf.read_text(encoding="utf-8"))
+        cfgf.write_text(c, encoding="utf-8")
+        I.main(["--target", str(t), "--mirror", "src", "--no-verify"])
+        synth = fm("amg-synth.md")
+        assert synth["model"] == "claude-opus-4-8", synth
+        assert synth["effort"] == "low", "minimal clamps to low in Claude Code"
+        cons = fm("amg-consolidator.md")
+        assert cons["model"] == "claude-opus-4-8" and cons["effort"] == "low", cons
+        assert fm("amg-builder.md")["model"] == "sonnet", "untouched role kept after reinstall"
+        print("PASS  install: models block renders model + clamped effort into agent frontmatter")
     finally:
         shutil.rmtree(t, ignore_errors=True)
 
@@ -251,5 +328,7 @@ if __name__ == "__main__":
     test_build()
     test_project_only_global()
     test_generic_env()
+    test_codex_env()
+    test_models_render()
     test_uninstall()
     print("\nALL INSTALL CHECKS PASSED")

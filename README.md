@@ -4,7 +4,7 @@
 
 > Documentation: [Theory](docs/en/THEORY.md) · [Architecture](docs/en/architecture/README.md) · [Guide](docs/en/GUIDE.md) · [Install](INSTALL.md) · [Roadmap](docs/en/architecture/11-roadmap.md) · Русский: [README_RU.md](README_RU.md)
 
-> ⚠️ **TESTED ON CLAUDE CODE ONLY.** The installer can also set the memory up in other agent environments (Codex, Qwen Coder, and others that read `AGENTS.md`) via a portable skill-less block. But **functionality and stability on Codex and any other non-Claude-Code environment are NOT yet tested or guaranteed** — all testing so far was on Claude Code. Verification of these environments is roadmap Stage 19.
+> ⚠️ **TESTED ON CLAUDE CODE ONLY.** The installer can also set the memory up in other agent environments: **Codex** — with skills and TOML subagents (`--env codex`, the `.agents`/`.codex` directories); other AGENTS.md agents (Qwen Coder, etc.) — via a portable skill-less block (`--env generic`). But **functionality and stability on any non-Claude-Code environment are NOT yet tested or guaranteed** — all testing so far was on Claude Code. Verification of these environments is roadmap Stage 19.
 
 ## What it is
 
@@ -45,40 +45,67 @@ Memory is tuned cautiously, in a "quality first" spirit:
 - **Compaction is idle by default** — it compresses nothing while a branch is within budget; when it does compress, it passes an automatic recall check (an eval guard measures recall on a graph clone before and after and rejects a drop) and archives the originals.
 - **Embeddings are optional, light enrichment** over BM25, not a replacement; with no backend installed, retrieval stays purely lexical.
 
-## Installing and activating
+## Installation
 
-The engine (the `agents/` and `skills/` directories plus the activation block) installs **locally** — into a single project's `<project>/.claude/` — or **globally**, one engine for all projects, in `~/.claude/`. Either way the **graph is always local**: it lives in `<project>/.claude/amg/`, because memory belongs to a specific project and is not shared across projects.
+The engine (`agents/` + `skills/` + the activation block) installs **locally** (into a single project's `<project>/.claude/`) or **globally** (one engine for all projects, in `~/.claude/`); the **graph is always local** — it lives in `<project>/.claude/amg/`, because memory belongs to a specific project. The entry point is the root `CLAUDE.md`: the AMG block is appended to its end between the markers `<!-- AMG:BEGIN -->` and `<!-- AMG:END -->`, your instructions stay above it, and a reinstall replaces only the block. Memory is turned on by the presence of `.claude/amg/config.yml` with `active: true`. The names `.claude`/`CLAUDE.md` are the Claude Code defaults; other environments substitute their own (for Codex — `.agents`/`AGENTS.md`, see "Other environments" below).
 
-The entry point is the project's root **`CLAUDE.md`**: a small file the model reads at the start of every session. The AMG block is **appended to its end** between the markers `<!-- AMG:BEGIN -->` and `<!-- AMG:END -->`, so your own instructions stay above it and a reinstall replaces only that block. Memory is turned on by the presence of `.claude/amg/config.yml` with `active: true`.
-
-The names `.claude` and `CLAUDE.md` are the defaults **for Claude Code**. The engine itself is environment-agnostic: in other agent environments (e.g. OpenAI Codex) their names are substituted — the agent directory `.agents` and the entry point `AGENTS.md`. The commands and paths below use `.claude`/`CLAUDE.md` as an illustration of the default.
-
-The **installer** `install.py` surveys the key settings (local or global; agent directory and entry point; mirror and absorb paths; what to ignore; working language; embedding backend; session policy; tier budgets; automation; whether to activate memory) and sets everything up: it places the engine, injects the block between the markers, writes `config.yml`, installs dependencies, and verifies the store. The model drives it from "install AMG per INSTALL.md," or you run it directly. A reinstall replaces only the block and the `amg-*` engine, leaving your instructions and graph untouched; uninstall is provided too (optionally with the graph). The full procedure, flags, and modes are in [INSTALL.md](INSTALL.md).
-
-Main `config.yml` keys: `active` (on/off) and `automation` (how autonomous it is); `working_language`; the sources `mirror_path` / `absorb_path`; what to ignore — `exclude` / `mirror_exclude` / `absorb_exclude` / `respect_gitignore`; `session_policy`; the tier budgets `retrieval.token_budget`; the semantic seed `retrieval.embeddings`; and the environment names `agent_dir` / `entrypoint`. Full reference — [09-config](docs/en/architecture/09-config.md).
-
-## Quick start
-
-From install to memory's first answer is five steps; the manual scripts of earlier versions are gone — the model does the work itself.
-
-**Step 1 — environment.** You need Python 3. The one mandatory dependency is `pyyaml` (the rest is optional and installed for you):
+**1. Dependencies.** You need Python 3. The one mandatory dependency is `pyyaml`; everything else is optional (embeddings, PDF/DOCX/XLSX extraction, tree-sitter) and installed as needed:
 ```bash
-python3 -m pip install pyyaml
+python3 -m pip install pyyaml                  # mandatory
+python3 -m pip install -r requirements.txt     # everything optional at once (if you like)
 ```
 
-**Step 2 — what you feed memory.** Decide which folders memory will keep (the installer will ask): **mirrors** (`mirror_path`) — what you edit (code, docs); **absorb** (`absorb_path`) — one-off material (logs, dumps, exported dialogues). Folder names are arbitrary — memory detects each file's type itself.
+**2. Installation — two ways.** Both do the same thing; pick whichever suits you.
 
-**Step 3 — install.** Tell the model in Claude Code: **"install AMG per INSTALL.md."** It asks a few questions (local or global, the sources from step 2, working language, embeddings, automation, what to ignore) and sets everything up. At the end it asks whether to **activate memory** — say yes; you can build the graph right away too. (To run it without the model: `python install.py …`, see [INSTALL.md](INSTALL.md).)
+*Via the model (simpler).* Tell the model in Claude Code:
 
-**Step 4 — check.** Look at the state and meet the commands at the same time:
+> **install AMG per INSTALL.md**
+
+The model asks a few questions (local/global; agent directory and entry point; mirror and absorb paths; working language; embeddings; automation; what to ignore; whether to activate memory) and calls the installer for you.
+
+*By command.* If you'd rather set everything yourself:
+```bash
+python install.py --target . --scope local \
+    --mirror src,doc --absorb data \
+    --set working_language=ru --set active=true
+```
+The full list of flags and modes (reinstall, uninstall, `--env`, `--build`) is in [INSTALL.md](INSTALL.md).
+
+**3. What's in `config.yml`.** The installer writes the keys for you; here are the main ones and what they mean:
+```yaml
+active: true                 # the master switch for memory (/amg on · off)
+automation: true             # memory runs the loop and session hooks itself
+working_language: ru         # the language of summaries and notes
+mirror_path: [src, doc]      # live projection: you edit a file, the graph follows it
+absorb_path: [data]          # ingest once (the source may be deleted later)
+models:                      # model strength per role; rendered into the subagents
+  synthesis: {model: opus, reasoning_effort: high}
+retrieval:
+  embeddings: {enabled: off} # semantic seeding (optional; needs a backend)
+agent_dir: .claude           # the environment's directory (.agents for Codex, etc.)
+entrypoint: CLAUDE.md        # the entry-point file (AGENTS.md for other envs)
+```
+The full reference for every key — [09-config](docs/en/architecture/09-config.md).
+
+**4. Activation ≠ building the graph.** `/amg on` (or agreeing during install) only raises the `active` flag; the graph is built by the loop — in a new session before the first task (with `automation: true`) or right away via `/amg sync`. You can choose to build immediately during install (`--build`).
+
+**5. Other environments (`--env`).** Portability is more than renaming a folder: slash commands, hooks, and the digest `@`-import are Claude Code mechanisms, so the installer deploys a different mechanism per environment:
+- **Codex** (`--env codex`) — with skills and **TOML subagents** in `.codex/agents` (with a per-role `model` and reasoning effort from the `models` block), a skill-aware `AGENTS.md` block, and no Claude hooks or command;
+- **other AGENTS.md environments** (`--env generic`, e.g. Qwen Coder) — a portable block **with no skills**, the same loop via direct script calls (the model reads `agents/*.md` as guidance).
+
+Baseline functionality does not depend on the environment; the set of conveniences does. **These modes are untested** on any non-Claude-Code environment so far — all testing was on Claude Code (verification: roadmap Stage 19).
+
+## First run
+
+From install to memory's first answer is a couple of steps; no manual scripts — the model does the work itself.
+
+**Check.** Look at the state and meet the commands at the same time:
 ```
 /amg status
 ```
 One screen: whether memory is active, graph size, queue, recent operations. Every operation is available through the single `/amg <verb>` command — or the same words in an ordinary request.
 
-**Step 5 — work.** From here, **just ask the model anything about your project** — it assembles the right context from the graph itself (the strategic surround plus the specifics) and files conclusions as it goes. No manual build or retrieval commands.
-
-> **`/amg on` ≠ building the graph.** Activation only turns memory on; the graph is built by the activation loop. If you didn't choose to build during install, the graph builds **in a new session** before the first task (with automation on) or right away via `/amg sync` (or the words "build / sync / index the graph"). So after activating, don't wait for it to run in the same session — start a new one or say `sync`.
+**Work.** From here, **just ask the model questions about your project** — it assembles the right context from the graph itself (the strategic surround plus the specifics) and files conclusions as it goes. If you didn't choose to build during install, the graph builds in a new session before the first task (with automation on) or right away via `/amg sync` (the words "build / sync the graph").
 
 ## Sources: mirror and absorb
 
@@ -88,6 +115,8 @@ What feeds memory is listed in `config.yml` under two keys; each file's type (co
 - **`absorb_path` — one-off material you don't edit** (chat logs, data dumps, third-party documents). It is **ingested once** into independent nodes, and deleting the source does not erase the knowledge — what was absorbed no longer depends on it. This key is **optional**: you can run mirrors only.
 
 **A trick for important material.** Absorption keeps a distillate (the gist, not every word), so if you delete an absorbed source only the summary remains. When you need guaranteed access to **all** the detail, declare the material a **mirror** even without editing it: the graph then holds summaries and pointers, while the full text is always reachable via the link in the file itself (the price: the source must stay on disk). This is especially useful for valuable conversations — keeping them as a mirror is safer than absorbing them.
+
+**What gets ignored.** Three git-independent layers filter what enters the graph: the built-in list (caches, dependencies, the agent dir), the repo's `.gitignore` (toggled by `respect_gitignore`), and config globs — the **global `exclude`** plus the per-intent `mirror_exclude` / `absorb_exclude`. An explicitly listed source beats `.gitignore`. Details — in the [guide](docs/en/GUIDE.md).
 
 ## Saving sessions
 
@@ -119,7 +148,7 @@ Control verbs (`status`/`on`/`off`/`repair`) are run by a helper script; work ve
 
 **A digest in every session.** The loop's main failure is "the memory exists but was never consulted." So consolidation keeps a small `digest.md` next to the entry point — 5–10 of the most salient decisions and open questions — loaded into **every** session: the essentials are visible at once, before the first retrieval.
 
-> Portability is more than renaming a folder: slash commands, hooks, and the digest `@`-import are Claude Code mechanisms, and other environments (Codex, Qwen Coder, and others that read `AGENTS.md`) may not have them. So the installer (`--env generic`) injects a **separate block with no skills** (`AGENTS.md`): the same loop via direct script calls, no hooks/commands (the model reads `agents/*.md` as guidance). Baseline functionality does not depend on the environment; the set of conveniences does. **But** this mode is **untested and not guaranteed stable** on Codex / Qwen Coder or any other non-Claude-Code environment — tested only on Claude Code (see the note at the top; verification: Stage 19).
+> The `SessionStart`/`SessionEnd` hooks, the `/amg` slash command, and the digest `@`-import are Claude Code mechanisms; in other environments what gets deployed depends on the `--env` chosen at install (Codex / generic) — see "Installation", "Other environments."
 
 ## Optional dependencies
 

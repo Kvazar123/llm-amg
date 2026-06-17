@@ -409,6 +409,14 @@ def case_root_resolution(proj: Path) -> None:
     # 3. config search upward from inside the project finds .claude/amg
     assert gs.resolve_amg_root(start=proj / "src" / "core") == \
         (proj / ".claude" / "amg").resolve()
+    # 3b. the .agents preset is probed too (1.32): a non-.claude project resolves
+    ag = Path(tempfile.mkdtemp(prefix="amg-agents-"))
+    try:
+        (ag / ".agents" / "amg").mkdir(parents=True)
+        (ag / ".agents" / "amg" / "config.yml").write_text("active: true\n", encoding="utf-8")
+        assert gs.resolve_amg_root(start=ag) == (ag / ".agents" / "amg").resolve()
+    finally:
+        shutil.rmtree(ag, ignore_errors=True)
     # 4/5. with no config anywhere up from a bare dir: the engine's own amg/
     # wins IF it exists (dev layout), else the default <start>/.claude —
     # assert whichever state this environment is in (assumes no global AMG
@@ -421,7 +429,7 @@ def case_root_resolution(proj: Path) -> None:
             (gs.resolve_amg_root(start=bare), expected)
     finally:
         shutil.rmtree(bare, ignore_errors=True)
-    print("PASS  root: cli > env > config-upward > engine dir > default .claude")
+    print("PASS  root: cli > env > config-upward (.claude/.agents) > engine dir > default .claude")
 
 
 if __name__ == "__main__":
