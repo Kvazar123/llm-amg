@@ -13,17 +13,26 @@ README.md / README_RU.md     project front page (en / ru)
 INSTALL.md                   installation (manual for now; auto-installer — Stage 10)
 CLAUDE.md                    this file: development rules
 config.yml                   config template (copied by the installer)
+install.py                   the installer: place engine, render templates + prompts, inject block, write config
+requirements.txt             optional dependency groups (base / embeddings / text / treesitter)
+selftest_install.py          headless installer selftest (local/global, reinstall, uninstall, env, models)
 entrypoint/CLAUDE.md         memory activation block template — NOT executed here
+entrypoint/AGENTS.md         skill-less activation block template (installer --env generic)
+entrypoint/AGENTS.codex.md   skill-aware Codex activation block template (installer --env codex)
+entrypoint/settings.json     session hooks template (rendered into the agent dir by the installer)
+entrypoint/commands/amg.md   /amg slash-command template (rendered by the installer)
 skills/amg-*/                engine skills; core scripts in skills/*/scripts/*.py
 agents/amg-*.md              subagent prompts
 docs/ru/THEORY.md            theory and concept (read section by section)
 docs/ru/GUIDE.md             user guide
 docs/ru/architecture/01–11   architecture; 11-roadmap.md is the main working document
+docs/ru/architecture/12-install.md  installer architecture (engine/graph planes, env modes, rendering)
 docs/en/                     translations (Stage 18)
 amg/                         data from local runs; gitignored, never commit
 STATUS.md                    short work-state bridge between sessions
 VERSION                      current SemVer version (bumped only at releases)
 CHANGELOG.md                 release history (Keep a Changelog format)
+LICENSE                      PolyForm Strict 1.0.0 — noncommercial free; commercial/derivatives by permission
 ../amg-testbed/              sandbox for integration checks (outside the repo)
 ```
 
