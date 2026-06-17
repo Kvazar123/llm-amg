@@ -103,6 +103,32 @@ def test_rst(tmp):
     print("PASS  rst: underline headings -> sections (+ preamble); none -> file unit")
 
 
+def test_recursive_json(tmp):
+    import json as _json
+    flat = tmp / "flat.json"
+    flat.write_text(_json.dumps({"name": "svc", "port": 8080}), encoding="utf-8")
+    fu = ES._data_units(flat, "flat.json", "mirror")
+    assert {u["qualname"] for u in fu} == {"name", "port"}, fu       # classic one-record-per-entry
+    assert all(u["kind"] == "record" for u in fu), fu
+    nested = {"service": "billing",
+              "config": {"endpoints": {f"ep{i}": {"path": f"/p{i}", "method": "GET"}
+                                       for i in range(8)}}}
+    nf = tmp / "nested.json"
+    nf.write_text(_json.dumps(nested), encoding="utf-8")
+    nu = ES._data_units(nf, "nested.json", "mirror", recurse_min=50, max_depth=5)
+    quals = {u["qualname"] for u in nu}
+    assert "service" in quals, quals                                 # small scalar stays a record
+    assert any(q.startswith("config.endpoints.ep") for q in quals), quals   # descended by path
+    assert "config" not in quals, quals                              # big container not emitted whole
+    fl = tmp / "ids.json"
+    fl.write_text(_json.dumps({"ids": list(range(1000))}), encoding="utf-8")
+    flu = ES._data_units(fl, "ids.json", "mirror", recurse_min=50)
+    assert len(flu) == 1 and flu[0]["qualname"] == "ids", flu        # flat scalar list NOT exploded
+    capped = ES._data_units(nf, "nested.json", "mirror", recurse_min=50, max_depth=5, cap=3)
+    assert len(capped) <= 3, capped                                  # node cap honored
+    print("PASS  recursive-json: large nests split by key path; flat/small kept; cap honored")
+
+
 def test_reconcile_buckets():
     proj = Path(tempfile.mkdtemp(prefix="amg-chunk-rc-"))
     try:
@@ -139,6 +165,7 @@ if __name__ == "__main__":
         test_csv(tmp)
         test_log(tmp)
         test_rst(tmp)
+        test_recursive_json(tmp)
         test_reconcile_buckets()
         print("\nALL CHUNKER CHECKS PASSED")
     finally:

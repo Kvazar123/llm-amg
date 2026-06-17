@@ -79,6 +79,18 @@ exclude: []
 #   - "*.tmp"
 
 # -----------------------------------------------------------------------------
+# Chunking tunables for unstructured / structured input (all optional; defaults
+# shown). A JSON/YAML value is one record unless it is a large NESTED container,
+# which is split into sub-records by key path so deep structure is not lost; a
+# flat or small value keeps the one-record shape. NDJSON is one record per line.
+# A .log groups into bounded episode blocks. See 04-ingest / 09-config.
+# -----------------------------------------------------------------------------
+json_max_depth: 4              # how deep recursive JSON descends
+json_recurse_min_chars: 2048   # only descend into a container whose JSON exceeds this
+json_max_nodes: 500            # cap on record units per JSON / NDJSON file
+log_group_lines: 50            # lines per .log episode block
+
+# -----------------------------------------------------------------------------
 # Optional, for the most out of non-Python code. If `tree-sitter-language-pack`
 # is installed, other languages get function-level units + call edges; if not,
 # Python still works fully (stdlib ast) and other code becomes one unit per file.

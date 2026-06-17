@@ -18,7 +18,7 @@ Pipeline per file:
        rst         adornments    -> one unit per underline-headed section
        text        paragraphs    -> one unit per blank-line block
        log         episodes      -> one block per bounded window of timestamped lines
-       json/yaml   records       -> one unit per top-level entry
+       json/yaml   records       -> one unit per entry; large nests split by key path
        ndjson      records       -> one unit per JSON line
        csv/tsv     table         -> one structural unit (headers + sample rows)
        pdf/docx/xlsx/pptx         -> page / section / sheet / slide   (OPTIONAL libs)
@@ -666,35 +666,92 @@ def _log_units(path: Path, rel: str, policy: str, group_lines: int = 50) -> List
     return units or [_file_unit(rel, "doc", policy, text, "log")]
 
 
-def _data_units(path: Path, rel: str, policy: str) -> List[dict]:
+def _json_qual(path: str) -> str:
+    """A stable, <=48-char qualname for a nested JSON key path. A long path keeps a
+    readable head plus a hash of the FULL path, so distinct deep paths never collide
+    (unlike a plain truncation) and the id stays stable across runs regardless of entry
+    order."""
+    return (path if len(path) <= 48
+            else path[:39] + "-" + hashlib.sha256(path.encode()).hexdigest()[:8])
+
+
+def _has_child_container(v: object) -> bool:
+    """True if a dict/list holds at least one nested dict/list. A large but FLAT
+    container (e.g. a list of 10k numbers) has none, so it is kept as one record rather
+    than exploded into a node per scalar — recursion targets nested STRUCTURE."""
+    if isinstance(v, dict):
+        return any(isinstance(x, (dict, list)) for x in v.values())
+    if isinstance(v, list):
+        return any(isinstance(x, (dict, list)) for x in v)
+    return False
+
+
+def _json_descend(rel: str, policy: str, parent: str, container: object, depth: int,
+                  max_depth: int, recurse_min: int, units: List[dict], cap: int) -> None:
+    """Emit record units for the children of a large nested container, recursing into
+    children that are themselves large nested structures (depth-limited). A child that
+    is a leaf or a small/flat container becomes one record keyed by its full path
+    (a.b.c / a.b[0]). Bounded by `cap` total units."""
+    pairs = (container.items() if isinstance(container, dict)
+             else enumerate(container) if isinstance(container, list) else [])
+    for k, v in pairs:
+        if len(units) >= cap:
+            return
+        path = f"{parent}.{k}" if isinstance(container, dict) else f"{parent}[{k}]"
+        if (isinstance(v, (dict, list)) and depth < max_depth and _has_child_container(v)
+                and len(json.dumps(v, ensure_ascii=False)) > recurse_min):
+            _json_descend(rel, policy, path, v, depth + 1, max_depth, recurse_min, units, cap)
+        else:
+            qual = _json_qual(path)
+            frag = json.dumps(v, ensure_ascii=False, sort_keys=True)
+            units.append({"id": f"data:{rel}::{qual}", "kind": "record", "source_path": rel,
+                          "category": "data", "policy": policy, "qualname": qual,
+                          "lineno": 1, "lang": "json", "content_sha": _sha(frag)})
+
+
+def _data_units(path: Path, rel: str, policy: str, max_depth: int = 4,
+                recurse_min: int = 2048, cap: int = 500) -> List[dict]:
+    """JSON/YAML records. Each top-level entry is one record, EXCEPT a large nested
+    container (serialized JSON over `recurse_min`, holding nested structure) is split
+    into sub-records by key path so deep structure is not lost (recursive chunker,
+    Stage 11). A small or flat value keeps the original one-record-per-entry shape and
+    hash, so ordinary data files are unchanged. Total units per file are capped at
+    `cap` (json_max_nodes); `max_depth` bounds recursion. A scalar root or parse error
+    falls back to one file unit."""
     text = path.read_text(encoding="utf-8", errors="replace")
     try:
         obj = yaml.safe_load(text)            # parses JSON and YAML
     except Exception:
         return [_file_unit(rel, "data", policy, text)]
-    units = []
     if isinstance(obj, dict):
-        items = list(obj.items())
+        items: List[Tuple[object, object]] = list(obj.items())
     elif isinstance(obj, list):
         items = list(enumerate(obj))
     else:
         return [_file_unit(rel, "data", policy, text)]
-    for key, val in items[:500]:
-        frag = json.dumps({str(key): val}, ensure_ascii=False, sort_keys=True)
-        units.append({"id": f"data:{rel}::{str(key)[:48]}", "kind": "record",
-                      "source_path": rel, "category": "data", "policy": policy,
-                      "qualname": str(key)[:48], "lineno": 1, "lang": "json",
-                      "content_sha": _sha(frag)})
+    units: List[dict] = []
+    for key, val in items:
+        if len(units) >= cap:
+            break
+        if (isinstance(val, (dict, list)) and max_depth > 1 and _has_child_container(val)
+                and len(json.dumps(val, ensure_ascii=False)) > recurse_min):
+            _json_descend(rel, policy, str(key), val, 2, max_depth, recurse_min, units, cap)
+        else:
+            frag = json.dumps({str(key): val}, ensure_ascii=False, sort_keys=True)
+            units.append({"id": f"data:{rel}::{str(key)[:48]}", "kind": "record",
+                          "source_path": rel, "category": "data", "policy": policy,
+                          "qualname": str(key)[:48], "lineno": 1, "lang": "json",
+                          "content_sha": _sha(frag)})
     return units or [_file_unit(rel, "data", policy, text)]
 
 
-def _ndjson_units(path: Path, rel: str, policy: str) -> List[dict]:
+def _ndjson_units(path: Path, rel: str, policy: str, cap: int = 500) -> List[dict]:
     """Newline-delimited JSON (.ndjson): one `record` unit per line, since each line is
     an independent JSON value (yaml.safe_load, used by _data_units, cannot read this
     line-oriented form). A line's own id-ish field (id/key/name/_id) gives a stable
     qualname when present, else the 1-based line number (L{n}); lineno is the real
     source line. Unparseable lines are skipped; a file with none falls back to one file
-    unit. Capped at the first 500 records, like _data_units."""
+    unit. Capped at the first `cap` records (json_max_nodes), like _data_units."""
     text = path.read_text(encoding="utf-8", errors="replace")
     units: List[dict] = []
     seen: Dict[str, int] = {}
@@ -722,7 +779,7 @@ def _ndjson_units(path: Path, rel: str, policy: str) -> List[dict]:
         units.append({"id": f"data:{rel}::{qual}", "kind": "record", "source_path": rel,
                       "category": "data", "policy": policy, "qualname": qual,
                       "lineno": i, "lang": "ndjson", "content_sha": _sha(frag)})
-        if n >= 500:
+        if n >= cap:
             break
     return units or [_file_unit(rel, "data", policy, text, "ndjson")]
 
@@ -988,6 +1045,9 @@ def extract(project_root: Path, config: dict, amg_root: Optional[Path] = None) -
     ignore_dirs = _effective_ignore_dirs(amg_root)
     overrides = load_overrides(amg_root)
     log_lines = int(config.get("log_group_lines", 50) or 50)   # episode window for .log
+    j_depth = int(config.get("json_max_depth", 4) or 4)        # recursive-JSON tunables
+    j_min = int(config.get("json_recurse_min_chars", 2048) or 2048)
+    j_cap = int(config.get("json_max_nodes", 500) or 500)
     units: List[dict] = []
     for base_rel, policy in resolve_sources(config):
         extra = _excludes_for_policy(config, policy)
@@ -1009,6 +1069,11 @@ def extract(project_root: Path, config: dict, amg_root: Optional[Path] = None) -
                 units += got
             elif chunker == "log":
                 units += _log_units(path, rel, policy, group_lines=log_lines)
+            elif chunker == "json":
+                units += _data_units(path, rel, policy, max_depth=j_depth,
+                                     recurse_min=j_min, cap=j_cap)
+            elif chunker == "ndjson":
+                units += _ndjson_units(path, rel, policy, cap=j_cap)
             else:
                 units += CHUNKERS[chunker](path, rel, policy)
     units += _extract_sessions(project_root, config, amg_root)   # opted-in store source
