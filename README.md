@@ -178,3 +178,7 @@ Version 1.0 fixes a stable data schema and a working install; later stages are a
 - [Guide](docs/en/GUIDE.md) — how to use every capability.
 - [Install](INSTALL.md) — install with the installer (model-driven or by command), reinstall, uninstall.
 - [Roadmap](docs/en/architecture/11-roadmap.md) — what's implemented and what's ahead.
+
+## License
+
+AMG is licensed under the **PolyForm Strict License 1.0.0**: noncommercial use is free, but with **no modification, derivative works, or redistribution**; any **commercial** use, as well as any modification or derivative works, requires a separate license from the author (`reghost200@gmail.com`). The software is provided "as is" and used at your own risk. Full text and terms — [LICENSE](LICENSE).
