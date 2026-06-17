@@ -29,6 +29,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import extract_structure as ES
+import reconcile as rc
 
 
 def _mk(proj: Path, rel: str, text: str = "x\n") -> None:
@@ -150,10 +151,55 @@ def test_by_source_stats():
         shutil.rmtree(proj, ignore_errors=True)
 
 
+def test_overlap_warns():
+    """1.29: a file under both mirror_path and absorb_path is flagged, not resolved
+    silently — in --stats (overlapping_sources) and in reconcile.plan (policy_conflicts)."""
+    proj = Path(tempfile.mkdtemp(prefix="amg-ign6-"))
+    try:
+        amg = proj / ".claude" / "amg"
+        amg.mkdir(parents=True)
+        amg.joinpath("config.yml").write_text(            # '.' (mirror) overlaps data (absorb)
+            "active: true\nworking_language: en\nmirror_path: ['.']\nabsorb_path: [data]\n",
+            encoding="utf-8")
+        _mk(proj, "app.py", "def f():\n    return 1\n")
+        _mk(proj, "data/d.json", "42\n")                  # scalar -> a single file-level unit
+        cfg = ES.load_config(amg)
+        stats = ES._stats(proj, cfg, amg)
+        assert "data/d.json" in stats.get("overlapping_sources", []), stats
+        assert "overlap_hint" in stats, stats
+        summ = rc.plan(proj, amg)
+        conflicts = summ.get("policy_conflicts", [])
+        assert any("data/d.json" in c["id"] and set(c["policies"]) == {"absorb", "mirror"}
+                   for c in conflicts), summ
+        print("PASS  ignore: a file under both mirror_path and absorb_path is flagged (1.29)")
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+
+def test_missing_in_plan():
+    """1.30: a non-existent source path is reported by plan (not just --stats), so a typo
+    in mirror_path does not masquerade as 'graph built, added: 0'."""
+    proj = Path(tempfile.mkdtemp(prefix="amg-ign7-"))
+    try:
+        amg = proj / ".claude" / "amg"
+        amg.mkdir(parents=True)
+        amg.joinpath("config.yml").write_text(
+            "active: true\nworking_language: en\nmirror_path: [src, nope]\n", encoding="utf-8")
+        _mk(proj, "src/keep.py", "def f():\n    return 1\n")
+        summ = rc.plan(proj, amg)
+        assert "nope" in summ.get("missing_sources", []), summ
+        assert "src" not in summ.get("missing_sources", []), summ
+        print("PASS  ignore: a non-existent source path is reported in plan (1.30)")
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+
 if __name__ == "__main__":
     test_per_intent()
     test_explicit_source_beats_gitignore()
     test_respect_gitignore_off()
     test_agent_dir_not_indexed()
     test_by_source_stats()
+    test_overlap_warns()
+    test_missing_in_plan()
     print("\nALL IGNORE CHECKS PASSED")

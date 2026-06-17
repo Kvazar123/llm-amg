@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import graph_store as gs
-from extract_structure import extract, load_config
+from extract_structure import extract, load_config, resolve_sources, detect_policy_conflicts
 
 try:
     import yaml
@@ -119,7 +119,8 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
     store.init()
 
     config = load_config(amg_root)
-    units = {u["id"]: u for u in extract(project_root, config, amg_root)}
+    raw_units = extract(project_root, config, amg_root)
+    units = {u["id"]: u for u in raw_units}
     summary = {"added": 0, "changed": 0, "moved": 0, "deleted": 0, "unchanged": 0,
                "requeued_stale": 0, "pointer_refreshed": 0}
     queue: List[dict] = []
@@ -270,6 +271,12 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
                              json.dumps({"generated": _now(), "units": queue},
                                         ensure_ascii=False, indent=2))
 
+    conflicts = detect_policy_conflicts(raw_units)        # 1.29: mirror/absorb overlap
+    if conflicts:
+        summary["policy_conflicts"] = conflicts[:20]
+    missing = [p for p, _ in resolve_sources(config) if not (project_root / p).exists()]
+    if missing:                                           # 1.30: a typo'd path is visible in plan
+        summary["missing_sources"] = missing
     summary["queued_for_semantic"] = len(queue)
     return summary
 

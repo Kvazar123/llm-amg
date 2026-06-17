@@ -139,6 +139,21 @@ def resolve_sources(config: dict) -> List[Tuple[str, str]]:
     return out
 
 
+def detect_policy_conflicts(units: List[dict]) -> List[dict]:
+    """Unit ids produced under MORE THAN ONE policy — a file that falls under two source
+    roots of different intent (e.g. mirror_path: . and absorb_path: data; audit 1.29).
+    The dedup in reconcile.plan keeps the LAST source in resolve_sources order
+    (mirror -> absorb -> absorb_once), so the most-preserving policy wins; this surfaces
+    the overlap so the choice is never silent. Returns [{id, policies:[...]}], sorted."""
+    pols: Dict[str, set] = {}
+    for u in units:
+        p = u.get("policy")
+        if p:
+            pols.setdefault(u["id"], set()).add(p)
+    return [{"id": uid, "policies": sorted(ps)}
+            for uid, ps in sorted(pols.items()) if len(ps) > 1]
+
+
 # --------------------------------------------------------------------------- #
 # Ignore (.gitignore + defaults) and file walking
 # --------------------------------------------------------------------------- #
@@ -1241,6 +1256,8 @@ def _stats(project_root: Path, config: dict, amg_root: Optional[Path] = None) ->
     from collections import Counter
     cat, langs, skipped, ambiguous, resolved = Counter(), Counter(), 0, [], []
     by_source: Dict[str, dict] = {}
+    seen_src: Dict[str, str] = {}               # rel -> first source policy (overlap detect, 1.29)
+    overlaps: List[str] = []
     for base_rel, policy in resolve_sources(config):
         extra = _excludes_for_policy(config, policy)
         found = (project_root / base_rel).exists()
@@ -1248,6 +1265,9 @@ def _stats(project_root: Path, config: dict, amg_root: Optional[Path] = None) ->
         for path in iter_source_files(project_root, base_rel, extra, gitignore, ignore_dirs):
             matched += 1                        # passed every ignore filter
             rel = path.relative_to(project_root).as_posix()
+            if seen_src.get(rel, policy) != policy:
+                overlaps.append(rel)            # same file under two different-policy roots
+            seen_src.setdefault(rel, policy)
             category, chunker, lang, amb, overridden = _classify_path(path, rel, overrides)
             if chunker == "skip":
                 skipped += 1
@@ -1289,6 +1309,12 @@ def _stats(project_root: Path, config: dict, amg_root: Optional[Path] = None) ->
            "ambiguous_files": ambiguous[:20],
            "resolved_by_override": resolved[:20],
            "tree_sitter": ts, "text_extraction": extraction}
+    if overlaps:
+        out["overlapping_sources"] = sorted(set(overlaps))[:20]   # 1.29: not resolved silently
+        out["overlap_hint"] = (
+            f"{len(set(overlaps))} file(s) fall under both mirror_path and absorb_path; "
+            "the last-listed policy wins (absorb/absorb_once over mirror). Narrow the "
+            "roots or add an exclude to resolve.")
     if ambiguous:
         ov_path = ((amg_root / "work" / "classification-overrides.json").as_posix()
                    if amg_root else "work/classification-overrides.json")
