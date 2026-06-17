@@ -47,8 +47,10 @@ def main() -> int:
     assert es.classify(Path("a.pdf"))[:2] == ("doc", "pdf")
     assert es.classify(Path("a.docx"))[:2] == ("doc", "docx")
     assert es.classify(Path("a.xlsx"))[:2] == ("data", "xlsx")
+    assert es.classify(Path("a.pptx"))[:2] == ("doc", "pptx")   # now extracted, not skipped
     assert es.classify(Path("a.doc"))[1] == "skip"      # legacy format stays skipped
-    print("PASS  classify: pdf->doc, docx->doc, xlsx->data, .doc->skip")
+    assert es.classify(Path("a.ppt"))[1] == "skip"      # legacy .ppt stays skipped
+    print("PASS  classify: pdf->doc, docx->doc, xlsx->data, pptx->doc, .doc/.ppt->skip")
 
     # ---- PDF (write with fpdf2, read with pypdf) ----------------------------
     if _have("fpdf") and _have("pypdf"):
@@ -105,6 +107,24 @@ def main() -> int:
         tested.append("xlsx")
     else:
         print("SKIP  xlsx (need: pip install openpyxl)")
+
+    # ---- PPTX (python-pptx reads and writes; Stage 11) ----------------------
+    if _have("pptx"):
+        from pptx import Presentation
+        prs = Presentation()
+        s1 = prs.slides.add_slide(prs.slide_layouts[5])     # "Title Only" layout
+        s1.shapes.title.text = "Routing overview"
+        s2 = prs.slides.add_slide(prs.slide_layouts[5])
+        s2.shapes.title.text = "Controllers"
+        p = tmp / "deck.pptx"; prs.save(str(p))
+        units = es._pptx_units(p, "deck.pptx", "absorb")
+        assert units and all(u["category"] == "doc" and u["text"] for u in units), units
+        assert units[0]["id"] == "doc:deck.pptx::s1" and units[0]["kind"] == "section", units[0]
+        assert _fallback_returns_none("pptx", es._pptx_units, p)
+        print(f"PASS  pptx: {len(units)} slide unit(s) with text; missing python-pptx -> skip")
+        tested.append("pptx")
+    else:
+        print("SKIP  pptx (need: pip install python-pptx)")
 
     # ---- tree-sitter (canonical kinds for non-Python code; stage 1, task 8) --
     if _have("tree_sitter_language_pack"):

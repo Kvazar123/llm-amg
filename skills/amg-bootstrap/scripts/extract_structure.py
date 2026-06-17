@@ -15,8 +15,13 @@ Pipeline per file:
        <lang>code  tree-sitter   -> functions/classes + calls   (OPTIONAL; see below)
                    if tree-sitter or the grammar is unavailable -> one unit per file
        markdown    headings      -> one unit per section
+       rst         adornments    -> one unit per underline-headed section
        text        paragraphs    -> one unit per blank-line block
+       log         episodes      -> one block per bounded window of timestamped lines
        json/yaml   records       -> one unit per top-level entry
+       ndjson      records       -> one unit per JSON line
+       csv/tsv     table         -> one structural unit (headers + sample rows)
+       pdf/docx/xlsx/pptx         -> page / section / sheet / slide   (OPTIONAL libs)
   4. tag          each unit carries `category` (code|doc|data) -> physical node bucket,
                   and `policy` (mirror|absorb) inherited from its source.
 
@@ -73,7 +78,7 @@ DEFAULT_IGNORE_DIRS = {
 
 BINARY_EXT = {
     ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".tif", ".tiff",
-    ".doc", ".xls", ".pptx", ".ppt",        # legacy/other office formats: not extracted
+    ".doc", ".xls", ".ppt",                 # legacy office formats: no pure-Python extractor
     ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar", ".jar", ".war",
     ".exe", ".dll", ".so", ".dylib", ".bin", ".pyc", ".pyo", ".class", ".o", ".a",
     ".woff", ".woff2", ".ttf", ".eot", ".otf",
@@ -93,9 +98,9 @@ CODE_LANG_BY_EXT = {
 }
 
 PROSE_EXT = {".md": "headings", ".mdx": "headings", ".markdown": "headings",
-             ".rst": "headings", ".txt": "paragraphs", ".text": "paragraphs"}
+             ".txt": "paragraphs", ".text": "paragraphs"}
 
-DATA_EXT = {".json": "json", ".ndjson": "json", ".yaml": "json", ".yml": "json"}
+DATA_EXT = {".json": "json", ".yaml": "json", ".yml": "json"}
 
 
 def _sha(text: str) -> str:
@@ -239,12 +244,22 @@ def classify(path: Path) -> Tuple[str, str, Optional[str], bool]:
         return ("code", "treesitter", CODE_LANG_BY_EXT[ext], False)
     if ext in PROSE_EXT:
         return ("doc", PROSE_EXT[ext], None, False)
+    if ext == ".rst":
+        return ("doc", "rst", None, False)            # reStructuredText underline headings
     if ext in DATA_EXT:
         return ("data", "json", None, False)
+    if ext == ".ndjson":
+        return ("data", "ndjson", None, False)         # newline-delimited JSON (one obj/line)
+    if ext in (".csv", ".tsv"):
+        return ("data", "csv", None, False)
+    if ext == ".log":
+        return ("doc", "log", None, False)             # timestamped log -> episode blocks
     if ext == ".pdf":
         return ("doc", "pdf", "pdf", False)
     if ext == ".docx":
         return ("doc", "docx", "docx", False)
+    if ext == ".pptx":
+        return ("doc", "pptx", "pptx", False)
     if ext in (".xlsx", ".xlsm"):
         return ("data", "xlsx", "xlsx", False)
     # extensionless or unknown extension -> sniff content
@@ -562,6 +577,95 @@ def _text_units(path: Path, rel: str, policy: str) -> List[dict]:
     return blocks or [_file_unit(rel, "doc", policy, text, "text")]
 
 
+# A run of one punctuation char (>=3) used as an RST title adornment (under/overline).
+_RST_ADORN = re.compile(r"^([=\-~^\"#*+.:'`_])\1{2,}\s*$")
+
+
+def _rst_units(path: Path, rel: str, policy: str) -> List[dict]:
+    """reStructuredText sections by adornment: a title is a line whose NEXT line is a
+    punctuation run at least as long as the title (RST's underline rule), optionally
+    preceded by a matching overline. Splits into sections like markdown (the `headings`
+    chunker only sees '#' headings, so .rst used to collapse to one prose section); text
+    before the first heading is _preamble. Falls back to one file unit if no headings."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines(keepends=True)
+    raw = [ln.rstrip("\n") for ln in lines]
+    heads: List[Tuple[str, int]] = []           # (title, start line index)
+    i = 0
+    while i < len(raw):
+        line = raw[i]
+        if (_RST_ADORN.match(line) and i + 2 < len(raw) and raw[i + 1].strip()
+                and _RST_ADORN.match(raw[i + 2]) and raw[i + 2][0] == line[0]):
+            heads.append((raw[i + 1].strip(), i))      # overline + title + underline
+            i += 3
+            continue
+        if (line.strip() and i + 1 < len(raw) and _RST_ADORN.match(raw[i + 1])
+                and len(raw[i + 1].strip()) >= len(line.strip())):
+            heads.append((line.strip(), i))            # title + underline
+            i += 2
+            continue
+        i += 1
+    if not heads:
+        return [_file_unit(rel, "doc", policy, text, "rst")]
+
+    units: List[dict] = []
+    seen: Dict[str, int] = {}
+    if heads[0][1] > 0:
+        pre = "".join(lines[:heads[0][1]]).strip()
+        if pre:
+            units.append({"id": f"doc:{rel}::_preamble", "kind": "section",
+                          "source_path": rel, "category": "doc", "policy": policy,
+                          "qualname": "_preamble", "lineno": 1, "lang": "rst",
+                          "content_sha": _sha(pre)})
+    bounds = [h[1] for h in heads] + [len(lines)]
+    for idx, (title, start) in enumerate(heads):
+        chunk = "".join(lines[start:bounds[idx + 1]]).strip()
+        if not chunk:
+            continue
+        base = _slug(title)
+        c = seen.get(base, 0)
+        seen[base] = c + 1
+        qual = base if c == 0 else f"{base}-{c}"
+        units.append({"id": f"doc:{rel}::{qual}", "kind": "section", "source_path": rel,
+                      "category": "doc", "policy": policy, "qualname": qual,
+                      "lineno": start + 1, "lang": "rst", "content_sha": _sha(chunk)})
+    return units or [_file_unit(rel, "doc", policy, text, "rst")]
+
+
+# A line that begins with a recognizable timestamp -> the start of a log event.
+_LOG_TS = re.compile(
+    r"^\s*\[?"
+    r"(?:\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}"          # ISO: 2026-06-18 10:00:00 / T
+    r"|\d{2}:\d{2}:\d{2}"                                  # bare: 10:00:00
+    r"|[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})")      # syslog: Jun 18 10:00:00
+
+
+def _log_units(path: Path, rel: str, policy: str, group_lines: int = 50) -> List[dict]:
+    """Group a .log into bounded episodes: timestamped lines confirm it is a log, then
+    consecutive lines are bundled into windows of `group_lines` (one `block` unit each,
+    `e{n}`). The window keeps a long log from becoming one huge node AND from exploding
+    into one node per line; continuation lines (stack traces) ride along in their
+    window. Carries `text` so the builder reads the slice once. A file with no
+    timestamped line is not really a log -> paragraph blocks (_text_units)."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines(keepends=True)
+    if not any(_LOG_TS.match(ln) for ln in lines):
+        return _text_units(path, rel, policy)
+    units: List[dict] = []
+    n = 0
+    step = max(1, group_lines)
+    for start in range(0, len(lines), step):
+        chunk = "".join(lines[start:start + step]).strip()
+        if not chunk:
+            continue
+        n += 1
+        units.append({"id": f"doc:{rel}::e{n}", "kind": "block", "source_path": rel,
+                      "category": "doc", "policy": policy, "qualname": f"e{n}",
+                      "lineno": start + 1, "lang": "log", "content_sha": _sha(chunk),
+                      "text": chunk})
+    return units or [_file_unit(rel, "doc", policy, text, "log")]
+
+
 def _data_units(path: Path, rel: str, policy: str) -> List[dict]:
     text = path.read_text(encoding="utf-8", errors="replace")
     try:
@@ -582,6 +686,75 @@ def _data_units(path: Path, rel: str, policy: str) -> List[dict]:
                       "qualname": str(key)[:48], "lineno": 1, "lang": "json",
                       "content_sha": _sha(frag)})
     return units or [_file_unit(rel, "data", policy, text)]
+
+
+def _ndjson_units(path: Path, rel: str, policy: str) -> List[dict]:
+    """Newline-delimited JSON (.ndjson): one `record` unit per line, since each line is
+    an independent JSON value (yaml.safe_load, used by _data_units, cannot read this
+    line-oriented form). A line's own id-ish field (id/key/name/_id) gives a stable
+    qualname when present, else the 1-based line number (L{n}); lineno is the real
+    source line. Unparseable lines are skipped; a file with none falls back to one file
+    unit. Capped at the first 500 records, like _data_units."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    units: List[dict] = []
+    seen: Dict[str, int] = {}
+    n = 0
+    for i, line in enumerate(text.splitlines(), 1):
+        s = line.strip()
+        if not s:
+            continue
+        try:
+            obj = json.loads(s)
+        except ValueError:
+            continue
+        n += 1
+        key = None
+        if isinstance(obj, dict):
+            for k in ("id", "key", "name", "_id"):
+                if obj.get(k) not in (None, ""):
+                    key = str(obj[k])
+                    break
+        base = (key or f"L{n}")[:48]
+        c = seen.get(base, 0)
+        seen[base] = c + 1
+        qual = base if c == 0 else f"{base}-{c}"
+        frag = json.dumps(obj, ensure_ascii=False, sort_keys=True)
+        units.append({"id": f"data:{rel}::{qual}", "kind": "record", "source_path": rel,
+                      "category": "data", "policy": policy, "qualname": qual,
+                      "lineno": i, "lang": "ndjson", "content_sha": _sha(frag)})
+        if n >= 500:
+            break
+    return units or [_file_unit(rel, "data", policy, text, "ndjson")]
+
+
+def _csv_units(path: Path, rel: str, policy: str) -> List[dict]:
+    """One STRUCTURAL unit per CSV/TSV file: a table is data, not prose (like XLSX), so
+    the stored text describes it — column headers, row count, a few sample rows — not
+    every cell. One unit per file keeps a 10k-row CSV from exploding into 10k nodes;
+    deep per-row chunking is a recursive/data concern, not this. The delimiter is the
+    tab for .tsv, else sniffed (comma fallback). Carries `text` so the builder
+    summarizes without re-reading the file."""
+    import csv
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if path.suffix.lower() == ".tsv":
+        delim = "\t"
+    else:
+        try:
+            delim = csv.Sniffer().sniff(text[:2048], delimiters=",;\t|").delimiter
+        except csv.Error:
+            delim = ","
+    rows = [r for r in csv.reader(text.splitlines(), delimiter=delim)
+            if any(c.strip() for c in r)]
+    if not rows:
+        return [_file_unit(rel, "data", policy, text, "csv")]
+    header = rows[0]
+    cols = ", ".join(h.strip() for h in header if h.strip())
+    sample = [" | ".join(c for c in r) for r in rows[1:4]]
+    desc = (f"CSV table '{Path(rel).name}': {len(rows) - 1} rows x {len(header)} columns.\n"
+            f"Columns: {cols}\nSample rows:\n" + "\n".join(sample))
+    return [{"id": f"data:{rel}", "kind": "sheet", "source_path": rel,
+             "category": "data", "policy": policy, "qualname": "", "lineno": 1,
+             "lang": "csv", "content_sha": _sha(desc), "text": desc}]
 
 
 # --- captured sessions (Stage 9) ---------------------------------------------
@@ -725,9 +898,37 @@ def _xlsx_units(path: Path, rel: str, policy: str) -> Optional[List[dict]]:
     return units or None
 
 
+def _pptx_units(path: Path, rel: str, policy: str) -> Optional[List[dict]]:
+    """One unit per SLIDE via python-pptx (optional pure-Python lib; graceful skip like
+    PDF/DOCX/XLSX). Concatenates each slide's shape text and carries it as `text` so the
+    builder summarizes without opening the binary. Returns None when the lib is absent
+    or the file is unreadable -> the file is skipped, never an error. (Legacy .ppt has
+    no reliable pure-Python reader and stays in BINARY_EXT.)"""
+    try:
+        from pptx import Presentation                    # python-pptx
+    except Exception:
+        return None
+    try:
+        prs = Presentation(str(path))
+    except Exception:
+        return None
+    units = []
+    for i, slide in enumerate(prs.slides, 1):
+        parts = [shape.text.strip() for shape in slide.shapes
+                 if shape.has_text_frame and shape.text.strip()]
+        body = "\n".join(parts).strip()
+        if not body:
+            continue
+        units.append({"id": f"doc:{rel}::s{i}", "kind": "section", "source_path": rel,
+                      "category": "doc", "policy": policy, "qualname": f"s{i}",
+                      "lineno": 1, "lang": "pptx", "content_sha": _sha(body), "text": body})
+    return units or None
+
+
 CHUNKERS = {"python": _python_units, "treesitter": _treesitter_units,
             "headings": _markdown_units, "paragraphs": _text_units, "json": _data_units,
-            "pdf": _pdf_units, "docx": _docx_units, "xlsx": _xlsx_units,
+            "ndjson": _ndjson_units, "csv": _csv_units, "rst": _rst_units, "log": _log_units,
+            "pdf": _pdf_units, "docx": _docx_units, "xlsx": _xlsx_units, "pptx": _pptx_units,
             "session": _session_units}
 
 
@@ -786,6 +987,7 @@ def extract(project_root: Path, config: dict, amg_root: Optional[Path] = None) -
     gitignore = load_gitignore(project_root) if config.get("respect_gitignore", True) else []
     ignore_dirs = _effective_ignore_dirs(amg_root)
     overrides = load_overrides(amg_root)
+    log_lines = int(config.get("log_group_lines", 50) or 50)   # episode window for .log
     units: List[dict] = []
     for base_rel, policy in resolve_sources(config):
         extra = _excludes_for_policy(config, policy)
@@ -800,11 +1002,13 @@ def extract(project_root: Path, config: dict, amg_root: Optional[Path] = None) -
                     got = [_file_unit(rel, "code", policy,
                                       path.read_text(encoding="utf-8", errors="replace"), lang)]
                 units += got
-            elif chunker in ("pdf", "docx", "xlsx"):
+            elif chunker in ("pdf", "docx", "xlsx", "pptx"):
                 got = CHUNKERS[chunker](path, rel, policy)
                 if got is None:                       # lib missing / unreadable -> skip
                     continue
                 units += got
+            elif chunker == "log":
+                units += _log_units(path, rel, policy, group_lines=log_lines)
             else:
                 units += CHUNKERS[chunker](path, rel, policy)
     units += _extract_sessions(project_root, config, amg_root)   # opted-in store source
@@ -851,13 +1055,14 @@ def _stats(project_root: Path, config: dict, amg_root: Optional[Path] = None) ->
         ts = "unavailable (non-Python code -> one unit per file; Python unaffected)"
 
     import importlib
+    pip_name = {"docx": "python-docx", "pptx": "python-pptx"}
     extraction = {}
-    for fmt, mod in (("pdf", "pypdf"), ("docx", "docx"), ("xlsx", "openpyxl")):
+    for fmt, mod in (("pdf", "pypdf"), ("docx", "docx"), ("xlsx", "openpyxl"), ("pptx", "pptx")):
         try:
             importlib.import_module(mod)
             extraction[fmt] = f"available ({mod})"
         except Exception:
-            extraction[fmt] = f"unavailable (pip install {'python-docx' if mod=='docx' else mod}) -> files skipped"
+            extraction[fmt] = f"unavailable (pip install {pip_name.get(mod, mod)}) -> files skipped"
 
     out = {"by_category": dict(cat), "by_language": dict(langs),
            "by_source": by_source,             # per-source file counts (0 / not-found visible)
