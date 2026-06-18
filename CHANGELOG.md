@@ -4,6 +4,26 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-06-18
+
+Stage 11 closed — broader input formats. AMG now ingests far more than code, Markdown, and JSON: dedicated chunkers for reStructuredText, NDJSON, CSV/TSV, logs, presentations, and external chat exports, plus recursive chunking of deeply nested JSON, a frozen `absorb_once` source policy, and source-overlap / missing-path diagnostics. Additive, no data-contract change (MINOR).
+
+### Added
+- Structural chunkers in `extract_structure.py`, all mapping to the canonical node types (`record` / `sheet` / `block` / `section`) so retrieval and consolidation consume them unchanged: RST (underline/overline headings → sections), logs (`.log` grouped into bounded episode windows of `log_group_lines` lines by a leading timestamp → blocks), NDJSON (one record per JSON line), CSV/TSV (one structural sheet unit — headers + sample rows, like XLSX), PPTX (one section per slide via optional `python-pptx`, graceful skip; `.pptx` removed from `BINARY_EXT`).
+- Recursive JSON chunking: a large nested container (serialized JSON over `json_recurse_min_chars`, holding nested structure) is split into sub-records by key path (`a.b.c` / `a.b[0]`) under `json_max_depth` / `json_max_nodes`, with stable ids; a small or flat value keeps the original one-record shape and hash (existing data files unchanged), and a large FLAT scalar list is not exploded into a node per element.
+- External chat chunker `_chat_units`: a JSON array / a `{messages:[...]}` object / NDJSON of message objects (the OpenAI/Anthropic shape, with tolerant key synonyms) → one episodic section per message, with role/timestamp/thread folded into the text for attribution and a weak `follows` edge to the previous turn in the same thread (conversation adjacency; `build_adjacency` symmetrizes, so one edge reaches both neighbours; relation prior β 0.4). Detection sniffs json/ndjson structure — an ordinary record array is left to the data chunker. A flat role-marker dump (`=== Human ===`) dropped into a normal source routes to the existing session chunker (`_has_role_markers`).
+- Source policy `absorb_once` (key `absorb_once_path`): ingest once and freeze — like `absorb` (deleting the source keeps the node), but later changes to the source are ignored too (no re-derivation, no pointer drift). Enforced by a `frozen` gate in `reconcile.plan`.
+- Source hygiene: `detect_policy_conflicts` flags a file that falls under more than one policy (audit 1.29) — `policy_conflicts` in `plan`, `overlapping_sources` + a hint in `--stats`; the dedup keeps the most-preserving policy (`absorb_once` > `absorb` > `mirror`). `reconcile.plan` reports `missing_sources` so a typo'd source path is visible, not hidden behind "added: 0" (audit 1.30, remainder).
+- Config keys: `json_max_depth` (4), `json_recurse_min_chars` (2048), `json_max_nodes` (500), `log_group_lines` (50), `absorb_once_path`; the `follows` relation prior (0.4). `python-pptx` added to the `text` dependency group (`requirements.txt`, `install.py DEP_GROUPS`).
+- Regression: new `selftest_chunkers.py` (the stdlib chunkers + recursive JSON + chat + reconcile buckets); PPTX added to `selftest_stage2.py`, overlap/missing to `selftest_ignore.py`, `absorb_once` to `selftest_reconcile.py`. 13 selftests green.
+
+### Changed
+- `reconcile._structural_edges` emits the `follows` edge from a chat unit's `follows` hint (origin structural, w 0.3), like `imports`/`calls`. `resolve_sources` recognizes `absorb_once_path` and orders the policies so the most-preserving one wins an overlap; the gate is fixed for configs that set only `absorb_once_path`.
+- Docs synced: `04-ingest.md` (the new chunkers, recursive JSON, the external-chat section, source overlap; the "Развитие" stubs trimmed to semantic-drift only), `05-reconcile.md` (the `frozen` case, the `follows` edge, the `plan` diagnostics), `09-config.md` (the chunking tunables, `absorb_once_path`, the `follows` β; `absorb_once` moved out of "planned"), `02-data-model.md` (the `absorb_once` policy and the `follows` edge), `THEORY.md` §11–§13 (broader input domains, the absorb_once freeze as a third point on the mirror↔absorb axis, conversation adjacency as the episodic skeleton), `GUIDE.md`, README_RU + README. Roadmap §1 items 1.29 / 1.30 collapsed; the Stage 11 body folded.
+
+### Deferred
+- Semantic-drift segmentation of long unstructured prose (Stage 11 task 2) is deferred to **Stage 17, task 6**, with the full spec and gating conditions kept in roadmap §4.6: implement last, only under the eval completeness gate, and only if the structural chunkers leave measured pain. The structural chunkers shipped here cover the overwhelming majority of inputs, and accuracy outweighs token economy.
+
 ## [1.1.0] — 2026-06-17
 
 Sub-stage between Stage 10 and Stage 11 (control-plane / portability): the `config.yml` `models` block becomes a working setting (audit 1.14), a third installer environment `--env codex` is added (Codex is not skill-less), and the engine prompts are made portable (audit 1.32). Additive, no data-contract change (MINOR).

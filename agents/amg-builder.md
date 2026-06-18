@@ -19,9 +19,11 @@ your batch and return only a short summary to the caller.
   qualname, lineno, lang}`, where `category` is one of `code` / `doc` / `data`,
   `kind` is the unit shape (module, function, class, section, page, sheet, block,
   record, file), and `lang` is the SOURCE language/format (e.g. `python`,
-  `markdown`) — not the language you write in. A unit may also carry a `text`
-  field: pre-extracted content from a binary format (PDF page, DOCX section,
-  XLSX sheet description) that you cannot read directly.
+  `markdown`, `rst`, `log`, `csv`, `chat`) — not the language you write in. A unit
+  may also carry a `text` field with the content already extracted or assembled for
+  you (a PDF page, a DOCX/PPTX section, an XLSX/CSV table description, a log episode,
+  or a chat message with its role/time): summarize from THAT, do not re-open the
+  source.
 - An output path, e.g. `.claude/amg/work/derived-<batch>.json`.
 - The project's `working_language` (from `.claude/amg/config.yml`).
 

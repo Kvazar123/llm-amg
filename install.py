@@ -70,7 +70,7 @@ DEP_GROUPS = {
     "base": ["pyyaml"],
     "embeddings": ["model2vec"],
     "embeddings-st": ["sentence-transformers"],
-    "text": ["pypdf", "python-docx", "openpyxl"],
+    "text": ["pypdf", "python-docx", "openpyxl", "python-pptx"],
     "treesitter": ["tree-sitter", "tree-sitter-language-pack"],
 }
 

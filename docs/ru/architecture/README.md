@@ -13,8 +13,8 @@
 - [01-overview.md](./01-overview.md) — общая картина: детерминированный слой и слой суждения, карта модулей, потоки данных (извлечение структуры, извлечение из графа, консолидация).
 - [02-data-model.md](./02-data-model.md) — модель данных: формат узла (frontmatter), идентификаторы, типы рёбер, физические бакеты, раскладка каталогов.
 - [03-storage.md](./03-storage.md) — хранилище `graph_store.py`: атомарные записи, журнал упреждающей записи, блокировка на запись, восстановление и проверка; ссылка на формальную модель согласованности.
-- [04-ingest.md](./04-ingest.md) — извлечение `extract_structure.py`: классификатор типов, реестр нарезателей (Python `ast`, tree-sitter, markdown, текст, JSON, PDF, DOCX, XLSX), правила игнорирования.
-- [05-reconcile.md](./05-reconcile.md) — сверка `reconcile.py`: режимы `bootstrap` / `plan` / `apply`, очередь на семантическое обогащение, политики `mirror` / `absorb`, файлы `derived-*.json`.
+- [04-ingest.md](./04-ingest.md) — извлечение `extract_structure.py`: классификатор типов, реестр нарезателей (Python `ast`, tree-sitter, markdown, RST, текст, журналы, JSON с рекурсией, NDJSON, CSV, внешний чат, PDF, DOCX, XLSX, PPTX), правила игнорирования.
+- [05-reconcile.md](./05-reconcile.md) — сверка `reconcile.py`: режимы `bootstrap` / `plan` / `apply`, очередь на семантическое обогащение, политики `mirror` / `absorb` / `absorb_once`, файлы `derived-*.json`.
 - [06-retrieval.md](./06-retrieval.md) — извлечение `retrieve.py` и `embed.py`: лексический засев (BM25), опциональный семантический засев (эмбеддинги), Personalized PageRank, сборка пакета по ярусам, ключи конфигурации.
 - [07-consolidation.md](./07-consolidation.md) — консолидация `consolidate.py`: свёртка весов (Хебб + затухание + обрезка), рубрика значимости, поэтапная компрессия веток.
 - [08-agents-skills.md](./08-agents-skills.md) — субагенты и скиллы; петля активации в `CLAUDE.md`; разделение детерминированной и модельной работы по ролям.

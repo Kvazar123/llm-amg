@@ -15,10 +15,11 @@ model2vec
 # Transformer backend (heavier, pulls in torch) — uncomment to use instead/as well:
 # sentence-transformers
 
-# --- text-extraction (optional PDF / DOCX / XLSX) ----------------------------
+# --- text-extraction (optional PDF / DOCX / XLSX / PPTX) ---------------------
 pypdf
 python-docx
 openpyxl
+python-pptx
 
 # --- tree-sitter (optional: non-Python code -> function-level units + calls) --
 tree-sitter
