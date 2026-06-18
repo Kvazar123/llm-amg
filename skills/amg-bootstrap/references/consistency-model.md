@@ -93,7 +93,7 @@ on an unchanged repo does zero model work and produces zero changes.
   archive/            originals evicted by compaction (reversible)
   cache/pack.md       last assembled retrieval context pack (disposable)
   cache/embeddings.json  node embedding cache (disposable)
-  log.md              best-effort, human-readable consolidation audit log (outside the journal)
+  log.md              human-readable action audit log (transactional, de-duped by txid, rotated)
   LOCK                single-writer lock (absent when no writer holds it)
 ```
 
@@ -198,14 +198,18 @@ mid-apply and asserting consistency after `recover()`.
 
 ## 11. Logging
 
-`log.md` is a **best-effort**, human-readable audit log — deliberately *outside* the
-transaction. Each entry begins with a transaction id, e.g.
-`## [2026-05-31T12:00] <txid> consolidate | ...`. It is written by a plain append
-(not through the journal) and only by `consolidate.py`; `reconcile.py` does not write
-it. Because the log carries no load — graph integrity rests on the journal, not on
-`log.md` — a torn or lost line after a crash is harmless, so no transactional
-de-duplication is attempted. (A txid-guarded transactional log remains a possible
-future enhancement; see the roadmap, item 1.15.)
+`log.md` is a human-readable audit trail of completed actions, written through the
+store's `append_log(source, msg, txid)` — **transactionally**, not by a raw append.
+Each entry is `## [<ts>] <txid> <source> | ...`, staged as a single content-addressed
+blob, so a replay during recovery is idempotent and an entry whose `txid` is already
+present is a no-op (de-duplication by txid). The log is **bounded**: once it exceeds a
+line cap the older lines are rotated into `archive/log-<ts>.md` and only the tail stays
+live, so a long-lived graph never rewrites an unbounded file per write. Both writers use
+it — `consolidate.py` and `reconcile.py` (the latter only when a diff actually changed
+the graph, so an unchanged re-run logs nothing and stays idempotent). Writing is still
+best-effort (any failure is swallowed): graph integrity rests on the journal, not on
+`log.md`, so a missing audit line remains harmless. This implements the model "append as
+part of a committed transaction with de-dup by txid" (audit 1.15, done at Stage 12).
 
 ## 12. What is *not* auto-recoverable, and the mitigations
 

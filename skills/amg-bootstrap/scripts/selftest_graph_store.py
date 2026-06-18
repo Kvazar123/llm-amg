@@ -149,6 +149,45 @@ def case_documented_layout():
     print("PASS  documented layout == graph_store.init() (5 buckets, no phantom files)")
 
 
+def case_action_log():
+    """append_log writes log.md transactionally, de-dups by txid, and rotates when
+    bounded — so a long-lived graph never rewrites an unbounded file (audit 1.15)."""
+    store = fresh_store()
+    log = store.root / "log.md"
+
+    def nlines() -> int:
+        return len(log.read_text(encoding="utf-8").splitlines()) if log.exists() else 0
+
+    # 1. First line written through a real transaction (journal clean afterwards).
+    store.append_log("consolidate", "weights folded", "tx-aaaa")
+    body = log.read_text(encoding="utf-8")
+    assert "consolidate | weights folded" in body and "tx-aaaa" in body
+    assert not list(store.journal_dir.iterdir()), "log write must commit and clean the journal"
+
+    # 2. De-dup: the SAME committed txid must not append a second line.
+    store.append_log("consolidate", "again", "tx-aaaa")
+    assert nlines() == 1, "same txid must not append twice"
+
+    # 3. A new txid appends; a None txid (e.g. a reject event) always appends.
+    store.append_log("reconcile", "bootstrap: added=3", "tx-bbbb")
+    store.append_log("consolidate", "eval-gate REJECTED", None)
+    assert nlines() == 3
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert " reconcile |" in lines[1] and " consolidate |" in lines[2], \
+        "source label must be discriminable (lifecycle._last_consolidation filters on it)"
+
+    # 4. Rotation: a bounded log moves the overflow to archive/, keeps the tail live.
+    for i in range(20):
+        store.append_log("consolidate", f"line {i}", f"tx-{i:04d}",
+                         max_lines=5, keep_tail=2)
+    live = log.read_text(encoding="utf-8").splitlines()
+    assert len(live) <= 5, f"live log must stay bounded, got {len(live)}"
+    assert "line 19" in live[-1], "the newest line stays live (status reads the tail)"
+    assert list((store.root / "archive").glob("log-*.md")), "rotation must archive the overflow"
+    shutil.rmtree(store.root, ignore_errors=True)
+    print("PASS  action log: transactional, de-duped by txid, bounded by rotation")
+
+
 if __name__ == "__main__":
     case_begin_crash()
     case_middle_crash()
@@ -156,4 +195,5 @@ if __name__ == "__main__":
     case_delete_and_idempotent_rerun()
     case_lock_reentry()
     case_documented_layout()
+    case_action_log()
     print("\nALL CRASH-SAFETY CHECKS PASSED")

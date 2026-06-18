@@ -977,12 +977,10 @@ def _now() -> str:
 
 
 def _log(store: gs.GraphStore, msg: str, txid: Optional[str]) -> None:
-    try:
-        line = f"## [{_now()}] {txid or '-'} consolidate | {msg}\n"
-        with open(store.root / "log.md", "a", encoding="utf-8") as f:
-            f.write(line)
-    except OSError:
-        pass
+    """Append a consolidation audit line through the store's transactional action
+    log (de-duped by txid, bounded by rotation). Best-effort, under the lock the
+    caller already holds (1.15: log is now part of a committed transaction)."""
+    store.append_log("consolidate", msg, txid)
 
 
 def main(argv: List[str]) -> int:

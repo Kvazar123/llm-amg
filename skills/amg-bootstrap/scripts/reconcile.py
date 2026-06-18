@@ -275,13 +275,24 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
                 summary["deleted"] += 1
             # authored / absorb notes are intentionally left untouched
 
-        tx.commit()
+        txid = tx.commit()
 
         # Persist the work queue for the semantic builder (crash-safe write).
         work_dir = store.root / "work"
         gs.atomic_write_text(work_dir / "queue.json",
                              json.dumps({"generated": _now(), "units": queue},
                                         ensure_ascii=False, indent=2))
+
+        # Audit line (transactional, de-duped by txid; 1.15). Only when something
+        # actually changed — txid is None for an empty diff — so an unchanged re-run
+        # stays a true no-op for the graph AND the log (idempotency, see docstring).
+        if txid:
+            store.append_log(
+                "reconcile",
+                f"bootstrap: added={summary['added']} changed={summary['changed']} "
+                f"moved={summary['moved']} deleted={summary['deleted']} "
+                f"requeued={summary['requeued_stale']} frozen={summary['frozen']} "
+                f"queued={len(queue)}", txid)
 
     conflicts = detect_policy_conflicts(raw_units)        # 1.29: mirror/absorb overlap
     if conflicts:
@@ -553,7 +564,11 @@ def apply_derivation(project_root: Path, derivation_path: Path,
             meta = {k: v for k, v in node.items() if not k.startswith("_")}
             tx.write(node["_path"], serialize_node(meta, node.get("_body", "")))
             applied += 1
-        tx.commit()
+        txid = tx.commit()
+        if txid:                              # transactional audit line (1.15)
+            store.append_log(
+                "reconcile",
+                f"apply: applied={applied} created={created} skipped={skipped}", txid)
 
     return {"applied": applied, "created": created, "skipped_missing": skipped}
 
