@@ -25,6 +25,7 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any, Dict
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -39,22 +40,23 @@ except ImportError:                                   # pragma: no cover
     sys.stderr.write("needs PyYAML\n"); raise
 
 
-def _write(store: Path, bucket: str, fname: str, meta: dict, body: str = "") -> None:
+def _write(store: Path, bucket: str, fname: str, meta: Dict[str, Any], body: str = "") -> None:
     d = store / "nodes" / bucket
     d.mkdir(parents=True, exist_ok=True)
     fm = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True).strip()
     (d / fname).write_text(f"---\n{fm}\n---\n{body}".rstrip() + "\n", encoding="utf-8")
 
 
-def _node(nid, typ, summary, status="active", **extra) -> dict:
+def _node(nid: str, typ: str, summary: str, status: str = "active",
+          **extra: Any) -> Dict[str, Any]:
     return {"id": nid, "type": typ, "summary": summary, "status": status,
             "edges": extra.get("edges", []), "part_of": extra.get("part_of", []),
             **{k: v for k, v in extra.items() if k not in ("edges", "part_of")}}
 
 
 def test_status_prior_unit() -> None:
-    nodes = {"a": {"status": "active"}, "s": {"status": "superseded"},
-             "t": {"status": "stale"}, "n": {"status": None}}
+    nodes: Dict[str, Dict[str, Any]] = {"a": {"status": "active"}, "s": {"status": "superseded"},
+                                        "t": {"status": "stale"}, "n": {"status": None}}
     act = {"a": 1.0, "s": 1.0, "t": 1.0, "n": 1.0}
     cfg = {"status_prior": {"active": 1.0, "stale": 1.0, "superseded": 0.2}}
     out = R._apply_status_prior(act, nodes, cfg)
@@ -171,7 +173,7 @@ def test_explain(tmp: Path) -> None:
 
 def main() -> int:
     try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     except (AttributeError, ValueError):
         pass
     orig = embed.get_embedder

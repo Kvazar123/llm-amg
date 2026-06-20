@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any, Dict
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import graph_store as gs                                    # noqa: E402
@@ -18,7 +19,7 @@ import migrate_schema                                       # noqa: E402
 import reconcile as rc                                      # noqa: E402
 
 
-def _write_node(store: gs.GraphStore, meta: dict, bucket: str) -> None:
+def _write_node(store: gs.GraphStore, meta: Dict[str, Any], bucket: str) -> None:
     rel = rc.node_relpath(meta["id"], bucket)
     gs.atomic_write_text(store.root / rel, rc.serialize_node(meta, ""))
 

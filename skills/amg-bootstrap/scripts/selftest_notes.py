@@ -27,6 +27,7 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any, Dict
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -55,11 +56,11 @@ def amg_root(proj: Path) -> Path:
     return proj / ".claude" / "amg"
 
 
-def nodes_of(proj: Path) -> dict:
+def nodes_of(proj: Path) -> Dict[str, Any]:
     return rc.load_nodes(gs.GraphStore(amg_root(proj)))
 
 
-def case_fields(proj: Path) -> dict:
+def case_fields(proj: Path) -> Dict[str, Any]:
     ids = {}
     for t in NT.NOTE_TYPES:
         res = NT.add_note(proj, t, f"{t} about the billing subsystem",
@@ -145,7 +146,7 @@ def case_crash_recovery(proj: Path) -> None:
     print("PASS  crash: a note write interrupted mid-commit is healed by recover()")
 
 
-def case_survives_bootstrap(proj: Path) -> dict:
+def case_survives_bootstrap(proj: Path) -> Dict[str, Any]:
     res = NT.add_note(proj, "decision", "this decision must outlive a bootstrap",
                       amg_root=amg_root(proj))
     rc.plan(proj, amg_root(proj))         # reconcile against src
@@ -174,7 +175,7 @@ def case_retrieval(proj: Path) -> None:
     print("PASS  retrieval: a captured note is found by summary and by its tag")
 
 
-def case_consolidation_plan(proj: Path, ids: dict) -> None:
+def case_consolidation_plan(proj: Path, ids: Dict[str, Any]) -> None:
     sys.path.insert(0, str(HERE.parents[1] / "amg-consolidate" / "scripts"))
     import consolidate as CO
     CO.make_plan(proj, amg_root(proj))

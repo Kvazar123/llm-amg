@@ -47,6 +47,7 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any, Dict, Iterable, List
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -99,17 +100,17 @@ def setup_project() -> Path:
     return proj
 
 
-def queue_items(proj: Path) -> dict:
+def queue_items(proj: Path) -> Dict[str, Any]:
     qpath = proj / ".claude" / "amg" / "work" / "queue.json"
     q = json.loads(qpath.read_text(encoding="utf-8"))
     return {u["id"]: u for u in q["units"]}
 
 
-def graph_nodes(proj: Path) -> dict:
+def graph_nodes(proj: Path) -> Dict[str, Any]:
     return RC.load_nodes(gs.GraphStore(proj / ".claude" / "amg"))
 
 
-def derive_all(proj: Path, ids) -> None:
+def derive_all(proj: Path, ids: Iterable[str]) -> None:
     work = proj / ".claude" / "amg" / "work"
     work.mkdir(exist_ok=True)
     items = [{"id": uid, "summary": f"S {uid}"} for uid in ids]
