@@ -47,7 +47,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import graph_store as gs
 import reconcile as rc
@@ -60,7 +60,7 @@ except ImportError:                       # pragma: no cover
 
 # Windows consoles default to cp1252; force UTF-8 so Cyrillic summaries print.
 try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 except (AttributeError, ValueError):
     pass
 
@@ -84,11 +84,11 @@ def _make_id(ntype: str, summary: str, body: str, tags: List[str]) -> str:
     return f"note:{base}-{h}"
 
 
-def _stamp_edges(edges: List[dict]) -> List[dict]:
+def _stamp_edges(edges: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Normalize authored edges: keep {rel,to,w,coact,origin}; origin defaults to
     `authored` (alongside structural/semantic/synthesized/consolidation). A reconcile
     never rebuilds these (only structural edges are re-extracted), so they persist."""
-    out: List[dict] = []
+    out: List[Dict[str, Any]] = []
     for e in edges:
         if isinstance(e, dict) and e.get("rel") and e.get("to"):
             out.append({"rel": e["rel"], "to": e["to"],
@@ -97,7 +97,7 @@ def _stamp_edges(edges: List[dict]) -> List[dict]:
     return out
 
 
-def _merge_tags(old: Optional[list], new: List[str]) -> List[str]:
+def _merge_tags(old: Optional[List[str]], new: List[str]) -> List[str]:
     seen, out = set(), []
     for t in list(old or []) + list(new):
         t = str(t)
@@ -115,7 +115,7 @@ def _working_language(amg_root: Path) -> str:
     if f.exists():
         try:
             cfg = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
-            return cfg.get("working_language", "en")
+            return str(cfg.get("working_language", "en"))
         except (OSError, yaml.YAMLError):
             pass
     return "en"
@@ -123,8 +123,8 @@ def _working_language(amg_root: Path) -> str:
 
 def add_note(project_root: Path, ntype: str, summary: str, body: str = "",
              tags: Optional[List[str]] = None, status: str = "captured",
-             part_of: Optional[List[dict]] = None, edges: Optional[List[dict]] = None,
-             node_id: Optional[str] = None, amg_root: Optional[Path] = None) -> dict:
+             part_of: Optional[List[Dict[str, Any]]] = None, edges: Optional[List[Dict[str, Any]]] = None,
+             node_id: Optional[str] = None, amg_root: Optional[Path] = None) -> Dict[str, Any]:
     """Write (or update) one authored node through a crash-safe transaction.
 
     A new id is created in the `notes/` bucket; an existing id (explicit --id, or a

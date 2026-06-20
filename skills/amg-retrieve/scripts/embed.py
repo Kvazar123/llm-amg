@@ -32,7 +32,7 @@ import math
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Type, Union
 
 # Keep Hugging Face hub quiet: its progress bars / telemetry otherwise pollute the
 # eval and retrieval output on every model load.
@@ -103,11 +103,14 @@ class _SentenceTransformers:
         return [[float(x) for x in row] for row in vecs]
 
 
-_BACKENDS = {"model2vec": _Model2Vec, "sentence-transformers": _SentenceTransformers}
+# A loaded backend: any object exposing .encode(list[str]) -> list[list[float]].
+_Embedder = Union[_Model2Vec, _SentenceTransformers]
+_BACKENDS: Dict[str, Type[_Embedder]] = {
+    "model2vec": _Model2Vec, "sentence-transformers": _SentenceTransformers}
 _ORDER = ["model2vec", "sentence-transformers"]
 
 
-def get_embedder(cfg: dict):
+def get_embedder(cfg: Dict[str, Any]) -> Optional[_Embedder]:
     """Return an embedder (object with .encode(list[str]) -> list[list[float]]),
     or None if embeddings are disabled or no backend is installed/loadable.
     `cfg` is the retrieval config; reads cfg['embeddings'] = {enabled, backend, model}
@@ -138,11 +141,11 @@ def get_embedder(cfg: dict):
 # Node embedding cache (hash-gated)
 # --------------------------------------------------------------------------- #
 
-def node_text(node: dict) -> str:
+def node_text(node: Dict[str, Any]) -> str:
     """What we embed for a node: its summary plus its identifier (identifiers carry
     meaning), falling back to the id when there is no summary yet."""
-    nid = node.get("id", "")
-    summary = (node.get("summary") or "").strip()
+    nid = str(node.get("id", ""))
+    summary = str(node.get("summary") or "").strip()
     tail = nid.split(":", 1)[-1].replace("::", " ").replace("/", " ").replace("_", " ")
     return (summary + " " + tail).strip() or nid
 
@@ -151,10 +154,11 @@ def _text_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
-def node_embeddings(embedder, nodes: Dict[str, dict], cache_path: Path) -> Dict[str, List[float]]:
+def node_embeddings(embedder: _Embedder, nodes: Dict[str, Dict[str, Any]],
+                    cache_path: Path) -> Dict[str, List[float]]:
     """id -> unit vector. Reads/writes a JSON cache; only (re)embeds nodes whose
     embedded text changed since last time. Stable across runs."""
-    cache: Dict[str, dict] = {}
+    cache: Dict[str, Dict[str, Any]] = {}
     if cache_path.exists():
         try:
             cache = json.loads(cache_path.read_text(encoding="utf-8"))
@@ -177,15 +181,15 @@ def node_embeddings(embedder, nodes: Dict[str, dict], cache_path: Path) -> Dict[
     return {nid: cache[nid]["v"] for nid in nodes if nid in cache}
 
 
-def _save(path: Path, obj: dict) -> None:
+def _save(path: Path, obj: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, path)
 
 
-def seed_scores(embedder, nodes: Dict[str, dict], query: str,
-                cache_path: Path) -> Optional[Dict[str, float]]:
+def seed_scores(embedder: Optional[_Embedder], nodes: Dict[str, Dict[str, Any]],
+                query: str, cache_path: Path) -> Optional[Dict[str, float]]:
     """Per-node semantic similarity to the query in [0,1], or None if no embedder.
     Used by retrieve.py to blend into the teleport vector."""
     if embedder is None:
@@ -205,7 +209,7 @@ def seed_scores(embedder, nodes: Dict[str, dict], query: str,
 
 def main(argv: List[str]) -> int:
     try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     except (AttributeError, ValueError):
         pass
     import importlib

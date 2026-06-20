@@ -50,7 +50,7 @@ import tempfile
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 # Import the crash-safe store from the bootstrap skill (fixed relative layout).
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "amg-bootstrap" / "scripts"))
@@ -130,8 +130,8 @@ HUB_DOWN_RELS = {"documents", "defines", "specifies", "implements", "contains"}
 # Node IO
 # --------------------------------------------------------------------------- #
 
-def load_config(amg_root: Path) -> dict:
-    cfg = json.loads(json.dumps(DEFAULTS))               # deep copy
+def load_config(amg_root: Path) -> Dict[str, Any]:
+    cfg: Dict[str, Any] = json.loads(json.dumps(DEFAULTS))   # deep copy
     cfg["working_language"] = "en"          # summaries' language for created nodes
     # Portable default for eval_gate.cases, derived from the store location (1.32): the
     # shipped template's value is rendered to the agent dir at install; this covers a
@@ -156,21 +156,21 @@ def load_config(amg_root: Path) -> dict:
     return cfg
 
 
-def _parse(text: str) -> Optional[Tuple[dict, str]]:
+def _parse(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
     m = FRONTMATTER_RE.match(text)
     if not m:
         return None
     return (yaml.safe_load(m.group(1)) or {}), m.group(2)
 
 
-def serialize(meta: dict, body: str) -> str:
+def serialize(meta: Dict[str, Any], body: str) -> str:
     clean = {k: v for k, v in meta.items() if not k.startswith("_")}
     fm = yaml.safe_dump(clean, sort_keys=False, allow_unicode=True).strip()
     return f"---\n{fm}\n---\n{body or ''}".rstrip() + "\n"
 
 
-def load_nodes(store: gs.GraphStore) -> Dict[str, dict]:
-    out: Dict[str, dict] = {}
+def load_nodes(store: gs.GraphStore) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
     for p in store.nodes_dir.rglob("*.md"):
         parsed = _parse(p.read_text(encoding="utf-8", errors="replace"))
         if not parsed:
@@ -192,7 +192,7 @@ def _toklen(text: str) -> int:
 # weights: Hebbian + decay + prune + renormalize
 # --------------------------------------------------------------------------- #
 
-def fold_weights(project_root: Path, amg_root: Optional[Path] = None) -> dict:
+def fold_weights(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
     amg = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     store = gs.GraphStore(amg)
     store.init()
@@ -202,7 +202,7 @@ def fold_weights(project_root: Path, amg_root: Optional[Path] = None) -> dict:
     apply_hebbian = bool(cfg.get("apply_hebbian", False))
 
     log_path = store.root / "work" / "coactivation.log"
-    pair_counts: Dict[Tuple[str, str], int] = defaultdict(int)
+    pair_counts: Dict[Tuple[str, ...], int] = defaultdict(int)
     if log_path.exists():
         for line in log_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -290,16 +290,16 @@ def fold_weights(project_root: Path, amg_root: Optional[Path] = None) -> dict:
 # plan: branch budgets, salience, duplicate & episodic candidates
 # --------------------------------------------------------------------------- #
 
-def _node_text(node: dict) -> List[str]:
+def _node_text(node: Dict[str, Any]) -> List[str]:
     txt = " ".join([str(node.get("summary", "")), node.get("_body", "")[:400]])
     return [w.lower() for w in WORD_RE.findall(txt)]
 
 
-def _jaccard(a: set, b: set) -> float:
+def _jaccard(a: Set[str], b: Set[str]) -> float:
     return len(a & b) / len(a | b) if (a or b) else 0.0
 
 
-def _branch_members(nodes: Dict[str, dict]) -> Dict[str, List[str]]:
+def _branch_members(nodes: Dict[str, Dict[str, Any]]) -> Dict[str, List[str]]:
     """For each hub node, the ids that belong to its branch — reached two ways:
 
       * upward: a node whose part_of transitively reaches the hub (explicit
@@ -310,12 +310,12 @@ def _branch_members(nodes: Dict[str, dict]) -> Dict[str, List[str]]:
         membership is the directory string rather than the hub node (audit 1.20).
 
     The downward walk stops at any other hub, so branches don't bleed together."""
-    parent_topics: Dict[str, List[str]] = {
+    parent_topics: Dict[str, List[Any]] = {
         nid: [p.get("topic") for p in (n.get("part_of") or []) if isinstance(p, dict)]
         for nid, n in nodes.items()}
     hubs = [nid for nid, n in nodes.items() if n.get("type") in ("hub", "overview")]
     hub_set = set(hubs)
-    members: Dict[str, set] = {h: set() for h in hubs}
+    members: Dict[str, Set[str]] = {h: set() for h in hubs}
 
     # upward: part_of transitively reaching a hub
     for nid in nodes:
@@ -349,7 +349,7 @@ def _branch_members(nodes: Dict[str, dict]) -> Dict[str, List[str]]:
     return {h: sorted(m) for h, m in members.items()}
 
 
-def salience(node: dict, degree: int, max_degree: int, cfg: dict,
+def salience(node: Dict[str, Any], degree: int, max_degree: int, cfg: Dict[str, Any],
              grounded_inbound: bool = False) -> float:
     """Deterministic value-of-information signals (LLM judges the soft ones).
 
@@ -382,7 +382,7 @@ def salience(node: dict, degree: int, max_degree: int, cfg: dict,
                  0.20 * bridge + 0.10 * grounded, 3)
 
 
-def _degree_map(nodes: Dict[str, dict]) -> Tuple[Dict[str, int], int]:
+def _degree_map(nodes: Dict[str, Dict[str, Any]]) -> Tuple[Dict[str, int], int]:
     """Degree centrality over edges whose target is a known node (both endpoints
     counted), and the max degree. Shared by the plan (salience bridging) and apply
     (high-centrality protection) so both judge centrality identically."""
@@ -395,8 +395,8 @@ def _degree_map(nodes: Dict[str, dict]) -> Tuple[Dict[str, int], int]:
     return degree, (max(degree.values()) if degree else 1)
 
 
-def _is_protected(node: Optional[dict], degree: Dict[str, int], max_deg: int,
-                  cmp_cfg: dict) -> bool:
+def _is_protected(node: Optional[Dict[str, Any]], degree: Dict[str, int], max_deg: int,
+                  cmp_cfg: Dict[str, Any]) -> bool:
     """A node the compaction layer must not collapse/shorten/retire/archive without
     an explicit force: a protected type (decision/adr) or a node whose normalized
     degree centrality exceeds protect_min_centrality. Enforced in code, not only in
@@ -406,15 +406,15 @@ def _is_protected(node: Optional[dict], degree: Dict[str, int], max_deg: int,
     protect = {str(t).lower() for t in cmp_cfg.get("protect_types", [])}
     if (node.get("type") or "").lower() in protect:
         return True
-    deg = degree.get(node.get("id"), 0)
+    deg = degree.get(str(node.get("id", "")), 0)
     centrality = deg / max_deg if max_deg else 0.0
-    return centrality > cmp_cfg.get("protect_min_centrality", 0.7)
+    return centrality > float(cmp_cfg.get("protect_min_centrality", 0.7))
 
 
-def _inbound_grounded(nodes: Dict[str, dict]) -> set:
+def _inbound_grounded(nodes: Dict[str, Dict[str, Any]]) -> Set[str]:
     """Ids that some other node points AT with a grounding relation
     (documents/implements/specifies). Feeds salience's provenance signal (2.8 p.6)."""
-    grounded: set = set()
+    grounded: Set[str] = set()
     for n in nodes.values():
         for e in (n.get("edges") or []):
             if isinstance(e, dict) and e.get("rel") in GROUND_RELS and e.get("to") in nodes:
@@ -422,11 +422,11 @@ def _inbound_grounded(nodes: Dict[str, dict]) -> set:
     return grounded
 
 
-def _combine_part_of(memberships: List[dict], renormalize: bool) -> List[dict]:
+def _combine_part_of(memberships: List[Dict[str, Any]], renormalize: bool) -> List[Dict[str, Any]]:
     """Combine memberships by topic, keeping the strongest weight per topic, then
     renormalize to the simplex (sum <= 1) when asked. Used when merge folds two
     nodes' memberships and when introduce_subhub rewrites one topic (1.21)."""
-    out: Dict[str, dict] = {}
+    out: Dict[str, Dict[str, Any]] = {}
     for p in memberships:
         if not (isinstance(p, dict) and p.get("topic")):
             continue
@@ -443,11 +443,11 @@ def _combine_part_of(memberships: List[dict], renormalize: bool) -> List[dict]:
     return merged
 
 
-def _dedup_edges(edges: List[dict], owner_id: str) -> List[dict]:
+def _dedup_edges(edges: List[Dict[str, Any]], owner_id: str) -> List[Dict[str, Any]]:
     """Collapse edges by (rel, to): keep the max weight and SUM coact; drop a
     self-edge (to == owner). Applied to a neighbor after redirect_inbound so a node
     that pointed at both the survivor and a dropped node ends with one edge (1.22)."""
-    out: Dict[Tuple, dict] = {}
+    out: Dict[Tuple[Any, Any], Dict[str, Any]] = {}
     for e in edges:
         if not isinstance(e, dict) or not e.get("to") or e["to"] == owner_id:
             continue
@@ -461,7 +461,7 @@ def _dedup_edges(edges: List[dict], owner_id: str) -> List[dict]:
     return list(out.values())
 
 
-def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
+def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
     amg = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     store = gs.GraphStore(amg)
     store.init()
@@ -496,7 +496,7 @@ def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
 
     # episodic candidates + salience
     grounded_in = _inbound_grounded(nodes)
-    episodic = []
+    episodic: List[Dict[str, Any]] = []
     for nid, n in nodes.items():
         if (n.get("type") in cfg["episodic_types"]
                 and n.get("source_kind") not in ("derived_from_file",)):
@@ -504,7 +504,7 @@ def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
                              "salience": salience(n, degree[nid], max_deg, cfg,
                                                   nid in grounded_in),
                              "protected": (n.get("type") or "").lower() in cmp_cfg["protect_types"]})
-    episodic.sort(key=lambda x: x["salience"])
+    episodic.sort(key=lambda x: float(x["salience"]))
 
     plan = {"generated": _now(), "n_nodes": len(nodes),
             "over_budget_branches": over_budget,
@@ -531,9 +531,9 @@ DIGEST_MAX_DECISIONS = 6
 DIGEST_MAX_QUESTIONS = 4
 
 
-def _digest_rows(nodes: Dict[str, dict], types: set, cfg: dict,
-                 degree: Dict[str, int], max_deg: int, grounded_in: set,
-                 limit: int) -> List[dict]:
+def _digest_rows(nodes: Dict[str, Dict[str, Any]], types: Set[str], cfg: Dict[str, Any],
+                 degree: Dict[str, int], max_deg: int, grounded_in: Set[str],
+                 limit: int) -> List[Dict[str, Any]]:
     """The `limit` most salient nodes of the given types and a surfaced status,
     ranked by the same salience rubric consolidation uses elsewhere (so the digest
     agrees with what consolidation considers valuable)."""
@@ -545,13 +545,13 @@ def _digest_rows(nodes: Dict[str, dict], types: set, cfg: dict,
     return cand[:limit]
 
 
-def _render_digest(decisions: List[dict], questions: List[dict]) -> str:
+def _render_digest(decisions: List[Dict[str, Any]], questions: List[Dict[str, Any]]) -> str:
     head = ["<!-- AMG memory digest — auto-generated by consolidation; do not edit by hand. -->",
             "## AMG memory digest — standing decisions & open questions", ""]
     if not decisions and not questions:
         return "\n".join(head + ["_No active decisions or open questions captured yet._"]) + "\n"
 
-    def row(n: dict) -> str:
+    def row(n: Dict[str, Any]) -> str:
         summ = " ".join((n.get("summary") or "").split()) or "(no summary)"
         return f"- **{n.get('type')}** — {summ}  ·  `{n.get('id')}`"
 
@@ -560,7 +560,7 @@ def _render_digest(decisions: List[dict], questions: List[dict]) -> str:
     return "\n".join(head + body + tail) + "\n"
 
 
-def write_digest(project_root: Path, amg_root: Optional[Path] = None) -> dict:
+def write_digest(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
     """Regenerate <amg_root>/digest.md from the graph: the top standing decisions and
     open questions by salience, as a small markdown block the entry point imports every
     session (roadmap Stage 8). Deterministic and read-only over the graph — a single
@@ -584,7 +584,7 @@ def write_digest(project_root: Path, amg_root: Optional[Path] = None) -> dict:
 # eval gate: compaction must not silently hurt retrieval
 # --------------------------------------------------------------------------- #
 
-def _load_eval_modules():
+def _load_eval_modules() -> Tuple[Any, Any]:
     """Soft-import the eval harness (eval_retrieval -> retrieve) from the sibling
     amg-retrieve skill. Returns (E, R) or (None, None) when unavailable, so weights/
     plan and a no-gate apply never hard-depend on it (the gate then skips)."""
@@ -615,7 +615,7 @@ def _clone_for_eval(amg: Path) -> Path:
     return clone
 
 
-def _gate_cases(amg: Path, cases_path, project_root: Path, R) -> List[dict]:
+def _gate_cases(amg: Path, cases_path: Any, project_root: Path, R: Any) -> List[Dict[str, Any]]:
     """Load labeled cases and keep only those whose gold_ids resolve in THIS graph.
     Returns [] for missing / empty / dead cases — the gate then SKIPS (never falsely
     rejects), so the shipped unresolved template leaves a fresh install safe."""
@@ -636,7 +636,7 @@ def _gate_cases(amg: Path, cases_path, project_root: Path, R) -> List[dict]:
             and (set(c["gold_ids"]) & graph_ids)]
 
 
-def _action_ids(act: dict) -> set:
+def _action_ids(act: Dict[str, Any]) -> Set[str]:
     """Every node id an action references — for attributing a lost gold node to it."""
     ids = {act[k] for k in ("id", "keep_id", "new_id", "hub_id") if act.get(k)}
     for k in ("drop_ids", "archive_ids", "member_ids"):
@@ -644,7 +644,7 @@ def _action_ids(act: dict) -> set:
     return ids
 
 
-def _gate_regressions(baseline: dict, after: dict, actions: List[dict]) -> List[dict]:
+def _gate_regressions(baseline: Dict[str, Any], after: Dict[str, Any], actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Per case: gold that was in the pack before and is gone after, with the actions
     that referenced each lost id (best-effort attribution for the report)."""
     after_by_id = {r["id"]: r for r in after["per_case"]}
@@ -664,8 +664,8 @@ def _gate_regressions(baseline: dict, after: dict, actions: List[dict]) -> List[
     return out
 
 
-def _gate_decide(baseline: dict, after: dict, gate_cfg: dict,
-                 actions: List[dict]) -> dict:
+def _gate_decide(baseline: Dict[str, Any], after: Dict[str, Any], gate_cfg: Dict[str, Any],
+                 actions: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Compare before/after aggregates and decide. recall is PACK recall (compaction
     changes pack composition, not just top-K ranking); hop_recall isolates the edge
     contribution. on_fail reject|revert -> 'rejected' (revert == reject: we measured
@@ -690,7 +690,7 @@ def _gate_decide(baseline: dict, after: dict, gate_cfg: dict,
 
 
 def _eval_gate(project_root: Path, amg: Path, actions_path: Path,
-               actions: List[dict], cfg: dict, enabled: bool) -> Optional[dict]:
+               actions: List[Dict[str, Any]], cfg: Dict[str, Any], enabled: bool) -> Optional[Dict[str, Any]]:
     """Run the gate, or return None when it does not apply (disabled, or no compression
     action will actually run). On a fail it returns a decision dict; callers apply or
     reject accordingly. Measurement uses a graph clone and never touches the real graph
@@ -722,7 +722,7 @@ def _eval_gate(project_root: Path, amg: Path, actions_path: Path,
     return _gate_decide(baseline, after, gate_cfg, actions)
 
 
-def _write_gate_report(store: gs.GraphStore, report: dict) -> None:
+def _write_gate_report(store: gs.GraphStore, report: Dict[str, Any]) -> None:
     try:
         gs.atomic_write_text(store.root / "work" / "eval-gate-report.json",
                              json.dumps(report, ensure_ascii=False, indent=2))
@@ -735,7 +735,7 @@ def _write_gate_report(store: gs.GraphStore, report: dict) -> None:
 # --------------------------------------------------------------------------- #
 
 def apply_actions(project_root: Path, actions_path: Path,
-                  amg_root: Optional[Path] = None, _run_gate: bool = True) -> dict:
+                  amg_root: Optional[Path] = None, _run_gate: bool = True) -> Dict[str, Any]:
     amg = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     store = gs.GraphStore(amg)
     cfg = load_config(amg)
@@ -767,13 +767,13 @@ def apply_actions(project_root: Path, actions_path: Path,
         renorm = bool(cfg.get("part_of_renormalize", True))
         degree, max_deg = _degree_map(nodes)
 
-        def archive(nid: str):
+        def archive(nid: str) -> None:
             n = nodes.get(nid)
             if n:
                 tx.write(f"{archive_dir}/{Path(n['_path']).name}", serialize(n, n["_body"]))
                 tx.delete(n["_path"])
 
-        def redirect_inbound(old_ids: set, new_id: str):
+        def redirect_inbound(old_ids: Set[str], new_id: str) -> None:
             """Repoint every edge/membership that targets an archived id to the
             survivor, then dedup the neighbor's edges by (rel,to) and drop any
             self-edge the redirect created (1.22)."""
@@ -793,7 +793,7 @@ def apply_actions(project_root: Path, actions_path: Path,
                     n["edges"] = _dedup_edges(n.get("edges") or [], n["id"])
                     tx.write(n["_path"], serialize(n, n["_body"]))
 
-        def newpath(nid: str, kind="notes"):
+        def newpath(nid: str, kind: str = "notes") -> str:
             slug = re.sub(r"[^\w.-]+", "_", nid.split(":", 1)[-1]).strip("_")[:48] or "node"
             h = gs.sha256_text(nid)[:8]
             return f"nodes/{kind}/{slug}-{h}.md"
@@ -861,9 +861,9 @@ def apply_actions(project_root: Path, actions_path: Path,
                 drop = set(act.get("drop_ids", []))
                 # fold edges by (rel,to): max weight + summed coact; drop a self-edge
                 # (a dropped node pointing back at keep) and edges into the drop set
-                folded: Dict[Tuple[str, str], dict] = {}
+                folded: Dict[Tuple[Any, Any], Dict[str, Any]] = {}
 
-                def _fold(e: dict) -> None:
+                def _fold(e: Dict[str, Any]) -> None:
                     if not isinstance(e, dict) or not e.get("to"):
                         return
                     if e["to"] == keep_id or e["to"] in drop:

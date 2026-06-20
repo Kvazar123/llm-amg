@@ -48,7 +48,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 try:
     import yaml
@@ -57,7 +57,7 @@ except ImportError:                       # pragma: no cover
     raise
 
 try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 except (AttributeError, ValueError):
     pass
 
@@ -112,11 +112,11 @@ def _sha(text: str) -> str:
 # Config + source resolution (mirror_path / absorb_path, str or list)
 # --------------------------------------------------------------------------- #
 
-def load_config(amg_root: Path) -> dict:
+def load_config(amg_root: Path) -> Dict[str, Any]:
     return yaml.safe_load((amg_root / "config.yml").read_text(encoding="utf-8")) or {}
 
 
-def _as_list(val) -> List[str]:
+def _as_list(val: Any) -> List[str]:
     if val is None:
         return []
     if isinstance(val, str):
@@ -124,7 +124,7 @@ def _as_list(val) -> List[str]:
     return [str(v) for v in val]
 
 
-def resolve_sources(config: dict) -> List[Tuple[str, str]]:
+def resolve_sources(config: Dict[str, Any]) -> List[Tuple[str, str]]:
     """Return [(path, policy)]. Prefers mirror_path/absorb_path/absorb_once_path; falls
     back to a legacy `sources:` dict so existing configs keep working. Order matters: on
     an overlap the dedup in reconcile.plan keeps the LAST, so the most-preserving policy
@@ -142,13 +142,13 @@ def resolve_sources(config: dict) -> List[Tuple[str, str]]:
     return out
 
 
-def detect_policy_conflicts(units: List[dict]) -> List[dict]:
+def detect_policy_conflicts(units: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Unit ids produced under MORE THAN ONE policy — a file that falls under two source
     roots of different intent (e.g. mirror_path: . and absorb_path: data; audit 1.29).
     The dedup in reconcile.plan keeps the LAST source in resolve_sources order
     (mirror -> absorb -> absorb_once), so the most-preserving policy wins; this surfaces
     the overlap so the choice is never silent. Returns [{id, policies:[...]}], sorted."""
-    pols: Dict[str, set] = {}
+    pols: Dict[str, Set[str]] = {}
     for u in units:
         p = u.get("policy")
         if p:
@@ -186,14 +186,14 @@ def _gitignored(rel: str, patterns: List[str]) -> bool:
     return False
 
 
-def _norm_globs(vals) -> List[str]:
+def _norm_globs(vals: Any) -> List[str]:
     """Normalize an exclude list the way gitignore patterns are read: drop blanks and a
     trailing '/' so 'raw/scratch/' matches like the gitignore rule would (via the
     pat + '/*' branch in _gitignored). Used for `exclude` and the per-intent variants."""
     return [v.rstrip("/") for v in _as_list(vals) if str(v).strip()]
 
 
-def _excludes_for_policy(config: dict, policy: str) -> List[str]:
+def _excludes_for_policy(config: Dict[str, Any], policy: str) -> List[str]:
     """Global `exclude` plus the per-intent `mirror_exclude` / `absorb_exclude` for this
     source's policy (additive). All are glob patterns matched by the same engine as
     .gitignore. Empty by default, so behavior is unchanged until the keys are set."""
@@ -205,7 +205,7 @@ def _excludes_for_policy(config: dict, policy: str) -> List[str]:
     return out
 
 
-def _effective_ignore_dirs(amg_root: Optional[Path]) -> set:
+def _effective_ignore_dirs(amg_root: Optional[Path]) -> Set[str]:
     """DEFAULT_IGNORE_DIRS plus the RESOLVED agent dir, so the engine never indexes its
     own directory whatever it is named (.claude / .agents / custom; roadmap 4.9). The
     name is derived from the store location <agent_dir>/amg, which is authoritative —
@@ -231,7 +231,7 @@ def _gitignore_for_source(base_rel: str, gitignore: List[str]) -> List[str]:
 
 
 def iter_source_files(project_root: Path, base_rel: str, extra_excludes: List[str],
-                      gitignore: List[str], ignore_dirs: set) -> Iterable[Path]:
+                      gitignore: List[str], ignore_dirs: Set[str]) -> Iterable[Path]:
     """Yield ingestible files under a configured source. Filtering, in order: the hard
     DEFAULT_IGNORE / agent-dir set (ignore_dirs), then .gitignore minus the patterns the
     explicit source opted past, then the source's effective excludes."""
@@ -302,7 +302,7 @@ def classify(path: Path) -> Tuple[str, str, Optional[str], bool]:
 _OVERRIDE_CATEGORIES = {"code", "doc", "data"}
 
 
-def load_overrides(amg_root: Optional[Path]) -> Dict[str, dict]:
+def load_overrides(amg_root: Optional[Path]) -> Dict[str, Dict[str, Any]]:
     """Read the amg-classifier category overrides for ambiguous files (audit 1.13).
 
     Format: { "<rel/path>": {"category": code|doc|data, "language": <grammar|null>} }.
@@ -340,7 +340,7 @@ def _route_override(category: str, language: Optional[str]) -> Tuple[str, str, O
     return ("doc", "paragraphs", None)
 
 
-def _classify_path(path: Path, rel: str, overrides: Dict[str, dict]
+def _classify_path(path: Path, rel: str, overrides: Dict[str, Dict[str, Any]]
                    ) -> Tuple[str, str, Optional[str], bool, bool]:
     """classify(), but an explicit override for this rel-path wins over the
     deterministic guess (applied BEFORE the content sniff, so it routes the file
@@ -358,13 +358,13 @@ def _classify_path(path: Path, rel: str, overrides: Dict[str, dict]
 # Chunkers
 # --------------------------------------------------------------------------- #
 
-def _file_unit(rel: str, category: str, policy: str, text: str, lang: Optional[str] = None) -> dict:
+def _file_unit(rel: str, category: str, policy: str, text: str, lang: Optional[str] = None) -> Dict[str, Any]:
     return {"id": f"{category}:{rel}", "kind": "file", "source_path": rel,
             "category": category, "policy": policy, "qualname": "", "lineno": 1,
             "lang": lang, "content_sha": _sha(text)}
 
 
-def _python_units(path: Path, rel: str, policy: str) -> List[dict]:
+def _python_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
     text = path.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines(keepends=True)
     try:
@@ -384,7 +384,7 @@ def _python_units(path: Path, rel: str, policy: str) -> List[dict]:
               "lang": "python", "content_sha": _sha(text),
               "imports": sorted(set(imports))}]
 
-    def calls_in(node) -> List[str]:
+    def calls_in(node: ast.AST) -> List[str]:
         names = []
         for sub in ast.walk(node):
             if isinstance(sub, ast.Call):
@@ -395,10 +395,10 @@ def _python_units(path: Path, rel: str, policy: str) -> List[dict]:
                     names.append(f.attr)
         return sorted(set(names))
 
-    def slice_src(node) -> str:
+    def slice_src(node: ast.stmt) -> str:
         return "".join(lines[node.lineno - 1: getattr(node, "end_lineno", node.lineno)])
 
-    def walk(node, prefix: str):
+    def walk(node: ast.Module | ast.ClassDef, prefix: str) -> None:
         for child in node.body:
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 qual = f"{prefix}{child.name}"
@@ -432,7 +432,7 @@ _TS_CALL = {"call", "call_expression", "function_call_expression",
             "method_invocation", "invocation_expression"}
 
 
-def _treesitter_units(path: Path, rel: str, policy: str, lang: str) -> Optional[List[dict]]:
+def _treesitter_units(path: Path, rel: str, policy: str, lang: str) -> Optional[List[Dict[str, Any]]]:
     """Function/class granularity + calls via tree-sitter. Returns None to signal
     'unavailable -> fall back to a single file unit'.
 
@@ -450,41 +450,41 @@ def _treesitter_units(path: Path, rel: str, policy: str, lang: str) -> Optional[
     try:
         data = path.read_bytes()
         try:
-            tree = parser.parse(data)
+            tree = parser.parse(data)         # type: ignore[arg-type]
         except TypeError:                     # alef binding wants str, not bytes
             tree = parser.parse(data.decode("utf-8", "replace"))
     except Exception:
         return None
 
-    def _call(v):
+    def _call(v: Any) -> Any:
         return v() if callable(v) else v
 
-    def kind_of(node) -> str:
+    def kind_of(node: Any) -> str:
         t = getattr(node, "type", None)
         return t if isinstance(t, str) else _call(node.kind)
 
-    def children_of(node) -> list:
+    def children_of(node: Any) -> List[Any]:
         ch = getattr(node, "children", None)
         if isinstance(ch, list):
             return ch
         return [node.child(i) for i in range(_call(node.child_count))]
 
-    def text_of(node) -> str:
+    def text_of(node: Any) -> str:
         raw = getattr(node, "text", None)
         if isinstance(raw, bytes):
             return raw.decode("utf-8", "replace")
         return data[_call(node.start_byte):_call(node.end_byte)].decode("utf-8", "replace")
 
-    def line_of(node) -> int:
+    def line_of(node: Any) -> int:
         pt = _call(node.start_point if hasattr(node, "start_point")
                    else node.start_position)
-        return (pt[0] if isinstance(pt, tuple) else _call(pt.row)) + 1
+        return int(pt[0] if isinstance(pt, tuple) else _call(pt.row)) + 1
 
     text = data.decode("utf-8", "replace")
     units = [_file_unit(rel, "code", policy, text, lang)]
     units[0]["kind"] = "module"
 
-    def name_of(node) -> Optional[str]:
+    def name_of(node: Any) -> Optional[str]:
         n = node.child_by_field_name("name")
         if n is not None:
             return text_of(n)
@@ -493,7 +493,7 @@ def _treesitter_units(path: Path, rel: str, policy: str, lang: str) -> Optional[
                 return text_of(c)
         return None
 
-    def calls_in(node) -> List[str]:
+    def calls_in(node: Any) -> List[str]:
         out = []
         stack = [node]
         while stack:
@@ -509,7 +509,7 @@ def _treesitter_units(path: Path, rel: str, policy: str, lang: str) -> Optional[
             stack.extend(ch)
         return sorted({c for c in out if c.isidentifier()})
 
-    def walk(node):
+    def walk(node: Any) -> None:
         for child in children_of(node):
             k = kind_of(child)
             if k in _TS_DEF:
@@ -525,8 +525,9 @@ def _treesitter_units(path: Path, rel: str, policy: str, lang: str) -> Optional[
                         "content_sha": _sha(src), "calls": calls_in(child)})
             walk(child)
 
-    root = tree.root_node
-    walk(_call(root))
+    if tree is None:                          # parser returned no tree -> skip
+        return None
+    walk(_call(tree.root_node))
     return units
 
 
@@ -541,10 +542,12 @@ def _slug(title: str) -> str:
     return re.sub(r"[\s-]+", "-", s)[:60] or "section"
 
 
-def _markdown_units(path: Path, rel: str, policy: str) -> List[dict]:
+def _markdown_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
     text = path.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines(keepends=True)
-    sections, cur_title, cur_start = [], None, 0
+    sections: List[Tuple[Optional[str], int, int]] = []
+    cur_title: Optional[str] = None
+    cur_start = 0
     fence = None                 # opening fence marker while inside a code block
     for i, line in enumerate(lines):
         raw = line.rstrip("\n")
@@ -565,7 +568,8 @@ def _markdown_units(path: Path, rel: str, policy: str) -> List[dict]:
             cur_title, cur_start = m.group(2), i
     sections.append((cur_title, cur_start, len(lines)))
 
-    units, seen = [], {}
+    units: List[Dict[str, Any]] = []
+    seen: Dict[str, int] = {}
     for title, start, end in sections:
         chunk = "".join(lines[start:end]).strip()
         if not chunk:
@@ -583,7 +587,7 @@ def _markdown_units(path: Path, rel: str, policy: str) -> List[dict]:
     return units or [_file_unit(rel, "doc", policy, text, "markdown")]
 
 
-def _text_units(path: Path, rel: str, policy: str) -> List[dict]:
+def _text_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
     text = path.read_text(encoding="utf-8", errors="replace")
     blocks, idx, n = [], 0, 0
     for raw in re.split(r"\n\s*\n", text):
@@ -601,7 +605,7 @@ def _text_units(path: Path, rel: str, policy: str) -> List[dict]:
 _RST_ADORN = re.compile(r"^([=\-~^\"#*+.:'`_])\1{2,}\s*$")
 
 
-def _rst_units(path: Path, rel: str, policy: str) -> List[dict]:
+def _rst_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
     """reStructuredText sections by adornment: a title is a line whose NEXT line is a
     punctuation run at least as long as the title (RST's underline rule), optionally
     preceded by a matching overline. Splits into sections like markdown (the `headings`
@@ -628,7 +632,7 @@ def _rst_units(path: Path, rel: str, policy: str) -> List[dict]:
     if not heads:
         return [_file_unit(rel, "doc", policy, text, "rst")]
 
-    units: List[dict] = []
+    units: List[Dict[str, Any]] = []
     seen: Dict[str, int] = {}
     if heads[0][1] > 0:
         pre = "".join(lines[:heads[0][1]]).strip()
@@ -660,7 +664,7 @@ _LOG_TS = re.compile(
     r"|[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})")      # syslog: Jun 18 10:00:00
 
 
-def _log_units(path: Path, rel: str, policy: str, group_lines: int = 50) -> List[dict]:
+def _log_units(path: Path, rel: str, policy: str, group_lines: int = 50) -> List[Dict[str, Any]]:
     """Group a .log into bounded episodes: timestamped lines confirm it is a log, then
     consecutive lines are bundled into windows of `group_lines` (one `block` unit each,
     `e{n}`). The window keeps a long log from becoming one huge node AND from exploding
@@ -671,7 +675,7 @@ def _log_units(path: Path, rel: str, policy: str, group_lines: int = 50) -> List
     lines = text.splitlines(keepends=True)
     if not any(_LOG_TS.match(ln) for ln in lines):
         return _text_units(path, rel, policy)
-    units: List[dict] = []
+    units: List[Dict[str, Any]] = []
     n = 0
     step = max(1, group_lines)
     for start in range(0, len(lines), step):
@@ -707,7 +711,7 @@ def _has_child_container(v: object) -> bool:
 
 
 def _json_descend(rel: str, policy: str, parent: str, container: object, depth: int,
-                  max_depth: int, recurse_min: int, units: List[dict], cap: int) -> None:
+                  max_depth: int, recurse_min: int, units: List[Dict[str, Any]], cap: int) -> None:
     """Emit record units for the children of a large nested container, recursing into
     children that are themselves large nested structures (depth-limited). A child that
     is a leaf or a small/flat container becomes one record keyed by its full path
@@ -730,7 +734,7 @@ def _json_descend(rel: str, policy: str, parent: str, container: object, depth: 
 
 
 def _data_units(path: Path, rel: str, policy: str, max_depth: int = 4,
-                recurse_min: int = 2048, cap: int = 500) -> List[dict]:
+                recurse_min: int = 2048, cap: int = 500) -> List[Dict[str, Any]]:
     """JSON/YAML records. Each top-level entry is one record, EXCEPT a large nested
     container (serialized JSON over `recurse_min`, holding nested structure) is split
     into sub-records by key path so deep structure is not lost (recursive chunker,
@@ -749,7 +753,7 @@ def _data_units(path: Path, rel: str, policy: str, max_depth: int = 4,
         items = list(enumerate(obj))
     else:
         return [_file_unit(rel, "data", policy, text)]
-    units: List[dict] = []
+    units: List[Dict[str, Any]] = []
     for key, val in items:
         if len(units) >= cap:
             break
@@ -765,7 +769,7 @@ def _data_units(path: Path, rel: str, policy: str, max_depth: int = 4,
     return units or [_file_unit(rel, "data", policy, text)]
 
 
-def _ndjson_units(path: Path, rel: str, policy: str, cap: int = 500) -> List[dict]:
+def _ndjson_units(path: Path, rel: str, policy: str, cap: int = 500) -> List[Dict[str, Any]]:
     """Newline-delimited JSON (.ndjson): one `record` unit per line, since each line is
     an independent JSON value (yaml.safe_load, used by _data_units, cannot read this
     line-oriented form). A line's own id-ish field (id/key/name/_id) gives a stable
@@ -773,7 +777,7 @@ def _ndjson_units(path: Path, rel: str, policy: str, cap: int = 500) -> List[dic
     source line. Unparseable lines are skipped; a file with none falls back to one file
     unit. Capped at the first `cap` records (json_max_nodes), like _data_units."""
     text = path.read_text(encoding="utf-8", errors="replace")
-    units: List[dict] = []
+    units: List[Dict[str, Any]] = []
     seen: Dict[str, int] = {}
     n = 0
     for i, line in enumerate(text.splitlines(), 1):
@@ -804,7 +808,7 @@ def _ndjson_units(path: Path, rel: str, policy: str, cap: int = 500) -> List[dic
     return units or [_file_unit(rel, "data", policy, text, "ndjson")]
 
 
-def _csv_units(path: Path, rel: str, policy: str) -> List[dict]:
+def _csv_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
     """One STRUCTURAL unit per CSV/TSV file: a table is data, not prose (like XLSX), so
     the stored text describes it — column headers, row count, a few sample rows — not
     every cell. One unit per file keeps a 10k-row CSV from exploding into 10k nodes;
@@ -855,7 +859,7 @@ def session_attachment_marker(n: int, label: str = "") -> str:
     return f"== Attachment {n}: {label} ==" if label else f"== Attachment {n} =="
 
 
-def _session_units(path: Path, rel: str, policy: str) -> List[dict]:
+def _session_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
     """One unit per conversation turn in a captured session dump. Turns are split on
     the role markers the dump writer emits; the leading frontmatter (everything before
     the first marker) is skipped. Each turn is a `section` so it is episodic — a long
@@ -895,7 +899,7 @@ _CHAT_THREAD_KEYS = ("conversation_id", "thread_id", "session_id", "channel", "c
 _CHAT_CONTAINER_KEYS = ("messages", "conversation", "conversations", "turns", "history", "log")
 
 
-def _msg_get(d: dict, keys: Tuple[str, ...]) -> Optional[object]:
+def _msg_get(d: Dict[str, Any], keys: Tuple[str, ...]) -> Optional[object]:
     """First present, non-empty value among `keys` (synonym-tolerant field lookup)."""
     for k in keys:
         v = d.get(k)
@@ -933,12 +937,12 @@ def _chat_text(content: object) -> str:
     return "" if content is None else str(content)
 
 
-def _chat_messages(obj: object) -> Optional[List[dict]]:
+def _chat_messages(obj: object) -> Optional[List[Dict[str, Any]]]:
     """Extract the message list from a parsed chat export, or None if it does not look
     like one. Accepts a bare list or a dict carrying a messages-ish list; requires at
     least two dict records, most of which have a role-ish AND a text-ish field — so an
     ordinary JSON array of records is NOT misread as a chat."""
-    seq: Optional[list] = None
+    seq: Optional[List[Any]] = None
     if isinstance(obj, list):
         seq = obj
     elif isinstance(obj, dict):
@@ -963,7 +967,7 @@ def _chat_qual(mid: str) -> str:
     return q or "m"
 
 
-def _chat_units(path: Path, rel: str, policy: str) -> Optional[List[dict]]:
+def _chat_units(path: Path, rel: str, policy: str) -> Optional[List[Dict[str, Any]]]:
     """One `section` unit per message of a structured chat export (JSON or NDJSON).
     Returns None when the file is not a recognizable chat -> the caller falls back to the
     json / ndjson record chunker. Each message carries `follows` (the previous turn in
@@ -988,7 +992,7 @@ def _chat_units(path: Path, rel: str, policy: str) -> Optional[List[dict]]:
     if not msgs:
         return None
 
-    units: List[dict] = []
+    units: List[Dict[str, Any]] = []
     seen: Dict[str, int] = {}
     last_by_thread: Dict[str, str] = {}
     for n, m in enumerate(msgs, 1):
@@ -1004,7 +1008,7 @@ def _chat_units(path: Path, rel: str, policy: str) -> Optional[List[dict]]:
         header = (f"[{role}]" + (f" {ts}" if ts else "")
                   + (f" (thread {thread})" if thread is not None else ""))
         full = (header + "\n" + body).strip()
-        unit = {"id": f"doc:{rel}::{qual}", "kind": "section", "source_path": rel,
+        unit: Dict[str, Any] = {"id": f"doc:{rel}::{qual}", "kind": "section", "source_path": rel,
                 "category": "doc", "policy": policy, "qualname": qual, "lineno": 1,
                 "lang": "chat", "content_sha": _sha(full), "text": full}
         tkey = str(thread) if thread is not None else "_"
@@ -1033,7 +1037,7 @@ def _has_role_markers(path: Path) -> bool:
 # without re-opening the binary. Returns None when the library is absent or the
 # file can't be read (e.g. a scanned PDF with no text layer) -> the file is skipped.
 
-def _pdf_units(path: Path, rel: str, policy: str) -> Optional[List[dict]]:
+def _pdf_units(path: Path, rel: str, policy: str) -> Optional[List[Dict[str, Any]]]:
     try:
         from pypdf import PdfReader
     except Exception:
@@ -1056,7 +1060,7 @@ def _pdf_units(path: Path, rel: str, policy: str) -> Optional[List[dict]]:
     return units or None          # no extractable text (scanned?) -> skip
 
 
-def _docx_units(path: Path, rel: str, policy: str) -> Optional[List[dict]]:
+def _docx_units(path: Path, rel: str, policy: str) -> Optional[List[Dict[str, Any]]]:
     try:
         import docx                                  # python-docx
     except Exception:
@@ -1065,7 +1069,9 @@ def _docx_units(path: Path, rel: str, policy: str) -> Optional[List[dict]]:
         document = docx.Document(str(path))
     except Exception:
         return None
-    sections, title, body = [], None, []             # chunk by heading, like markdown
+    sections: List[Tuple[Optional[str], List[str]]] = []
+    title: Optional[str] = None
+    body: List[str] = []                             # chunk by heading, like markdown
     for para in document.paragraphs:
         txt = para.text.strip()
         style = (para.style.name or "") if para.style else ""
@@ -1077,7 +1083,8 @@ def _docx_units(path: Path, rel: str, policy: str) -> Optional[List[dict]]:
             body.append(txt)
     sections.append((title, body))
 
-    units, seen = [], {}
+    units: List[Dict[str, Any]] = []
+    seen: Dict[str, int] = {}
     for title, paras in sections:
         chunk = "\n".join(([title] if title else []) + paras).strip()
         if not chunk:
@@ -1092,7 +1099,7 @@ def _docx_units(path: Path, rel: str, policy: str) -> Optional[List[dict]]:
     return units or None
 
 
-def _xlsx_units(path: Path, rel: str, policy: str) -> Optional[List[dict]]:
+def _xlsx_units(path: Path, rel: str, policy: str) -> Optional[List[Dict[str, Any]]]:
     """One unit per SHEET. A spreadsheet is data, not prose, so the stored text is a
     STRUCTURAL description (sheet name, size, column headers, a few sample rows),
     not a dump of every cell."""
@@ -1124,7 +1131,7 @@ def _xlsx_units(path: Path, rel: str, policy: str) -> Optional[List[dict]]:
     return units or None
 
 
-def _pptx_units(path: Path, rel: str, policy: str) -> Optional[List[dict]]:
+def _pptx_units(path: Path, rel: str, policy: str) -> Optional[List[Dict[str, Any]]]:
     """One unit per SLIDE via python-pptx (optional pure-Python lib; graceful skip like
     PDF/DOCX/XLSX). Concatenates each slide's shape text and carries it as `text` so the
     builder summarizes without opening the binary. Returns None when the lib is absent
@@ -1151,7 +1158,7 @@ def _pptx_units(path: Path, rel: str, policy: str) -> Optional[List[dict]]:
     return units or None
 
 
-CHUNKERS = {"python": _python_units, "treesitter": _treesitter_units,
+CHUNKERS: Dict[str, Callable[..., Any]] = {"python": _python_units, "treesitter": _treesitter_units,
             "headings": _markdown_units, "paragraphs": _text_units, "json": _data_units,
             "ndjson": _ndjson_units, "csv": _csv_units, "rst": _rst_units, "log": _log_units,
             "pdf": _pdf_units, "docx": _docx_units, "xlsx": _xlsx_units, "pptx": _pptx_units,
@@ -1162,7 +1169,7 @@ CHUNKERS = {"python": _python_units, "treesitter": _treesitter_units,
 # Captured sessions as a source (Stage 9)
 # --------------------------------------------------------------------------- #
 
-def session_dir(project_root: Path, config: dict, amg_root: Optional[Path]) -> Optional[Path]:
+def session_dir(project_root: Path, config: Dict[str, Any], amg_root: Optional[Path]) -> Optional[Path]:
     """Resolve the captured-sessions folder. `config['sessions']` is an optional
     project-relative override; by default it DERIVES as <store>/sessions from the
     resolved root, so it is correct under any agent dir (.claude / .agents / ...) with
@@ -1187,15 +1194,15 @@ def _iter_session_files(base: Path) -> Iterable[Path]:
             yield p
 
 
-def _extract_sessions(project_root: Path, config: dict,
-                      amg_root: Optional[Path]) -> List[dict]:
+def _extract_sessions(project_root: Path, config: Dict[str, Any],
+                      amg_root: Optional[Path]) -> List[Dict[str, Any]]:
     """Captured session dumps as an ordinary source, routed to the session chunker.
     Policy comes from `session_policy` (absorb by default)."""
     base = session_dir(project_root, config, amg_root)
     if base is None:
         return []
     policy = str(config.get("session_policy", "absorb"))
-    out: List[dict] = []
+    out: List[Dict[str, Any]] = []
     for p in _iter_session_files(base):
         try:
             rel = p.relative_to(project_root).as_posix()
@@ -1209,7 +1216,7 @@ def _extract_sessions(project_root: Path, config: dict,
 # Driver
 # --------------------------------------------------------------------------- #
 
-def extract(project_root: Path, config: dict, amg_root: Optional[Path] = None) -> List[dict]:
+def extract(project_root: Path, config: Dict[str, Any], amg_root: Optional[Path] = None) -> List[Dict[str, Any]]:
     gitignore = load_gitignore(project_root) if config.get("respect_gitignore", True) else []
     ignore_dirs = _effective_ignore_dirs(amg_root)
     overrides = load_overrides(amg_root)
@@ -1217,7 +1224,7 @@ def extract(project_root: Path, config: dict, amg_root: Optional[Path] = None) -
     j_depth = int(config.get("json_max_depth", 4) or 4)        # recursive-JSON tunables
     j_min = int(config.get("json_recurse_min_chars", 2048) or 2048)
     j_cap = int(config.get("json_max_nodes", 500) or 500)
-    units: List[dict] = []
+    units: List[Dict[str, Any]] = []
     for base_rel, policy in resolve_sources(config):
         extra = _excludes_for_policy(config, policy)
         for path in iter_source_files(project_root, base_rel, extra, gitignore, ignore_dirs):
@@ -1226,8 +1233,8 @@ def extract(project_root: Path, config: dict, amg_root: Optional[Path] = None) -
             if chunker == "skip":
                 continue
             if chunker == "treesitter":
-                got = _treesitter_units(path, rel, policy, lang)
-                if got is None:                       # graceful degradation
+                got = _treesitter_units(path, rel, policy, lang) if lang else None
+                if got is None:                       # graceful degradation (no grammar)
                     got = [_file_unit(rel, "code", policy,
                                       path.read_text(encoding="utf-8", errors="replace"), lang)]
                 units += got
@@ -1253,13 +1260,17 @@ def extract(project_root: Path, config: dict, amg_root: Optional[Path] = None) -
     return units
 
 
-def _stats(project_root: Path, config: dict, amg_root: Optional[Path] = None) -> dict:
+def _stats(project_root: Path, config: Dict[str, Any], amg_root: Optional[Path] = None) -> Dict[str, Any]:
     gitignore = load_gitignore(project_root) if config.get("respect_gitignore", True) else []
     ignore_dirs = _effective_ignore_dirs(amg_root)
     overrides = load_overrides(amg_root)
     from collections import Counter
-    cat, langs, skipped, ambiguous, resolved = Counter(), Counter(), 0, [], []
-    by_source: Dict[str, dict] = {}
+    cat: Counter[str] = Counter()
+    langs: Counter[str] = Counter()
+    skipped = 0
+    ambiguous: List[str] = []
+    resolved: List[str] = []
+    by_source: Dict[str, Dict[str, Any]] = {}
     seen_src: Dict[str, str] = {}               # rel -> first source policy (overlap detect, 1.29)
     overlaps: List[str] = []
     for base_rel, policy in resolve_sources(config):

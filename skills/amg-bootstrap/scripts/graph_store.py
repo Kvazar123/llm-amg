@@ -55,7 +55,7 @@ import hashlib
 import tempfile
 import contextlib
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 
 # --------------------------------------------------------------------------- #
@@ -117,8 +117,8 @@ def atomic_delete(path: Path) -> None:
 # Store-root resolution (roadmap 4.9: agent dir is a parameter, not `.claude`)
 # --------------------------------------------------------------------------- #
 
-def resolve_amg_root(cli_root: os.PathLike | str | None = None,
-                     start: os.PathLike | str | None = None) -> Path:
+def resolve_amg_root(cli_root: os.PathLike[str] | str | None = None,
+                     start: os.PathLike[str] | str | None = None) -> Path:
     """Resolve the AMG store root (<agent_dir>/amg). Chain, first hit wins:
 
       1. explicit --root (the agent dir, e.g. `.claude` or `.agents`);
@@ -163,7 +163,7 @@ class StoreLockError(RuntimeError):
 class GraphStore:
     """Transactional, recoverable store rooted at `.claude/amg/`."""
 
-    def __init__(self, root: os.PathLike | str):
+    def __init__(self, root: os.PathLike[str] | str):
         self.root = Path(root).resolve()
         self.journal_dir = self.root / "journal"
         self.nodes_dir = self.root / "nodes"
@@ -201,7 +201,8 @@ class GraphStore:
             return True              # unknown (e.g. Windows): assume alive
 
     @contextlib.contextmanager
-    def lock(self, stale_seconds: int = 3600, wait_seconds: float = 0.0):
+    def lock(self, stale_seconds: int = 3600,
+             wait_seconds: float = 0.0) -> Iterator["GraphStore"]:
         """Acquire the single-writer lock. Steals a stale lock (dead pid or too old)."""
         self.root.mkdir(parents=True, exist_ok=True)
         deadline = time.time() + wait_seconds
@@ -290,7 +291,7 @@ class GraphStore:
             handled.append(txdir.name + ":redone")
         return handled
 
-    def _apply_manifest(self, manifest: dict, txdir: Path,
+    def _apply_manifest(self, manifest: Dict[str, Any], txdir: Path,
                         _fault_after_apply_ops: Optional[int] = None) -> None:
         """Apply a transaction's declarative end state. Idempotent."""
         applied = 0
@@ -317,10 +318,10 @@ class GraphStore:
     # -- verification -------------------------------------------------------- #
 
     def verify(self, repair: bool = False, referenced_paths: Optional[List[str]] = None
-               ) -> Dict[str, list]:
+               ) -> Dict[str, List[str]]:
         """Check store invariants. With repair=True, fix what is safely fixable."""
-        problems: Dict[str, list] = {"pending_transactions": [], "stale_lock": [],
-                                     "dangling_references": []}
+        problems: Dict[str, List[str]] = {"pending_transactions": [], "stale_lock": [],
+                                          "dangling_references": []}
 
         pending = [d.name for d in self.journal_dir.iterdir()
                    if self.journal_dir.exists() and d.is_dir()] if self.journal_dir.exists() else []
@@ -424,7 +425,7 @@ class Transaction:
         blobs = txdir / "blobs"
         blobs.mkdir(parents=True, exist_ok=True)
 
-        ops: List[dict] = []
+        ops: List[Dict[str, Any]] = []
         # 1. Stage every write as a content-addressed blob.
         for relpath, data in self._writes.items():
             sha = sha256_bytes(data)

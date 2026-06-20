@@ -48,7 +48,7 @@ import time
 import tempfile
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     import yaml
@@ -59,7 +59,7 @@ except ImportError:                       # pragma: no cover
 # Windows consoles default to cp1252; force UTF-8 stdout so non-ASCII content
 # (Cyrillic summaries, paths) prints without crashing.
 try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 except (AttributeError, ValueError):
     pass
 
@@ -133,7 +133,7 @@ def _default_store() -> Path:
     return here if here.is_dir() else Path.cwd() / ".claude" / "amg"
 
 
-def _deep_merge(base: dict, over: dict) -> dict:
+def _deep_merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
     """Per-key overlay: nested dicts merge key-by-key, scalars/lists replace whole.
 
     Config must never silently drop a built-in default. An incomplete
@@ -150,9 +150,9 @@ def _deep_merge(base: dict, over: dict) -> dict:
     return out
 
 
-def load_config(store_root: Path) -> dict:
+def load_config(store_root: Path) -> Dict[str, Any]:
     f = store_root / "config.yml"
-    raw: dict = {}
+    raw: Dict[str, Any] = {}
     if f.exists():
         raw = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
     cfg = _deep_merge(DEFAULTS, (raw.get("retrieval") or {}))
@@ -165,7 +165,7 @@ def load_config(store_root: Path) -> dict:
     return cfg
 
 
-def _parse(text: str) -> Optional[Tuple[dict, str]]:
+def _parse(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
     m = FRONTMATTER_RE.match(text)
     if not m:
         return None
@@ -173,9 +173,9 @@ def _parse(text: str) -> Optional[Tuple[dict, str]]:
     return meta, m.group(2)
 
 
-def load_nodes(store_root: Path) -> Dict[str, dict]:
+def load_nodes(store_root: Path) -> Dict[str, Dict[str, Any]]:
     """id -> {meta fields, body, text}. `text` is the bag of words used for BM25."""
-    nodes: Dict[str, dict] = {}
+    nodes: Dict[str, Dict[str, Any]] = {}
     nodes_dir = store_root / "nodes"
     if not nodes_dir.exists():
         return nodes
@@ -212,7 +212,7 @@ def load_nodes(store_root: Path) -> Dict[str, dict]:
 # --------------------------------------------------------------------------- #
 
 class BM25:
-    def __init__(self, nodes: Dict[str, dict], k1: float = 1.5, b: float = 0.75):
+    def __init__(self, nodes: Dict[str, Dict[str, Any]], k1: float = 1.5, b: float = 0.75):
         self.k1, self.b = k1, b
         self.ids = list(nodes)
         self.docs = {nid: nodes[nid]["tokens"] for nid in self.ids}
@@ -261,7 +261,7 @@ def _normalize(scores: Dict[str, float]) -> Dict[str, float]:
         return {k: 0.0 for k in scores}
     return {k: (v / s if v > 0 else 0.0) for k, v in scores.items()}
 
-def build_adjacency(nodes: Dict[str, dict], cfg: dict) -> Dict[str, List[Tuple[str, float]]]:
+def build_adjacency(nodes: Dict[str, Dict[str, Any]], cfg: Dict[str, Any]) -> Dict[str, List[Tuple[str, float]]]:
     """Symmetric structural conductance c(u,v) = w_edge * beta(rel).
 
     Only edges whose target is a known node are kept (so dir-path `part_of`
@@ -272,7 +272,7 @@ def build_adjacency(nodes: Dict[str, dict], cfg: dict) -> Dict[str, List[Tuple[s
     default_w = cfg.get("default_edge_weight", 0.5)
     acc: Dict[Tuple[str, str], float] = defaultdict(float)
 
-    def add_edge(u: str, rel: str, v: str, w: float):
+    def add_edge(u: str, rel: str, v: str, w: float) -> None:
         if v not in nodes or u not in nodes or u == v:
             return
         c = float(w) * priors.get(rel, default)
@@ -297,7 +297,7 @@ def build_adjacency(nodes: Dict[str, dict], cfg: dict) -> Dict[str, List[Tuple[s
 
 def personalized_pagerank(teleport: Dict[str, float],
                           adj: Dict[str, List[Tuple[str, float]]],
-                          all_ids: List[str], cfg: dict) -> Dict[str, float]:
+                          all_ids: List[str], cfg: Dict[str, Any]) -> Dict[str, float]:
     d = cfg["damping"]
     tol = cfg["convergence_tol"]
     max_iter = int(cfg["max_hops"])
@@ -337,8 +337,8 @@ def personalized_pagerank(teleport: Dict[str, float],
 # Status prior (re-rank by node validity, after spreading)
 # --------------------------------------------------------------------------- #
 
-def _apply_status_prior(activation: Dict[str, float], nodes: Dict[str, dict],
-                        cfg: dict) -> Dict[str, float]:
+def _apply_status_prior(activation: Dict[str, float], nodes: Dict[str, Dict[str, Any]],
+                        cfg: Dict[str, Any]) -> Dict[str, float]:
     """Scale final activation by a per-status prior so a superseded claim never
     competes as an active fact. Applied AFTER PPR, so it re-ranks by node validity
     without gating multi-hop flow (which already happened). stale stays at 1.0 — it
@@ -350,7 +350,7 @@ def _apply_status_prior(activation: Dict[str, float], nodes: Dict[str, dict],
             for nid, a in activation.items()}
 
 
-def _edge_label(nodes: Dict[str, dict], u: str, v: str) -> str:
+def _edge_label(nodes: Dict[str, Dict[str, Any]], u: str, v: str) -> str:
     """Relation type(s) on the edge between u and v, either direction. Adjacency is
     symmetrized and rel-merged, so the label is recovered from the stored edges."""
     seen: List[str] = []
@@ -366,8 +366,8 @@ def _edge_label(nodes: Dict[str, dict], u: str, v: str) -> str:
 
 
 def _explain_inflow(ppr: Dict[str, float], adj: Dict[str, List[Tuple[str, float]]],
-                    nodes: Dict[str, dict], cfg: dict, top_ids: List[str],
-                    k: int = 3) -> Dict[str, List[dict]]:
+                    nodes: Dict[str, Dict[str, Any]], cfg: Dict[str, Any], top_ids: List[str],
+                    k: int = 3) -> Dict[str, List[Dict[str, Any]]]:
     """For each node in top_ids, the k incoming edges that contributed the most
     activation mass. In PPR the inflow to v from u is d·pi[u]·c(u,v)/outsum[u]; the
     largest terms say which edges drove the node's activation — this grounds the
@@ -382,7 +382,7 @@ def _explain_inflow(ppr: Dict[str, float], adj: Dict[str, List[Tuple[str, float]
         contrib = d * pu / su
         for v, c in nb:
             inflow[v].append((u, contrib * c))
-    out: Dict[str, List[dict]] = {}
+    out: Dict[str, List[Dict[str, Any]]] = {}
     for v in top_ids:
         top = sorted(inflow.get(v, []), key=lambda x: x[1], reverse=True)[:k]
         denom = ppr.get(v, 0.0) or 1.0
@@ -399,7 +399,7 @@ def _toklen(text: str) -> int:
     return max(1, len(text) // 4)         # cheap token estimate (~4 chars/token)
 
 
-def assemble_pack(activation: Dict[str, float], nodes: Dict[str, dict], cfg: dict
+def assemble_pack(activation: Dict[str, float], nodes: Dict[str, Dict[str, Any]], cfg: Dict[str, Any]
                   ) -> Tuple[str, Dict[str, List[str]]]:
     thr = cfg["activation_threshold"]
     budget = cfg["token_budget"]
@@ -425,7 +425,7 @@ def assemble_pack(activation: Dict[str, float], nodes: Dict[str, dict], cfg: dic
     return _render_pack(tiers, nodes, activation), tiers
 
 
-def _render(node: dict, tier: str) -> str:
+def _render(node: Dict[str, Any], tier: str) -> str:
     nid, summ = node["id"], (node["summary"] or "").strip()
     mark = _STALE_MARK if node.get("status") == "stale" else ""
     if tier == "operational" and node["type"] in CODE_TYPES:
@@ -439,7 +439,8 @@ def _render(node: dict, tier: str) -> str:
     return f"- {nid} — {summ}{mark}"
 
 
-def _render_pack(tiers, nodes, activation) -> str:
+def _render_pack(tiers: Dict[str, List[str]], nodes: Dict[str, Dict[str, Any]],
+                 activation: Dict[str, float]) -> str:
     out: List[str] = ["# Context pack", ""]
     labels = [("strategic", "Strategic — overview & subsystems"),
               ("tactical", "Tactical — relevant modules"),
@@ -463,9 +464,9 @@ def _render_pack(tiers, nodes, activation) -> str:
 # Public API
 # --------------------------------------------------------------------------- #
 
-def retrieve(store_root: os.PathLike | str, query: str,
-             config: Optional[dict] = None, write_pack: bool = True,
-             log_coactivation: bool = True, explain: int = 0) -> dict:
+def retrieve(store_root: os.PathLike[str] | str, query: str,
+             config: Optional[Dict[str, Any]] = None, write_pack: bool = True,
+             log_coactivation: bool = True, explain: int = 0) -> Dict[str, Any]:
     store_root = Path(store_root)
     cfg = config or load_config(store_root)
     nodes = load_nodes(store_root)
@@ -527,7 +528,8 @@ def _atomic_write(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
-def _log_coactivation(store_root: Path, query: str, tiers: dict, adj: dict) -> None:
+def _log_coactivation(store_root: Path, query: str, tiers: Dict[str, List[str]],
+                      adj: Dict[str, List[Tuple[str, float]]]) -> None:
     """Append-only Hebbian signal. Consolidation folds these into edge weights."""
     inpack = set(tiers.get("strategic", []) + tiers.get("tactical", []) +
                  tiers.get("operational", []))

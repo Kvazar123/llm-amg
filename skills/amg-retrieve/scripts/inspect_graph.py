@@ -14,22 +14,23 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import retrieve as R                       # reuse the same node loader
 
 try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 except (AttributeError, ValueError):
     pass
 
 
-def _arg(flag: str, default=None):
+def _arg(flag: str, default: Optional[str] = None) -> Optional[str]:
     return sys.argv[sys.argv.index(flag) + 1] if flag in sys.argv else default
 
 
-def _in_bucket(node: dict, bucket: str) -> bool:
+def _in_bucket(node: Dict[str, Any], bucket: str) -> bool:
     """True if the node's file lives in nodes/<bucket>/. Filters by the REAL on-disk
     bucket directory (code / doc / data / notes / _hubs) taken from the node's path,
     not a guessed id prefix — so notes/_hubs (which have no id-prefix) also match."""
@@ -38,7 +39,7 @@ def _in_bucket(node: dict, bucket: str) -> bool:
 
 
 def main() -> int:
-    store = Path(_arg("--store", R._default_store()))
+    store = Path(_arg("--store") or str(R._default_store()))
     grep = (_arg("--grep") or "").lower()
     bucket = _arg("--bucket")
     full = "--full" in sys.argv

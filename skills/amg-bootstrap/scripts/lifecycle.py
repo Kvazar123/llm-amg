@@ -49,7 +49,7 @@ import sys
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import graph_store as gs
 import reconcile as rc
@@ -70,7 +70,7 @@ except ImportError:                                        # pragma: no cover
 
 # Windows consoles default to cp1252; force UTF-8 so Cyrillic summaries print.
 try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 except (AttributeError, ValueError):
     pass
 
@@ -79,7 +79,7 @@ except (AttributeError, ValueError):
 # Config gate (active + automation)
 # --------------------------------------------------------------------------- #
 
-def _read_config(amg: Path) -> dict:
+def _read_config(amg: Path) -> Dict[str, Any]:
     f = amg / "config.yml"
     if f.exists():
         try:
@@ -89,11 +89,11 @@ def _read_config(amg: Path) -> dict:
     return {}
 
 
-def _is_active(cfg: dict) -> bool:
+def _is_active(cfg: Dict[str, Any]) -> bool:
     return bool(cfg.get("active", False))
 
 
-def _automation_on(cfg: dict) -> bool:
+def _automation_on(cfg: Dict[str, Any]) -> bool:
     """automation true/false (boolean, like `active`). Default ON (the shipped template
     sets `automation: true`; an absent key on an older config means on). Tolerates a
     string `on`/`off` too — YAML already parses a bare on/off as a bool, this just
@@ -108,7 +108,7 @@ def _automation_on(cfg: dict) -> bool:
 # Healing (shared by the session-start hook and the /amg repair command)
 # --------------------------------------------------------------------------- #
 
-def _heal(amg: Path) -> dict:
+def _heal(amg: Path) -> Dict[str, Any]:
     """recover + verify --repair under a single lock. Idempotent and cheap; this is
     what makes a crashed or interrupted prior session a non-event.
 
@@ -126,7 +126,7 @@ def _heal(amg: Path) -> dict:
             "stale_lock_cleared": bool(pre.get("stale_lock"))}
 
 
-def format_heal_note(healed: dict) -> Optional[str]:
+def format_heal_note(healed: Dict[str, Any]) -> Optional[str]:
     """A friendly one-liner when a prior unclean shutdown was just healed (Stage 9,
     task 9), else None — so a clean session-start stays silent (no per-session noise).
     A hard kill (closed terminal, killed process) skips SessionEnd, so the store
@@ -173,7 +173,7 @@ def _is_wrapper_text(s: str) -> bool:
     return any(t.startswith(p) for p in _WRAPPER_PREFIXES)
 
 
-def _render_transcript(transcript_path: Path) -> Optional[dict]:
+def _render_transcript(transcript_path: Path) -> Optional[Dict[str, Any]]:
     """Parse a Claude Code .jsonl transcript into a role-marked markdown body.
 
     Keeps human and assistant TEXT; cuts raw `thinking` (private reasoning, never
@@ -261,8 +261,8 @@ def _render_transcript(transcript_path: Path) -> Optional[dict]:
             "attachments": attach_seq, "started": started, "ended": ended}
 
 
-def _dump_session(project_root: Path, amg: Path, cfg: dict,
-                  transcript_path: Optional[str], reason: Optional[str]) -> dict:
+def _dump_session(project_root: Path, amg: Path, cfg: Dict[str, Any],
+                  transcript_path: Optional[str], reason: Optional[str]) -> Dict[str, Any]:
     """Render the session transcript and write it to <store>/sessions as a dated dump
     (atomic file write — it is a source, not graph data; the next bootstrap ingests it).
     A missing transcript path (no hook payload) or an empty transcript is a no-op."""
@@ -302,7 +302,7 @@ def _dump_session(project_root: Path, amg: Path, cfg: dict,
 # Automatic hooks
 # --------------------------------------------------------------------------- #
 
-def session_start(project_root: Path, amg: Path) -> dict:
+def session_start(project_root: Path, amg: Path) -> Dict[str, Any]:
     cfg = _read_config(amg)
     if not (_is_active(cfg) and _automation_on(cfg)):
         return {"skipped": "amg inactive or automation off"}
@@ -318,7 +318,7 @@ def session_start(project_root: Path, amg: Path) -> dict:
 
 
 def session_end(project_root: Path, amg: Path, transcript_path: Optional[str] = None,
-                reason: Optional[str] = None) -> dict:
+                reason: Optional[str] = None) -> Dict[str, Any]:
     cfg = _read_config(amg)
     if not (_is_active(cfg) and _automation_on(cfg)):
         return {"skipped": "amg inactive or automation off"}
@@ -333,7 +333,7 @@ def session_end(project_root: Path, amg: Path, transcript_path: Optional[str] = 
 # Manual commands
 # --------------------------------------------------------------------------- #
 
-def repair(project_root: Path, amg: Path) -> dict:
+def repair(project_root: Path, amg: Path) -> Dict[str, Any]:
     healed = _heal(amg)
     out = {"action": "repair", **healed}
     note = format_heal_note(healed)
@@ -342,7 +342,7 @@ def repair(project_root: Path, amg: Path) -> dict:
     return out
 
 
-def set_active(amg: Path, value: bool) -> dict:
+def set_active(amg: Path, value: bool) -> Dict[str, Any]:
     """Flip `active` in config.yml in place, preserving every other line and comment.
     The control-plane config is not graph data, so this is a plain atomic file write,
     not a graph transaction."""
@@ -394,7 +394,7 @@ def _last_consolidation(amg: Path) -> Optional[str]:
     return last
 
 
-def _eval_summary(amg: Path) -> Optional[dict]:
+def _eval_summary(amg: Path) -> Optional[Dict[str, Any]]:
     report = amg / "work" / "eval-gate-report.json"
     if not report.exists():
         return None
@@ -406,7 +406,7 @@ def _eval_summary(amg: Path) -> Optional[dict]:
             "hop_recall_delta": r.get("hop_recall_delta"), "cases": r.get("cases")}
 
 
-def status(project_root: Path, amg: Path) -> dict:
+def status(project_root: Path, amg: Path) -> Dict[str, Any]:
     cfg = _read_config(amg)
     store = gs.GraphStore(amg)
     store.init()
@@ -431,7 +431,7 @@ def status(project_root: Path, amg: Path) -> dict:
     }
 
 
-def format_status(d: dict) -> str:
+def format_status(d: Dict[str, Any]) -> str:
     """One-screen human-readable status (DoD: the user sees state without reading files)."""
     lines = [
         "AMG status",
@@ -456,7 +456,7 @@ def format_status(d: dict) -> str:
 # CLI
 # --------------------------------------------------------------------------- #
 
-def _load_stdin_payload() -> dict:
+def _load_stdin_payload() -> Dict[str, Any]:
     """The SessionEnd hook pipes JSON on stdin (transcript_path, reason, cwd, ...).
     Return {} when stdin is a TTY or empty (a manual run), so session-end still folds
     weights + the digest without a dump and never blocks waiting on a terminal."""

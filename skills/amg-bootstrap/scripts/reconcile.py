@@ -47,7 +47,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import graph_store as gs
 from extract_structure import extract, load_config, resolve_sources, detect_policy_conflicts
@@ -74,12 +74,12 @@ def node_relpath(unit_id: str, source_kind_dir: str) -> str:
     return f"nodes/{source_kind_dir}/{slug}-{h}.md"
 
 
-def serialize_node(meta: dict, body: str) -> str:
+def serialize_node(meta: Dict[str, Any], body: str) -> str:
     fm = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True).strip()
     return f"---\n{fm}\n---\n{body or ''}".rstrip() + "\n"
 
 
-def parse_node(text: str) -> Optional[dict]:
+def parse_node(text: str) -> Optional[Dict[str, Any]]:
     m = FRONTMATTER_RE.match(text)
     if not m:
         return None
@@ -88,9 +88,9 @@ def parse_node(text: str) -> Optional[dict]:
     return meta
 
 
-def load_nodes(store: gs.GraphStore) -> Dict[str, dict]:
+def load_nodes(store: gs.GraphStore) -> Dict[str, Dict[str, Any]]:
     """Map node id -> {meta..., _path}. Skips anything without a valid id."""
-    out: Dict[str, dict] = {}
+    out: Dict[str, Dict[str, Any]] = {}
     for p in store.nodes_dir.rglob("*.md"):
         meta = parse_node(p.read_text(encoding="utf-8", errors="replace"))
         if meta and meta.get("id"):
@@ -103,7 +103,7 @@ def _dir_for(category: str) -> str:
     return {"code": "code", "doc": "doc", "data": "data"}.get(category, "notes")
 
 
-def _part_of_for(unit: dict) -> List[dict]:
+def _part_of_for(unit: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Path-based primary membership (the spanning-tree parent). Weighted
     multi-membership beyond this is added by the consolidation pass."""
     rel = unit["source_path"]
@@ -116,7 +116,7 @@ def _part_of_for(unit: dict) -> List[dict]:
 # Plan / bootstrap
 # --------------------------------------------------------------------------- #
 
-def plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
+def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
     amg_root = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     store = gs.GraphStore(amg_root)
     store.init()
@@ -124,9 +124,9 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
     config = load_config(amg_root)
     raw_units = extract(project_root, config, amg_root)
     units = {u["id"]: u for u in raw_units}
-    summary = {"added": 0, "changed": 0, "moved": 0, "deleted": 0, "unchanged": 0,
+    summary: Dict[str, Any] = {"added": 0, "changed": 0, "moved": 0, "deleted": 0, "unchanged": 0,
                "requeued_stale": 0, "pointer_refreshed": 0, "frozen": 0}
-    queue: List[dict] = []
+    queue: List[Dict[str, Any]] = []
 
     with store.lock():
         store.recover()                    # always heal before touching anything
@@ -161,21 +161,21 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
         # are mutated in place and the transaction stages by path, so a node
         # later rewritten by the changed/drift branches keeps the redirect.
         if moves:
-            for nid, node in nodes.items():
+            for nid, rnode in nodes.items():
                 if nid in moves:
                     continue
                 redirected = False
-                for e in node.get("edges") or []:
+                for e in rnode.get("edges") or []:
                     if isinstance(e, dict) and e.get("to") in moves:
                         e["to"] = moves[e["to"]]
                         redirected = True
-                for p in node.get("part_of") or []:
+                for p in rnode.get("part_of") or []:
                     if isinstance(p, dict) and p.get("topic") in moves:
                         p["topic"] = moves[p["topic"]]
                         redirected = True
                 if redirected:
-                    meta = {k: v for k, v in node.items() if not k.startswith("_")}
-                    tx.write(node["_path"], serialize_node(meta, node.get("_body", "")))
+                    meta = {k: v for k, v in rnode.items() if not k.startswith("_")}
+                    tx.write(rnode["_path"], serialize_node(meta, rnode.get("_body", "")))
 
         # added / changed / unchanged
         moved_new = set(moves.values())
@@ -304,7 +304,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> dict:
     return summary
 
 
-def _module_map(units: Dict[str, dict]) -> Dict[str, str]:
+def _module_map(units: Dict[str, Dict[str, Any]]) -> Dict[str, str]:
     """Dotted module name -> source_path for the project's Python modules.
 
     `src/billing.py` registers `src.billing` and the suffix `billing`;
@@ -329,7 +329,7 @@ def _module_map(units: Dict[str, dict]) -> Dict[str, str]:
     return {k: v for k, v in out.items() if v}
 
 
-def _structural_edges(unit: dict, module_map: Optional[Dict[str, str]] = None) -> List[dict]:
+def _structural_edges(unit: Dict[str, Any], module_map: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
     edges = []
     for mod in unit.get("imports", []) or []:
         # in-project imports resolve to the module node id; stdlib/third-party
@@ -357,8 +357,8 @@ def _structural_edges(unit: dict, module_map: Optional[Dict[str, str]] = None) -
     return out
 
 
-def _refresh_structural_edges(existing: List[dict], unit: dict,
-                              module_map: Optional[Dict[str, str]] = None) -> List[dict]:
+def _refresh_structural_edges(existing: List[Dict[str, Any]], unit: Dict[str, Any],
+                              module_map: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
     """Re-extract deterministic edges for a changed unit, keeping earned ones.
 
     Old structural edges — marked `origin: structural`, or legacy-unmarked
@@ -367,8 +367,8 @@ def _refresh_structural_edges(existing: List[dict], unit: dict,
     inherits its earned weight and coact count. Edges of any other origin
     (semantic / synthesized / consolidation) are kept untouched.
     """
-    old_structural: Dict[tuple, dict] = {}
-    kept: List[dict] = []
+    old_structural: Dict[Tuple[Any, Any], Dict[str, Any]] = {}
+    kept: List[Dict[str, Any]] = []
     for e in existing:
         if isinstance(e, dict) and (
                 e.get("origin") == "structural"
@@ -377,7 +377,7 @@ def _refresh_structural_edges(existing: List[dict], unit: dict,
         else:
             kept.append(e)
     kept_keys = {(e.get("rel"), e.get("to")) for e in kept if isinstance(e, dict)}
-    fresh: List[dict] = []
+    fresh: List[Dict[str, Any]] = []
     for e in _structural_edges(unit, module_map):
         old = old_structural.get((e["rel"], e["to"]))
         if old:                                  # survived the change: keep earned signal
@@ -388,8 +388,8 @@ def _refresh_structural_edges(existing: List[dict], unit: dict,
     return kept + fresh
 
 
-def _detect_moves(units: Dict[str, dict], nodes: Dict[str, dict]
-                  ) -> List[Tuple[dict, dict]]:
+def _detect_moves(units: Dict[str, Dict[str, Any]], nodes: Dict[str, Dict[str, Any]]
+                  ) -> List[Tuple[Dict[str, Any], Dict[str, Any]]]:
     """Pair would-be-purged nodes with would-be-created units by content hash.
 
     Only nodes the diff would otherwise delete (derived_from_file + mirror with
@@ -399,16 +399,16 @@ def _detect_moves(units: Dict[str, dict], nodes: Dict[str, dict]
     paths) pair deterministically by sorted ids; a move combined with an edit
     (different hash) stays a plain delete+add.
     """
-    gone: Dict[str, List[dict]] = {}
+    gone: Dict[str, List[Dict[str, Any]]] = {}
     for nid, node in nodes.items():
         if nid in units:
             continue
         if (node.get("source_kind") == "derived_from_file"
                 and node.get("policy") == "mirror" and node.get("source_hash")):
             gone.setdefault(node["source_hash"], []).append(node)
-    for cands in gone.values():
-        cands.sort(key=lambda n: n["id"])
-    pairs: List[Tuple[dict, dict]] = []
+    for group in gone.values():
+        group.sort(key=lambda n: n["id"])
+    pairs: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
     for uid in sorted(units):
         if uid in nodes:
             continue
@@ -418,8 +418,8 @@ def _detect_moves(units: Dict[str, dict], nodes: Dict[str, dict]
     return pairs
 
 
-def _migrate_node(old: dict, unit: dict, module_map: Dict[str, str],
-                  default_lang: str) -> Tuple[dict, bool]:
+def _migrate_node(old: Dict[str, Any], unit: Dict[str, Any], module_map: Dict[str, str],
+                  default_lang: str) -> Tuple[Dict[str, Any], bool]:
     """Node for a moved/renamed source unit: structural fields from the new
     unit, earned fields (summary, lang, semantic edges with their coact,
     derived_from_hash, extra memberships) from the old node. Same-file edge
@@ -466,7 +466,7 @@ def _migrate_node(old: dict, unit: dict, module_map: Dict[str, str],
     return meta, (not fresh) or status == "stale"
 
 
-def _queue_item(unit: dict) -> dict:
+def _queue_item(unit: Dict[str, Any]) -> Dict[str, Any]:
     # qualname/lineno let the builder focus on the right slice of the source;
     # lang here is the SOURCE language/format (python/markdown/...), not the
     # node's `lang` field (which is the summary's working language).
@@ -488,7 +488,7 @@ def _now() -> str:
 # --------------------------------------------------------------------------- #
 
 def apply_derivation(project_root: Path, derivation_path: Path,
-                     amg_root: Optional[Path] = None) -> dict:
+                     amg_root: Optional[Path] = None) -> Dict[str, Any]:
     """Apply derivation items to the graph. Two item shapes are supported:
 
       * update : {id, summary?, lang?, edges?, part_of?, body?} -> update the node
@@ -573,8 +573,8 @@ def apply_derivation(project_root: Path, derivation_path: Path,
     return {"applied": applied, "created": created, "skipped_missing": skipped}
 
 
-def _merge_part_of(existing: List[dict], incoming: List[dict],
-                   renormalize: bool) -> List[dict]:
+def _merge_part_of(existing: List[Dict[str, Any]], incoming: List[Dict[str, Any]],
+                   renormalize: bool) -> List[Dict[str, Any]]:
     """Accumulate memberships by topic: a later item must not erase a membership
     an earlier one added. Same topic -> the incoming weight wins (the judgment
     layer's latest statement; taking the max would only ratchet weights upward
@@ -601,8 +601,8 @@ def _merge_part_of(existing: List[dict], incoming: List[dict],
     return merged
 
 
-def _merge_edges(existing: List[dict], incoming: List[dict],
-                 default_origin: str = "semantic", default_w: float = 0.5) -> List[dict]:
+def _merge_edges(existing: List[Dict[str, Any]], incoming: List[Dict[str, Any]],
+                 default_origin: str = "semantic", default_w: float = 0.5) -> List[Dict[str, Any]]:
     """Merge by (rel, to); keep the higher weight and accumulated coact count.
 
     An existing edge keeps its origin (a structural edge confirmed by the

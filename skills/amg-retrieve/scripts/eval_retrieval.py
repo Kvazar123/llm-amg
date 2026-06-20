@@ -32,14 +32,14 @@ import json
 import sys
 import tempfile
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Callable, Dict, List, Optional, Set
 
 import yaml
 
 import retrieve as R
 
 try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 except (AttributeError, ValueError):
     pass
 
@@ -52,7 +52,7 @@ def lexical_topk(rel: Dict[str, float], k: int) -> List[str]:
     return [nid for nid, _ in sorted(rel.items(), key=lambda kv: kv[1], reverse=True)][:k]
 
 
-def evaluate_case(store_root: Path, case: dict, cfg: dict) -> dict:
+def evaluate_case(store_root: Path, case: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, Any]:
     gold = set(case["gold_ids"])
     res = R.retrieve(store_root, case["query"], config=cfg,
                      write_pack=False, log_coactivation=False)
@@ -76,9 +76,9 @@ def evaluate_case(store_root: Path, case: dict, cfg: dict) -> dict:
     pack_set = set(tiers.get("strategic", []) + tiers.get("tactical", []) +
                    tiers.get("operational", []) + tiers.get("periphery", []))
 
-    def recall(s):    return len(s & gold) / len(gold) if gold else 0.0
-    def prec(s):      return len(s & gold) / len(s) if s else 0.0
-    def hoprec(s):    return len(s & hop_gold) / len(hop_gold) if hop_gold else None
+    def recall(s: Set[str]) -> float:    return len(s & gold) / len(gold) if gold else 0.0
+    def prec(s: Set[str]) -> float:      return len(s & gold) / len(s) if s else 0.0
+    def hoprec(s: Set[str]) -> Optional[float]:  return len(s & hop_gold) / len(hop_gold) if hop_gold else None
 
     return {
         "id": case.get("id", case["query"][:30]),
@@ -96,11 +96,13 @@ def evaluate_case(store_root: Path, case: dict, cfg: dict) -> dict:
     }
 
 
-def run(store_root: Path, cases: List[dict], cfg: dict = None) -> dict:
+def run(store_root: Path, cases: List[Dict[str, Any]],
+        cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     cfg = cfg or R.load_config(store_root)
     rows = [evaluate_case(store_root, c, cfg) for c in cases]
 
-    def mean(getter, where=lambda r: True):
+    def mean(getter: Callable[[Dict[str, Any]], Any],
+             where: Callable[[Dict[str, Any]], bool] = lambda r: True) -> Optional[float]:
         vals = [getter(r) for r in rows if where(r) and getter(r) is not None]
         return sum(vals) / len(vals) if vals else None
 
@@ -117,7 +119,7 @@ def run(store_root: Path, cases: List[dict], cfg: dict = None) -> dict:
     return {"per_case": rows, "aggregate": agg}
 
 
-def print_report(report: dict) -> None:
+def print_report(report: Dict[str, Any]) -> None:
     print(f"{'case':<22}{'K':>3}{'gold':>5}{'hop':>4}   "
           f"{'AMG rec':>8}{'lex rec':>8}   {'AMG prec':>9}{'lex prec':>9}   "
           f"{'AMG hop':>8}{'lex hop':>8}")
@@ -133,7 +135,7 @@ def print_report(report: dict) -> None:
     g = report["aggregate"]
     print("-" * 100)
 
-    def fmt(x): return "n/a" if x is None else f"{x:.2f}"
+    def fmt(x: Optional[float]) -> str: return "n/a" if x is None else f"{x:.2f}"
     print(f"{'MEAN':<22}{'':>3}{'':>5}{'':>4}   "
           f"{fmt(g['amg']['recall']):>8}{fmt(g['lexical']['recall']):>8}   "
           f"{fmt(g['amg']['precision']):>9}{fmt(g['lexical']['precision']):>9}   "
@@ -147,10 +149,13 @@ def print_report(report: dict) -> None:
 # Synthetic labeled graph for an immediate, reproducible demonstration
 # --------------------------------------------------------------------------- #
 
-def _node(nid, typ, summary, body="", edges=None, part_of=None,
-          source_path=None, lineno=None, status="active") -> str:
-    meta = {"id": nid, "type": typ, "summary": summary,
-            "edges": edges or [], "part_of": part_of or [], "status": status}
+def _node(nid: str, typ: str, summary: str, body: str = "",
+          edges: Optional[List[Dict[str, Any]]] = None,
+          part_of: Optional[List[Dict[str, Any]]] = None,
+          source_path: Optional[str] = None, lineno: Optional[int] = None,
+          status: str = "active") -> str:
+    meta: Dict[str, Any] = {"id": nid, "type": typ, "summary": summary,
+                            "edges": edges or [], "part_of": part_of or [], "status": status}
     if source_path:
         meta["source_path"] = source_path
         meta["lineno"] = lineno or 1
@@ -158,7 +163,7 @@ def _node(nid, typ, summary, body="", edges=None, part_of=None,
     return f"---\n{fm}\n---\n{body}".rstrip() + "\n"
 
 
-def build_demo_store(root: Path) -> List[dict]:
+def build_demo_store(root: Path) -> List[Dict[str, Any]]:
     """A two-subsystem graph designed so two billing gold nodes are reachable ONLY via
     edges (no lexical overlap with the query) — a clean multi-hop test. The auth
     subsystem is a distractor that must NOT be retrieved (precision). Lexical only:
@@ -171,7 +176,7 @@ def build_demo_store(root: Path) -> List[dict]:
     (root / "config.yml").write_text(
         "active: true\nworking_language: ru\nretrieval:\n  embeddings:\n    enabled: off\n")
 
-    def w(rel_dir, fname, text):
+    def w(rel_dir: str, fname: str, text: str) -> None:
         (nd / rel_dir / fname).write_text(text, encoding="utf-8")
 
     # --- billing subsystem ---
@@ -255,7 +260,7 @@ def build_demo_store(root: Path) -> List[dict]:
     return cases
 
 
-def build_embeddings_demo(root: Path) -> List[dict]:
+def build_embeddings_demo(root: Path) -> List[Dict[str, Any]]:
     """A minimal, FOCUSED graph for the embeddings off-vs-on comparison, kept separate
     from the multi-hop demo so the two cannot interfere. One cross-language case with a
     lexical FALSE FRIEND:
@@ -278,7 +283,7 @@ def build_embeddings_demo(root: Path) -> List[dict]:
         "active: true\nworking_language: ru\n"
         "retrieval:\n  embeddings:\n    enabled: off\n    blend: 0.85\n")
 
-    def w(rel_dir, fname, text):
+    def w(rel_dir: str, fname: str, text: str) -> None:
         (nd / rel_dir / fname).write_text(text, encoding="utf-8")
 
     w("code", "rotate_keys_ru.md", _node(
@@ -301,7 +306,7 @@ def build_embeddings_demo(root: Path) -> List[dict]:
     return cases
 
 
-def build_hebbian_demo(root: Path) -> List[dict]:
+def build_hebbian_demo(root: Path) -> List[Dict[str, Any]]:
     """A POSITIVE control for Hebbian weight folding, kept separate from the other
     demos. A gold node is reachable ONLY through a WEAK structural edge that competes
     against a stronger sibling edge and lexical distractors, so with static weights it
@@ -324,7 +329,7 @@ def build_hebbian_demo(root: Path) -> List[dict]:
     (root / "config.yml").write_text(
         "active: true\nworking_language: en\nretrieval:\n  embeddings:\n    enabled: off\n")
 
-    def w(rel_dir, fname, text):
+    def w(rel_dir: str, fname: str, text: str) -> None:
         (nd / rel_dir / fname).write_text(text, encoding="utf-8")
 
     # seed (gold, lexical match): its outflow is split between a WEAK edge to the gold

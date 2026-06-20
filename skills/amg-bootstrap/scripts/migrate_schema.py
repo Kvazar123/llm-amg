@@ -31,18 +31,18 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import graph_store as gs
 from extract_structure import _TS_DEF
 from reconcile import load_nodes, serialize_node, _now
 
 
-def migrate(project_root: Path, amg_root: Optional[Path] = None) -> dict:
+def migrate(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
     amg_root = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     store = gs.GraphStore(amg_root)
     store.init()
-    counts = {"source_kind_normalized": 0, "hub_types_fixed": 0,
+    counts: Dict[str, Any] = {"source_kind_normalized": 0, "hub_types_fixed": 0,
               "kinds_canonicalized": 0, "edges_origin_backfilled": 0,
               "nodes_updated": 0}
     overviews: List[str] = []

@@ -24,3 +24,8 @@ python-pptx
 # --- tree-sitter (optional: non-Python code -> function-level units + calls) --
 tree-sitter
 tree-sitter-language-pack
+
+# --- dev (optional: static type checking, CLAUDE.md §6.9; NOT needed at runtime) --
+# Run:  python -m mypy skills/*/scripts/*.py     (configured by mypy.ini at the repo root)
+mypy
+types-PyYAML
