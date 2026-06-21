@@ -4,6 +4,27 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-06-22
+
+Stage 13 closed — provenance, confidence, and verification (the trust layer). Confidently-wrong memory is worse than none, so every fact now knows its origin and confidence, a code claim is checked against the live source before it is answered, and untrusted nodes are flagged (never silently downranked). Additive — new optional node fields, a new script, a config block — with no data-contract break (MINOR); old graphs are backfilled by `migrate_schema.py`.
+
+### Added
+- Trust fields on every node: `line_end`, `confidence`, `provenance{kind, commit?, derived_from?}`, `verification{status, method, last_verified_at?}` (`schema_version` → 3). Design decision — NO duplication: a file-projected node's origin already IS its flat `source_path`/`source_hash`/`lineno`/`line_end`, so `provenance` adds only `kind` + optional `commit`, plus `derived_from` (the "source ids") for synthesized/authored nodes. `confidence` is a DISPLAYED signal, not an activation multiplier (a just-changed node is often the most relevant — flag, don't bury). Documented in 02-data-model ("Слой доверия") and THEORY §15.
+- `verify_claims.py` (new, in `skills/amg-retrieve/scripts`): lightweight verification of a code claim against the live source — re-chunk the current file with the same chunkers and compare → `verified` / `stale` / `contradicted` / `skipped` (file or symbol gone → contradicted; hash differs → stale, caught before reconcile even sees it). Read-only by default (a read-only retriever can run it before answering); `--write` stamps the `verification` block under the lock and refreshes the index. Targeted ids are read one file at a time (no full scan on the hot "before answer" path). `selftest_verify.py`.
+- Ingest fills provenance/verification deterministically: `extract_structure` computes `line_end` where source lines are real (code, markdown/RST sections, log/session windows); `reconcile` stamps `provenance.kind` + best-effort git `commit` + `verification: unverified` on added/changed/move and RESETS verification on `changed` (the same hash machinery that flags `stale`); `apply_derivation` applies the builder's `confidence` (default `default_confidence` 0.7) and `derived_from` on synthesized nodes; `notes.py` records `kind: user|model_inference` (`user` → `verified/user`) with `--kind`/`--confidence`. `migrate_schema.py` backfills old graphs idempotently.
+- Pack trust marking: `retrieve._trust_marks` flags `stale` / `unverified` / `contradicted` / low-confidence nodes in the pack (a flag never downranks — it prompts the model to confirm), and code pointers render the line RANGE (`path:start-end`). The trust fields are projected into the read-index (`confidence`/`verification`/`line_end`).
+- Usage provenance (task 9): `retrieve._log_pack` writes the pack composition to `work/pack-log.jsonl`; `lifecycle.session-end` crosses it with the files the session's edit tools touched → `work/usage.log` (nodes actually USED + a coarse outcome). Kept SEPARATE from the blind `coactivation.log` and NOT read by consolidation — the non-circular substrate for Stage 14's Hebbian rule (usage comes from outside the ranking loop, §8.1). `selftest_usage.py`.
+- Config: a top-level `verification` block (`enabled`, `verify_code_claims`, `warn_on_unverified`, `min_confidence_warn`, `default_confidence`), surfaced in `retrieve.load_config`.
+
+### Changed
+- `extract_structure`: DRY refactor — the per-file chunker dispatch is extracted into `_units_for_path`, reused by a new `units_for_file` (single-file chunk for verification). Behavior-identical.
+- Prompts: `amg-builder` / `amg-synth` echo a `confidence` estimate (synth also `derived_from`); `amg-retriever` / SKILL amg-retrieve / the entrypoint base "verify a code claim before you answer" on `verify_claims.py` and the full mark set. `.claude` paths render per `agent_dir` at install (verified a render to `.agents` leaves no `.claude`).
+- The engine passes `mypy --strict` over 16 modules (`verify_claims` added to the gate).
+- New THEORY §15 "Модель доверия" (the source hierarchy, "confidently-wrong memory is worse than none", flag-don't-downrank, breaking the usage circularity); §17 "Родословная" renamed to "Истоки". Docs synced across 02-data-model / 05-reconcile / 06-retrieval / 08-agents-skills / 09-config / 03-storage / consistency-model §4 / 01-overview / GUIDE / READMEs. Stage 13 body folded; THEORY checkpoint 2.1.1 half-closed (the contradiction-arbitration cycle closes at Stage 14).
+
+### Deferred
+- The usage signal accrues but does NOT yet change weights — the improved (outcome-gated) Hebbian rule and contradiction arbitration are Stage 14. `verification.status: contradicted` and `status_prior.disputed` are seeded for it.
+
 ## [1.3.0] — 2026-06-21
 
 Stage 12 closed — performance and scaling. Large graphs stay fast without giving up the Markdown canon: a generated SQLite read-index under retrieval (≈15× on the per-query load path), resumable derivation, queue helpers, model-effort tiering, a benchmark, and the transactional action log. Additive, no data-contract change (MINOR).
