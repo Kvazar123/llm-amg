@@ -194,7 +194,13 @@ def _node_from_meta(meta: Dict[str, Any], body: str, relpath: str
     return {
         "id": nid, "type": meta.get("type", "node"),
         "source_path": meta.get("source_path"), "lineno": meta.get("lineno"),
+        "line_end": meta.get("line_end"),
         "summary": meta.get("summary", ""), "status": meta.get("status"),
+        # Stage 13 trust fields read by pack marking / verify_claims (provenance itself
+        # is NOT projected — retrieve never needs the origin kind, only confidence and
+        # the verification verdict).
+        "confidence": meta.get("confidence"),
+        "verification": meta.get("verification") or {},
         "edges": meta.get("edges") or [], "part_of": meta.get("part_of") or [],
         "body": body, "text": text, "tokens": [w.lower() for w in WORD_RE.findall(text)],
         "_path": relpath,                                    # nodes/<bucket>/<file>.md

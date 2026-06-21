@@ -129,14 +129,19 @@ def main() -> int:
     # ---- tree-sitter (canonical kinds for non-Python code; stage 1, task 8) --
     if _have("tree_sitter_language_pack"):
         p = tmp / "app.js"
-        p.write_text("function foo(a) { return bar(a); }\n"
-                     "class Baz { run() { return foo(1); } }\n", encoding="utf-8")
+        p.write_text("function foo(a) {\n  return bar(a);\n}\n\n"
+                     "class Baz {\n  run() {\n    return foo(1);\n  }\n}\n",
+                     encoding="utf-8")
         units = es._treesitter_units(p, "app.js", "absorb", "javascript")
         assert units is not None, "javascript grammar failed to load"
         kinds = {u["qualname"]: u["kind"] for u in units if u["qualname"]}
         assert kinds.get("foo") == "function" and kinds.get("Baz") == "class", kinds
         assert all(u["kind"] in ("module", "function", "class") for u in units), units
-        print("PASS  treesitter: grammar kinds canonicalized to function/class")
+        # Stage 13: line_end is the unit's real end line (multi-line span), not lineno
+        spans = {u["qualname"]: (u["lineno"], u["line_end"]) for u in units if u["qualname"]}
+        assert spans["foo"] == (1, 3), spans                # function foo spans lines 1-3
+        assert spans["Baz"][1] > spans["Baz"][0], spans     # class Baz spans several lines
+        print("PASS  treesitter: grammar kinds canonicalized to function/class; line_end spans")
         tested.append("treesitter")
     else:
         print("SKIP  treesitter (need: pip install tree-sitter tree-sitter-language-pack)")

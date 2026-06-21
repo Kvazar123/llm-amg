@@ -175,6 +175,34 @@ def case_retrieval(proj: Path) -> None:
     print("PASS  retrieval: a captured note is found by summary and by its tag")
 
 
+def case_provenance(proj: Path) -> None:
+    """Stage 13: an authored decision/adr is the human's word (provenance.kind=user,
+    verification verified/user); a note/open_question/plan is the model's inference
+    (model_inference, unverified). confidence defaults per type; --kind/--confidence
+    override."""
+    dec = NT.add_note(proj, "decision", "use postgres for the ledger",
+                      node_id="note:prov-dec", amg_root=amg_root(proj))
+    note = NT.add_note(proj, "note", "the dispatcher caches handlers",
+                       node_id="note:prov-note", amg_root=amg_root(proj))
+    nodes = nodes_of(proj)
+    d, n = nodes[dec["id"]], nodes[note["id"]]
+    assert d["provenance"]["kind"] == "user", d["provenance"]
+    assert d["verification"] == {"status": "verified", "method": "user"}, d["verification"]
+    assert d["confidence"] == 0.85, d
+    assert n["provenance"]["kind"] == "model_inference", n["provenance"]
+    assert n["verification"]["status"] == "unverified", n["verification"]
+    assert n["confidence"] == 0.6, n
+
+    # overrides: a note the user explicitly states is user-kind; confidence is settable
+    ov = NT.add_note(proj, "note", "remember the deploy window is friday",
+                     node_id="note:prov-ov", kind="user", confidence=0.95,
+                     amg_root=amg_root(proj))
+    o = nodes_of(proj)[ov["id"]]
+    assert o["provenance"]["kind"] == "user" and o["confidence"] == 0.95, o
+    assert o["verification"]["method"] == "user", o
+    print("PASS  provenance: decision=user/verified, note=model_inference/unverified, overrides honored")
+
+
 def case_consolidation_plan(proj: Path, ids: Dict[str, Any]) -> None:
     sys.path.insert(0, str(HERE.parents[1] / "amg-consolidate" / "scripts"))
     import consolidate as CO
@@ -198,6 +226,7 @@ if __name__ == "__main__":
         case_crash_recovery(proj)
         case_survives_bootstrap(proj)
         case_retrieval(proj)
+        case_provenance(proj)
         case_consolidation_plan(proj, ids)
         print("\nALL NOTES CHECKS PASSED")
     finally:

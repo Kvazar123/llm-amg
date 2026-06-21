@@ -15,10 +15,13 @@ the bucket question for consolidation-made nodes is deferred to stage 3):
   * edges without origin  -> imports/calls -> structural (the only rels
                              extraction ever produced); edges owned by a
                              synthesized node -> synthesized; else semantic
+  * missing provenance    -> {kind} inferred from source_kind/id prefix (Stage 13)
+  * missing verification  -> {status: unverified, method: none} (conservative: a
+                             migration must not fabricate a verification event)
 
-`lineno`/`qualname` are NOT restored here: run `reconcile.py bootstrap .`
-right after — its pointer-drift branch refreshes them from the sources for
-free (no re-derivation) wherever the source unit still exists.
+`lineno`/`qualname`/`line_end` are NOT restored here: run `reconcile.py bootstrap .`
+right after — its pointer-drift branch refreshes lineno/qualname/line_end from the
+sources for free (no re-derivation) wherever the source unit still exists.
 
 All writes go through one graph_store transaction under the writer lock, so
 the migration is crash-safe and re-running it is a no-op.
@@ -38,12 +41,26 @@ from extract_structure import _TS_DEF
 from reconcile import load_nodes, serialize_node, _now, _refresh_index
 
 
+def _infer_kind(node: Dict[str, Any]) -> str:
+    """Provenance kind for an old node lacking one: authored decisions/ADRs are the
+    human's (user), other authored and all synthesized nodes are the model's inference;
+    a file-projected node takes its id-prefix domain (code/doc/data)."""
+    sk = node.get("source_kind")
+    if sk == "authored":
+        return "user" if (node.get("type") or "").lower() in ("decision", "adr") else "model_inference"
+    if sk == "synthesized":
+        return "model_inference"
+    prefix = str(node.get("id", "")).split(":", 1)[0]
+    return prefix if prefix in ("code", "doc", "data") else "doc"
+
+
 def migrate(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
     amg_root = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     store = gs.GraphStore(amg_root)
     store.init()
     counts: Dict[str, Any] = {"source_kind_normalized": 0, "hub_types_fixed": 0,
               "kinds_canonicalized": 0, "edges_origin_backfilled": 0,
+              "provenance_backfilled": 0, "verification_backfilled": 0,
               "nodes_updated": 0}
     overviews: List[str] = []
 
@@ -82,6 +99,15 @@ def migrate(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, An
                 else:
                     e["origin"] = "semantic"
                 counts["edges_origin_backfilled"] += 1
+                changed = True
+
+            if "provenance" not in node:
+                node["provenance"] = {"kind": _infer_kind(node)}
+                counts["provenance_backfilled"] += 1
+                changed = True
+            if "verification" not in node:
+                node["verification"] = {"status": "unverified", "method": "none"}
+                counts["verification_backfilled"] += 1
                 changed = True
 
             if changed:

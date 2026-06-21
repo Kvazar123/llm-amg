@@ -76,6 +76,9 @@ def main() -> int:
         assert res["hub_types_fixed"] == 2 and res["overview_ids"] == ["hub:overview"], res
         assert res["kinds_canonicalized"] == 1, res
         assert res["edges_origin_backfilled"] == 3, res    # hub edge + calls + documents
+        # the 3 hand-written legacy nodes lack provenance/verification (the python mirror
+        # nodes got them at plan time); migrate backfills exactly those (Stage 13)
+        assert res["provenance_backfilled"] == 3 and res["verification_backfilled"] == 3, res
         nodes = rc.load_nodes(store)
         assert nodes["hub:billing"]["type"] == "hub"
         assert nodes["hub:billing"]["source_kind"] == "synthesized"
@@ -86,8 +89,13 @@ def main() -> int:
         docs_edge = [e for e in nodes["code:src/m.py::f"]["edges"]
                      if e["rel"] == "documents"][0]
         assert docs_edge["origin"] == "semantic"
+        # provenance.kind inferred per class: synthesized hub -> model_inference, a
+        # file-projected node -> its id-prefix domain; verification starts unverified
+        assert nodes["hub:billing"]["provenance"]["kind"] == "model_inference", nodes["hub:billing"]
+        assert nodes["code:src/app.js::foo"]["provenance"]["kind"] == "code", nodes["code:src/app.js::foo"]
+        assert nodes["hub:billing"]["verification"]["status"] == "unverified"
         print("PASS  migrate: derived -> hub/overview + synthesized; grammar kind "
-              "-> function; origin backfilled per owner class")
+              "-> function; origin + provenance/verification backfilled per owner class")
 
         res2 = migrate_schema.migrate(proj, amg)
         assert res2["nodes_updated"] == 0, res2

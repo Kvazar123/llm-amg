@@ -39,8 +39,8 @@ import retrieve as R          # safe: retrieve imports index_store lazily, not a
 
 INDEX_REL = "cache/index.sqlite"
 _BUSY_MS = 2000               # let a brief concurrent sqlite lock retry, then give up
-_COLS = ("id", "type", "status", "summary", "source_path", "lineno",
-         "text", "edges", "part_of", "body", "relpath")
+_COLS = ("id", "type", "status", "summary", "source_path", "lineno", "line_end",
+         "confidence", "text", "edges", "part_of", "verification", "body", "relpath")
 
 
 def _index_path(amg_root: Path) -> Path:
@@ -77,9 +77,11 @@ def _node_to_row(node: Dict[str, Any]) -> List[Any]:
     bag-of-words `text` is stored verbatim (tokens are re-derived cheaply on read)."""
     return [
         node["id"], node.get("type"), node.get("status"), node.get("summary", ""),
-        node.get("source_path"), node.get("lineno"), node.get("text", ""),
+        node.get("source_path"), node.get("lineno"), node.get("line_end"),
+        node.get("confidence"), node.get("text", ""),
         json.dumps(node.get("edges") or [], ensure_ascii=False),
         json.dumps(node.get("part_of") or [], ensure_ascii=False),
+        json.dumps(node.get("verification") or {}, ensure_ascii=False),
         node.get("body", ""), node.get("_path"),
     ]
 
@@ -87,13 +89,15 @@ def _node_to_row(node: Dict[str, Any]) -> List[Any]:
 def _row_to_node(row: Any) -> Dict[str, Any]:
     """Reconstruct the load_nodes-shaped dict from an index row, re-tokenizing `text`
     with retrieve's own WORD_RE so the BM25 bag matches the scan byte-for-byte."""
-    (nid, typ, status, summary, source_path, lineno,
-     text, edges_j, part_of_j, body, relpath) = row
+    (nid, typ, status, summary, source_path, lineno, line_end, confidence,
+     text, edges_j, part_of_j, verification_j, body, relpath) = row
     return {
         "id": nid, "type": typ or "node", "source_path": source_path, "lineno": lineno,
+        "line_end": line_end, "confidence": confidence,
         "summary": summary or "", "status": status,
         "edges": json.loads(edges_j) if edges_j else [],
         "part_of": json.loads(part_of_j) if part_of_j else [],
+        "verification": json.loads(verification_j) if verification_j else {},
         "body": body or "", "text": text or "",
         "tokens": [w.lower() for w in R.WORD_RE.findall(text or "")],
         "_path": relpath,
@@ -139,8 +143,9 @@ def build(amg_root: Path, nodes: Dict[str, Dict[str, Any]], sig: str) -> bool:
         con.execute("DROP TABLE IF EXISTS nodes")
         con.execute("DROP TABLE IF EXISTS meta")
         con.execute("CREATE TABLE nodes (id TEXT PRIMARY KEY, type TEXT, status TEXT, "
-                    "summary TEXT, source_path TEXT, lineno INTEGER, text TEXT, "
-                    "edges TEXT, part_of TEXT, body TEXT, relpath TEXT)")
+                    "summary TEXT, source_path TEXT, lineno INTEGER, line_end INTEGER, "
+                    "confidence REAL, text TEXT, edges TEXT, part_of TEXT, "
+                    "verification TEXT, body TEXT, relpath TEXT)")
         con.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
         ph = ", ".join("?" * len(_COLS))
         con.executemany(f"INSERT INTO nodes ({', '.join(_COLS)}) VALUES ({ph})",

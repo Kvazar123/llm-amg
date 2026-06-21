@@ -44,6 +44,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -158,13 +159,14 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
 
         module_map = _module_map(units)
         default_lang = config.get("working_language", "en")
+        commit = _git_commit(project_root)     # ingest-time provenance.commit (best-effort)
 
         # moved: an added unit whose content matches a node that would be purged
         # is the same source at a new path/name. Migrate earned fields instead of
         # purge+create — otherwise every mirror refactoring erases earned memory.
         pairs = _detect_moves(units, nodes)
         moves = {old["id"]: unit["id"] for old, unit in pairs}
-        migrated = [(_migrate_node(old, unit, module_map, default_lang), old, unit)
+        migrated = [(_migrate_node(old, unit, module_map, default_lang, commit), old, unit)
                     for old, unit in pairs]
         for (meta, needs_queue), old, unit in migrated:
             # second pass over the move map: an edge to ANOTHER simultaneously
@@ -222,8 +224,11 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
                 meta = {
                     "id": uid, "type": unit["kind"], "source_path": unit["source_path"],
                     "qualname": unit.get("qualname", ""), "lineno": unit.get("lineno"),
+                    "line_end": unit.get("line_end", unit.get("lineno")),
                     "source_kind": "derived_from_file", "policy": unit["policy"],
                     "source_hash": unit["content_sha"], "derived_from_hash": None,
+                    "provenance": _provenance(unit["category"], commit),
+                    "verification": _fresh_verification(),
                     "part_of": _part_of_for(unit),
                     "edges": _structural_edges(unit, module_map),
                     "lang": config.get("working_language", "en"),
@@ -246,6 +251,9 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
                 node["policy"] = unit["policy"]
                 node["qualname"] = unit.get("qualname", "")
                 node["lineno"] = unit.get("lineno")
+                node["line_end"] = unit.get("line_end", unit.get("lineno"))
+                node["provenance"] = _provenance(unit["category"], commit)
+                node["verification"] = _fresh_verification()   # source changed -> re-verify
                 node["edges"] = _refresh_structural_edges(node.get("edges") or [],
                                                           unit, module_map)
                 node["status"] = "stale"
@@ -274,6 +282,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
                     body = node.pop("_body", "")
                     node["qualname"] = unit.get("qualname", "")
                     node["lineno"] = unit.get("lineno")
+                    node["line_end"] = unit.get("line_end", unit.get("lineno"))
                     node["policy"] = unit["policy"]
                     node["type"] = unit["kind"]
                     node["updated"] = _now()
@@ -444,13 +453,16 @@ def _detect_moves(units: Dict[str, Dict[str, Any]], nodes: Dict[str, Dict[str, A
 
 
 def _migrate_node(old: Dict[str, Any], unit: Dict[str, Any], module_map: Dict[str, str],
-                  default_lang: str) -> Tuple[Dict[str, Any], bool]:
+                  default_lang: str, commit: Optional[str] = None) -> Tuple[Dict[str, Any], bool]:
     """Node for a moved/renamed source unit: structural fields from the new
     unit, earned fields (summary, lang, semantic edges with their coact,
     derived_from_hash, extra memberships) from the old node. Same-file edge
     targets and the path-based primary membership are rewritten to the new
     path. Returns (meta, needs_requeue): a node whose derivation was current
     arrives active — a pure move costs zero model calls.
+
+    A move is content-identical, so any verification the old node earned stays valid
+    and rides along; provenance carries the new path's kind and the current commit.
     """
     old_rel, new_rel = old.get("source_path", ""), unit["source_path"]
     edges = []
@@ -482,8 +494,11 @@ def _migrate_node(old: Dict[str, Any], unit: Dict[str, Any], module_map: Dict[st
     meta = {
         "id": unit["id"], "type": unit["kind"], "source_path": new_rel,
         "qualname": unit.get("qualname", ""), "lineno": unit.get("lineno"),
+        "line_end": unit.get("line_end", unit.get("lineno")),
         "source_kind": "derived_from_file", "policy": unit["policy"],
         "source_hash": unit["content_sha"], "derived_from_hash": derived,
+        "provenance": _provenance(unit["category"], commit),
+        "verification": old.get("verification") or _fresh_verification(),
         "part_of": part_of, "edges": edges,
         "lang": old.get("lang") or default_lang,
         "status": status, "summary": old.get("summary", ""), "updated": _now(),
@@ -506,6 +521,65 @@ def _queue_item(unit: Dict[str, Any]) -> Dict[str, Any]:
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+# --------------------------------------------------------------------------- #
+# Provenance, confidence & verification (Stage 13)
+# --------------------------------------------------------------------------- #
+
+DEFAULT_CONFIDENCE = 0.7        # fallback when the builder emits a summary but no estimate
+
+
+def _git_commit(project_root: Path) -> Optional[str]:
+    """Best-effort short git commit at the source root, for provenance.commit (Stage 13).
+    Returns None when git is absent, the dir is not a repo, or anything fails — the field
+    is OPTIONAL, so a non-git project simply omits it (no hard dependency on git)."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return out.stdout.strip() or None
+
+
+def _provenance(kind: str, commit: Optional[str]) -> Dict[str, Any]:
+    """Origin block for a node. It carries ONLY the dimensions not already in the flat
+    operational fields — source_path/source_hash/lineno/line_end ARE the file-projected
+    node's provenance, so they are not duplicated here: just the origin `kind`
+    (code/doc/data) and an optional ingest-time `commit`."""
+    prov: Dict[str, Any] = {"kind": kind}
+    if commit:
+        prov["commit"] = commit
+    return prov
+
+
+def _fresh_verification() -> Dict[str, str]:
+    """A never-checked verification record: the default for a new or just-changed node.
+    The pack flags it; a code claim is checked live before answering (verify_claims.py)."""
+    return {"status": "unverified", "method": "none"}
+
+
+def _clamp01(x: Any, default: float = DEFAULT_CONFIDENCE) -> float:
+    """Coerce a confidence estimate into [0, 1]; fall back to `default` on a bad value."""
+    try:
+        return max(0.0, min(1.0, float(x)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _synth_provenance(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Provenance for a synthesized/created node (a hub/overview): kind `model_inference`
+    — it is the model's own synthesis OVER other nodes, not a file projection — plus an
+    optional `derived_from` list, the upstream ids it was distilled from (Stage 13 task 3
+    'source ids'; the source pointer a synthesized node has no flat source_path for)."""
+    prov: Dict[str, Any] = {"kind": "model_inference"}
+    df = item.get("derived_from")
+    if df:
+        prov["derived_from"] = df
+    return prov
 
 
 # --------------------------------------------------------------------------- #
@@ -542,6 +616,7 @@ def apply_derivation(project_root: Path, derivation_path: Path,
     weights_cfg = config.get("weights") or {}
     renormalize = bool(weights_cfg.get("part_of_renormalize", True))
     default_w = float(weights_cfg.get("default_edge_weight", 0.5))
+    default_conf = _clamp01(config.get("default_confidence", DEFAULT_CONFIDENCE))
     applied, created, skipped, skipped_stale = 0, 0, 0, 0
 
     with store.lock():
@@ -557,6 +632,10 @@ def apply_derivation(project_root: Path, derivation_path: Path,
                         "id": item["id"], "type": item["type"],
                         "source_kind": "synthesized", "policy": "authored",
                         "source_hash": None, "derived_from_hash": None,
+                        "provenance": _synth_provenance(item),
+                        "confidence": _clamp01(item.get("confidence", default_conf),
+                                               default_conf),
+                        "verification": _fresh_verification(),
                         "part_of": item.get("part_of", []),
                         "edges": [dict(e, coact=e.get("coact", 0),
                                        origin=e.get("origin", "synthesized"))
@@ -593,6 +672,12 @@ def apply_derivation(project_root: Path, derivation_path: Path,
             if item.get("edges"):
                 node["edges"] = _merge_edges(node.get("edges", []), item["edges"],
                                              default_w=default_w)
+            # Confidence estimate from the builder (Stage 13 task 3): an explicit value
+            # wins; otherwise a node that just earned a summary takes the default once.
+            if "confidence" in item:
+                node["confidence"] = _clamp01(item["confidence"], default_conf)
+            elif "summary" in item and node.get("confidence") is None:
+                node["confidence"] = default_conf
             if "summary" in item or node.get("source_kind") != "derived_from_file":
                 node["derived_from_hash"] = node.get("source_hash")
                 node["status"] = "active"

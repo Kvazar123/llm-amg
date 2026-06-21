@@ -105,8 +105,33 @@ def test_writer_upsert_keeps_fresh(tmp: Path) -> None:
     assert via is not None, "a writer's upsert must leave the index FRESH (not invalidated)"
     assert res["id"] in via, "the upserted note must be in the index"
     assert via[res["id"]]["summary"] == summary
+    # the Stage 13 trust fields a note carries survive the upsert into the index
+    assert via[res["id"]]["confidence"] == 0.85, "confidence must round-trip via the index"
+    assert via[res["id"]]["verification"]["method"] == "user", "verification must round-trip"
     assert via == R._scan_nodes(root), "upserted index must still equal a full scan"
     print("PASS  writer upsert keeps the index fresh and correct (notes.add_note)")
+
+
+def test_stage13_fields_roundtrip(tmp: Path) -> None:
+    """confidence / verification / line_end survive the scan<->index round-trip WITH their
+    values (not just structurally) — the projection added in Stage 13. The bench graph
+    has none of these, so a hand-written node exercises non-trivial values."""
+    root = tmp / "g6"
+    (root / "nodes" / "code").mkdir(parents=True)
+    (root / "config.yml").write_text("active: true\n", encoding="utf-8")
+    (root / "nodes" / "code" / "a-0001.md").write_text(
+        "---\nid: code:src/m.py::a\ntype: function\nsource_path: src/m.py\n"
+        "lineno: 10\nline_end: 25\nconfidence: 0.42\n"
+        "verification:\n  status: contradicted\n  method: grep\n"
+        "status: active\nsummary: does a thing\n---\n", encoding="utf-8")
+    scanned = R._scan_nodes(root)
+    assert IX.build(root, scanned, IX.signature(root)), "build must succeed"
+    via = IX.read_if_fresh(root)
+    assert via == scanned, "index must reproduce the scan incl. Stage 13 fields"
+    n = via["code:src/m.py::a"]
+    assert n["confidence"] == 0.42 and n["line_end"] == 25, n
+    assert n["verification"] == {"status": "contradicted", "method": "grep"}, n
+    print("PASS  stage13 fields: confidence/line_end/verification round-trip via the index")
 
 
 def main() -> int:
@@ -123,6 +148,7 @@ def main() -> int:
         test_stale_then_rebuild(tmp)
         test_delete_and_corrupt_fall_back(tmp)
         test_writer_upsert_keeps_fresh(tmp)
+        test_stage13_fields_roundtrip(tmp)
         print("\nALL INDEX CHECKS PASSED")
     finally:
         embed.get_embedder = orig

@@ -361,7 +361,7 @@ def _classify_path(path: Path, rel: str, overrides: Dict[str, Dict[str, Any]]
 def _file_unit(rel: str, category: str, policy: str, text: str, lang: Optional[str] = None) -> Dict[str, Any]:
     return {"id": f"{category}:{rel}", "kind": "file", "source_path": rel,
             "category": category, "policy": policy, "qualname": "", "lineno": 1,
-            "lang": lang, "content_sha": _sha(text)}
+            "line_end": text.count("\n") + 1, "lang": lang, "content_sha": _sha(text)}
 
 
 def _python_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
@@ -381,7 +381,7 @@ def _python_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
 
     units = [{"id": f"code:{rel}", "kind": "module", "source_path": rel,
               "category": "code", "policy": policy, "qualname": "", "lineno": 1,
-              "lang": "python", "content_sha": _sha(text),
+              "line_end": len(lines), "lang": "python", "content_sha": _sha(text),
               "imports": sorted(set(imports))}]
 
     def calls_in(node: ast.AST) -> List[str]:
@@ -406,7 +406,9 @@ def _python_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
                     "id": f"code:{rel}::{qual}",
                     "kind": "class" if isinstance(child, ast.ClassDef) else "function",
                     "source_path": rel, "category": "code", "policy": policy,
-                    "qualname": qual, "lineno": child.lineno, "lang": "python",
+                    "qualname": qual, "lineno": child.lineno,
+                    "line_end": getattr(child, "end_lineno", None) or child.lineno,
+                    "lang": "python",
                     "content_sha": _sha(slice_src(child)), "calls": calls_in(child)})
                 if isinstance(child, ast.ClassDef):
                     walk(child, prefix=f"{qual}.")
@@ -480,6 +482,11 @@ def _treesitter_units(path: Path, rel: str, policy: str, lang: str) -> Optional[
                    else node.start_position)
         return int(pt[0] if isinstance(pt, tuple) else _call(pt.row)) + 1
 
+    def end_line_of(node: Any) -> int:
+        pt = _call(node.end_point if hasattr(node, "end_point")
+                   else node.end_position)
+        return int(pt[0] if isinstance(pt, tuple) else _call(pt.row)) + 1
+
     text = data.decode("utf-8", "replace")
     units = [_file_unit(rel, "code", policy, text, lang)]
     units[0]["kind"] = "module"
@@ -521,7 +528,8 @@ def _treesitter_units(path: Path, rel: str, policy: str, lang: str) -> Optional[
                         "id": f"code:{rel}::{nm}", "kind": _TS_DEF[k],
                         "source_path": rel,
                         "category": "code", "policy": policy, "qualname": nm,
-                        "lineno": line_of(child), "lang": lang,
+                        "lineno": line_of(child), "line_end": end_line_of(child),
+                        "lang": lang,
                         "content_sha": _sha(src), "calls": calls_in(child)})
             walk(child)
 
@@ -583,7 +591,8 @@ def _markdown_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
             qual = base if n == 0 else f"{base}-{n}"
         units.append({"id": f"doc:{rel}::{qual}", "kind": "section", "source_path": rel,
                       "category": "doc", "policy": policy, "qualname": qual,
-                      "lineno": start + 1, "lang": "markdown", "content_sha": _sha(chunk)})
+                      "lineno": start + 1, "line_end": end, "lang": "markdown",
+                      "content_sha": _sha(chunk)})
     return units or [_file_unit(rel, "doc", policy, text, "markdown")]
 
 
@@ -639,7 +648,8 @@ def _rst_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
         if pre:
             units.append({"id": f"doc:{rel}::_preamble", "kind": "section",
                           "source_path": rel, "category": "doc", "policy": policy,
-                          "qualname": "_preamble", "lineno": 1, "lang": "rst",
+                          "qualname": "_preamble", "lineno": 1,
+                          "line_end": heads[0][1], "lang": "rst",
                           "content_sha": _sha(pre)})
     bounds = [h[1] for h in heads] + [len(lines)]
     for idx, (title, start) in enumerate(heads):
@@ -652,7 +662,8 @@ def _rst_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
         qual = base if c == 0 else f"{base}-{c}"
         units.append({"id": f"doc:{rel}::{qual}", "kind": "section", "source_path": rel,
                       "category": "doc", "policy": policy, "qualname": qual,
-                      "lineno": start + 1, "lang": "rst", "content_sha": _sha(chunk)})
+                      "lineno": start + 1, "line_end": bounds[idx + 1], "lang": "rst",
+                      "content_sha": _sha(chunk)})
     return units or [_file_unit(rel, "doc", policy, text, "rst")]
 
 
@@ -685,8 +696,8 @@ def _log_units(path: Path, rel: str, policy: str, group_lines: int = 50) -> List
         n += 1
         units.append({"id": f"doc:{rel}::e{n}", "kind": "block", "source_path": rel,
                       "category": "doc", "policy": policy, "qualname": f"e{n}",
-                      "lineno": start + 1, "lang": "log", "content_sha": _sha(chunk),
-                      "text": chunk})
+                      "lineno": start + 1, "line_end": min(start + step, len(lines)),
+                      "lang": "log", "content_sha": _sha(chunk), "text": chunk})
     return units or [_file_unit(rel, "doc", policy, text, "log")]
 
 
@@ -879,7 +890,8 @@ def _session_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
             continue
         units.append({"id": f"doc:{rel}::m{n}", "kind": "section", "source_path": rel,
                       "category": "doc", "policy": policy, "qualname": f"m{n}",
-                      "lineno": s + 1, "lang": "session", "content_sha": _sha(chunk)})
+                      "lineno": s + 1, "line_end": e, "lang": "session",
+                      "content_sha": _sha(chunk)})
     return units or [_file_unit(rel, "doc", policy, text, "session")]
 
 

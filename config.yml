@@ -6,7 +6,7 @@
 # =============================================================================
 
 active: true
-schema_version: 2
+schema_version: 3
 
 # Lifecycle automation (boolean, like `active`). true: the model runs the session loop
 # itself, and the SessionStart/SessionEnd hooks (settings.json) heal the store, fold

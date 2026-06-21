@@ -34,6 +34,7 @@ CLI:
                       [--tags "routing,controllers"] [--status captured|active]
                       [--part-of '<json list of {topic,w}>']
                       [--edges '<json list of {rel,to,w}>'] [--id <id>]
+                      [--kind user|model_inference] [--confidence 0..1]
                       [<project_root>] [--root <agent_dir>]
 
 The graph root is <agent_dir>/amg, resolved by graph_store.resolve_amg_root (same
@@ -67,6 +68,17 @@ except (AttributeError, ValueError):
 # The authored capture types. `type` is the node's shape; decision/adr are protected
 # at consolidation (compaction.protect_types), the rest are episodic (episodic_types).
 NOTE_TYPES = ("note", "decision", "adr", "open_question", "plan")
+
+# Provenance kind an authored node carries (Stage 13). user = the human stated/confirmed
+# it (ground truth, so verification is `user`); model_inference = the model's own
+# conclusion (unverified until checked). decision/adr default to user (settled
+# commitments), the rest to model_inference; --kind overrides.
+PROVENANCE_KINDS = ("user", "model_inference")
+
+# Per-type default confidence: user commitments high, model conclusions lower, transient
+# states lowest. Overridable with --confidence.
+_NOTE_CONFIDENCE = {"decision": 0.85, "adr": 0.85, "note": 0.6,
+                    "open_question": 0.5, "plan": 0.5}
 
 
 def _slug(text: str) -> str:
@@ -124,13 +136,18 @@ def _working_language(amg_root: Path) -> str:
 def add_note(project_root: Path, ntype: str, summary: str, body: str = "",
              tags: Optional[List[str]] = None, status: str = "captured",
              part_of: Optional[List[Dict[str, Any]]] = None, edges: Optional[List[Dict[str, Any]]] = None,
-             node_id: Optional[str] = None, amg_root: Optional[Path] = None) -> Dict[str, Any]:
+             node_id: Optional[str] = None, kind: Optional[str] = None,
+             confidence: Optional[float] = None, amg_root: Optional[Path] = None) -> Dict[str, Any]:
     """Write (or update) one authored node through a crash-safe transaction.
 
     A new id is created in the `notes/` bucket; an existing id (explicit --id, or a
     content-addressed collision = identical re-capture) is updated in place: `created`
     is preserved, `updated` is bumped, tags/part_of/edges accumulate (the same merge
     rules reconcile uses for derivation items). Returns {id, created, path, txid}.
+
+    Provenance (Stage 13): `kind` is the origin — user (the human stated it -> verified
+    by `user`) or model_inference (the model's conclusion -> unverified); it defaults by
+    type (decision/adr -> user, else model_inference). `confidence` defaults per type.
     """
     if ntype not in NOTE_TYPES:
         raise ValueError(f"unknown note type {ntype!r}; expected one of {NOTE_TYPES}")
@@ -139,10 +156,19 @@ def add_note(project_root: Path, ntype: str, summary: str, body: str = "",
     tags = list(tags or [])
     part_of = list(part_of or [])
     edges = list(edges or [])
+    kind = kind if kind in PROVENANCE_KINDS else (
+        "user" if ntype in ("decision", "adr") else "model_inference")
+    conf = (rc._clamp01(confidence) if confidence is not None
+            else _NOTE_CONFIDENCE.get(ntype, rc.DEFAULT_CONFIDENCE))
+    # The human's own statement is ground truth (verified by `user`); a model conclusion
+    # is unverified until a code check confirms it.
+    verification = ({"status": "verified", "method": "user"} if kind == "user"
+                    else rc._fresh_verification())
     amg_root = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     store = gs.GraphStore(amg_root)
     store.init()
     lang = _working_language(amg_root)
+    provenance = rc._provenance(kind, rc._git_commit(project_root))
     nid = node_id or _make_id(ntype, summary, body, tags)
 
     with store.lock():
@@ -157,7 +183,8 @@ def add_note(project_root: Path, ntype: str, summary: str, body: str = "",
             body_final = body if body else existing.get("_body", "")
             meta.update({"type": ntype, "source_kind": "authored", "policy": "authored",
                          "status": status, "tags": _merge_tags(meta.get("tags"), tags),
-                         "lang": lang, "created": created, "updated": now,
+                         "lang": lang, "confidence": conf, "provenance": provenance,
+                         "verification": verification, "created": created, "updated": now,
                          "summary": summary})
             if part_of:
                 meta["part_of"] = rc._merge_part_of(meta.get("part_of") or [],
@@ -173,6 +200,8 @@ def add_note(project_root: Path, ntype: str, summary: str, body: str = "",
                     "source_kind": "authored", "policy": "authored",
                     "status": status, "tags": tags, "part_of": part_of,
                     "edges": _stamp_edges(edges), "lang": lang,
+                    "confidence": conf, "provenance": provenance,
+                    "verification": verification,
                     "created": now, "updated": now, "summary": summary}
             body_final = body
             relpath = rc.node_relpath(nid, "notes")
@@ -206,6 +235,10 @@ def main(argv: List[str]) -> int:
     a.add_argument("--edges", default="", help='JSON list of {rel,to,w}')
     a.add_argument("--id", dest="node_id", default=None,
                    help="explicit stable id (default: content-addressed)")
+    a.add_argument("--kind", default=None, choices=PROVENANCE_KINDS,
+                   help="provenance kind (default: user for decision/adr, else model_inference)")
+    a.add_argument("--confidence", type=float, default=None,
+                   help="confidence estimate 0..1 (default: per type)")
     a.add_argument("project_root", nargs="?", default=".")
     a.add_argument("--root", dest="cli_root", default=None, help="agent dir override")
     args = p.parse_args(argv[1:])
@@ -220,7 +253,8 @@ def main(argv: List[str]) -> int:
     project_root = Path(args.project_root).resolve()
     amg_root = gs.resolve_amg_root(args.cli_root, project_root)
     res = add_note(project_root, args.ntype, args.summary, args.body, tags,
-                   args.status, part_of, edges, args.node_id, amg_root)
+                   args.status, part_of, edges, args.node_id,
+                   kind=args.kind, confidence=args.confidence, amg_root=amg_root)
     print(json.dumps(res, ensure_ascii=False, indent=2))
     return 0
 

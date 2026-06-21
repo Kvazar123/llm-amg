@@ -529,6 +529,71 @@ def case_resume_freshness() -> None:
         shutil.rmtree(proj, ignore_errors=True)
 
 
+def case_provenance_and_confidence() -> None:
+    """Stage 13: ingest stamps provenance.kind + verification(unverified) + line_end on
+    source-derived nodes; a content change voids a prior verification (back to
+    unverified); the builder's confidence estimate is applied, and a summary that lands
+    without one takes the default; a synthesized hub gets kind model_inference +
+    derived_from."""
+    proj = Path(tempfile.mkdtemp(prefix="amg-prov-"))
+    try:
+        amg = proj / ".claude" / "amg"
+        amg.mkdir(parents=True)
+        (amg / "config.yml").write_text(
+            "active: true\nworking_language: en\nmirror_path: src\n", encoding="utf-8")
+        src = proj / "src"
+        src.mkdir()
+        (src / "m.py").write_text("def a():\n    return 1\n\n\ndef b():\n    return 2\n",
+                                  encoding="utf-8")
+        (src / "g.md").write_text("# Title\n\nIntro.\n\n## Sec\n\nBody.\n", encoding="utf-8")
+        RC.plan(proj, amg)
+        nodes = RC.load_nodes(gs.GraphStore(amg))
+
+        a = nodes["code:src/m.py::a"]
+        assert a["provenance"]["kind"] == "code", a["provenance"]
+        assert a["verification"] == {"status": "unverified", "method": "none"}, a["verification"]
+        assert a["line_end"] and a["line_end"] >= a["lineno"], a            # real span
+        sec = nodes["doc:src/g.md::sec"]
+        assert sec["provenance"]["kind"] == "doc", sec["provenance"]
+        assert sec["line_end"] > sec["lineno"], sec
+
+        # a content change must void a prior verification (simulate a 'verified' stamp)
+        meta = {k: v for k, v in a.items() if not k.startswith("_")}
+        meta["verification"] = {"status": "verified", "method": "ast"}
+        gs.atomic_write_text(amg / a["_path"], RC.serialize_node(meta, ""))
+        (src / "m.py").write_text(
+            "def a():\n    return 11  # changed\n\n\ndef b():\n    return 2\n", encoding="utf-8")
+        RC.plan(proj, amg)
+        a = RC.load_nodes(gs.GraphStore(amg))["code:src/m.py::a"]
+        assert a["verification"]["status"] == "unverified", "change must void verification"
+
+        # builder confidence: explicit value applied; a summary without one takes default
+        work = amg / "work"
+        work.mkdir(exist_ok=True)
+        (work / "d.json").write_text(json.dumps([
+            {"id": "code:src/m.py::a", "summary": "fn a", "confidence": 0.42,
+             "content_sha": a["source_hash"]},
+            {"id": "code:src/m.py::b", "summary": "fn b"}]), encoding="utf-8")
+        RC.apply_derivation(proj, work / "d.json", amg)
+        nn = RC.load_nodes(gs.GraphStore(amg))
+        assert nn["code:src/m.py::a"]["confidence"] == 0.42, nn["code:src/m.py::a"]
+        assert nn["code:src/m.py::b"]["confidence"] == RC.DEFAULT_CONFIDENCE, nn["code:src/m.py::b"]
+
+        # synthesized hub: provenance.kind model_inference + derived_from carried through
+        (work / "h.json").write_text(json.dumps([
+            {"id": "hub:x", "type": "hub", "summary": "hub", "confidence": 0.6,
+             "derived_from": ["code:src/m.py::a"]}]), encoding="utf-8")
+        RC.apply_derivation(proj, work / "h.json", amg)
+        h = RC.load_nodes(gs.GraphStore(amg))["hub:x"]
+        assert h["provenance"]["kind"] == "model_inference", h["provenance"]
+        assert h["provenance"]["derived_from"] == ["code:src/m.py::a"], h["provenance"]
+        assert h["verification"]["status"] == "unverified", h
+        print("PASS  provenance: ingest stamps kind/verification/line_end; change voids "
+              "verification; confidence applied (Stage 13)")
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+
 if __name__ == "__main__":
     proj = setup_project()
     try:
@@ -550,6 +615,7 @@ if __name__ == "__main__":
         case_root_resolution(proj)
         case_absorb_once()
         case_resume_freshness()
+        case_provenance_and_confidence()
         print("\nALL RECONCILE CHECKS PASSED")
     finally:
         shutil.rmtree(proj, ignore_errors=True)
