@@ -173,8 +173,37 @@ def _parse(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
     return meta, m.group(2)
 
 
-def load_nodes(store_root: Path) -> Dict[str, Dict[str, Any]]:
-    """id -> {meta fields, body, text}. `text` is the bag of words used for BM25."""
+def _node_from_meta(meta: Dict[str, Any], body: str, relpath: str
+                    ) -> Optional[Dict[str, Any]]:
+    """Build the in-memory node dict (id -> {meta fields, body, text, tokens, _path})
+    from a parsed frontmatter + body. `text` is the BM25 bag of words. Shared by the
+    nodes/*.md scan and by the SQLite index (index_store) so both produce the SAME
+    shape — BM25 / build_adjacency / assemble_pack never need to know the source."""
+    nid = meta.get("id")
+    if not nid:
+        return None
+    topics = " ".join(t.get("topic", "") for t in (meta.get("part_of") or [])
+                      if isinstance(t, dict))
+    # authored-note tags (notes.py) are searchable labels: fold them into the BM25
+    # bag so a note is findable by its tag, not only by summary/body words.
+    tags = " ".join(str(t) for t in (meta.get("tags") or []) if t)
+    text = " ".join([
+        nid.split(":", 1)[-1].replace("::", " ").replace("/", " ").replace("_", " "),
+        str(meta.get("summary", "")), topics, tags, body[:600],
+    ])
+    return {
+        "id": nid, "type": meta.get("type", "node"),
+        "source_path": meta.get("source_path"), "lineno": meta.get("lineno"),
+        "summary": meta.get("summary", ""), "status": meta.get("status"),
+        "edges": meta.get("edges") or [], "part_of": meta.get("part_of") or [],
+        "body": body, "text": text, "tokens": [w.lower() for w in WORD_RE.findall(text)],
+        "_path": relpath,                                    # nodes/<bucket>/<file>.md
+    }
+
+
+def _scan_nodes(store_root: Path) -> Dict[str, Dict[str, Any]]:
+    """The canonical, source-of-truth load: walk nodes/*.md and parse each file.
+    Correct but O(files) reads + yaml.safe_load each — the cost the index avoids."""
     nodes: Dict[str, Dict[str, Any]] = {}
     nodes_dir = store_root / "nodes"
     if not nodes_dir.exists():
@@ -184,26 +213,40 @@ def load_nodes(store_root: Path) -> Dict[str, Dict[str, Any]]:
         if not parsed:
             continue
         meta, body = parsed
-        nid = meta.get("id")
-        if not nid:
-            continue
-        topics = " ".join(t.get("topic", "") for t in (meta.get("part_of") or [])
-                          if isinstance(t, dict))
-        # authored-note tags (notes.py) are searchable labels: fold them into the BM25
-        # bag so a note is findable by its tag, not only by summary/body words.
-        tags = " ".join(str(t) for t in (meta.get("tags") or []) if t)
-        text = " ".join([
-            nid.split(":", 1)[-1].replace("::", " ").replace("/", " ").replace("_", " "),
-            str(meta.get("summary", "")), topics, tags, body[:600],
-        ])
-        nodes[nid] = {
-            "id": nid, "type": meta.get("type", "node"),
-            "source_path": meta.get("source_path"), "lineno": meta.get("lineno"),
-            "summary": meta.get("summary", ""), "status": meta.get("status"),
-            "edges": meta.get("edges") or [], "part_of": meta.get("part_of") or [],
-            "body": body, "text": text, "tokens": [w.lower() for w in WORD_RE.findall(text)],
-            "_path": p.relative_to(store_root).as_posix(),   # nodes/<bucket>/<file>.md
-        }
+        node = _node_from_meta(meta, body, p.relative_to(store_root).as_posix())
+        if node:
+            nodes[node["id"]] = node
+    return nodes
+
+
+def load_nodes(store_root: Path) -> Dict[str, Dict[str, Any]]:
+    """id -> {meta fields, body, text}. `text` is the bag of words used for BM25.
+
+    Fast path: read the disposable SQLite read-index (index_store) when it is FRESH
+    (its stored signature matches a cheap stat-walk of nodes/). Otherwise scan
+    nodes/*.md and best-effort rebuild the index for next time. The index is a cache,
+    NEVER the source of truth: any mismatch, corruption, or error degrades to the
+    scan, never to a wrong result (roadmap §4.1; the scan fallback is unconditional).
+    The signature is taken BEFORE the scan, so an index built from a scan that raced a
+    concurrent write is tagged with the pre-scan state and simply fails the next
+    freshness check (rebuild) rather than ever being trusted stale."""
+    store_root = Path(store_root)
+    sig: Optional[str] = None
+    try:
+        import index_store
+        fresh = index_store.read_if_fresh(store_root)
+        if fresh is not None:
+            return fresh
+        sig = index_store.signature(store_root)        # BEFORE the scan (race-safe tag)
+    except Exception:
+        sig = None
+    nodes = _scan_nodes(store_root)
+    if sig is not None:
+        try:
+            import index_store
+            index_store.build(store_root, nodes, sig)  # best-effort warm for next read
+        except Exception:
+            pass
     return nodes
 
 

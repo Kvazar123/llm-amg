@@ -8,8 +8,11 @@ speed-up from the generated read-index (roadmap Stage 12, Group 2) a measured
 before/after — run this BEFORE the index for a baseline, then again after.
 
 It times the hot paths the index targets, all over existing engine modules:
-  * load_nodes      — the per-query hot path: today a full nodes/*.md scan + a
-                      yaml.safe_load of every file (06-retrieval). THE headline metric.
+  * load (scan)     — a full nodes/*.md scan + yaml.safe_load of every file: the
+                      per-query cost BEFORE the index (06-retrieval). THE headline.
+  * load (index)    — an index-backed read of the same nodes AFTER the generated
+                      SQLite read-index (index_store); the scan/index speedup is
+                      reported side by side, plus the index build/rebuild cost.
   * build_adjacency — symmetric structural conductance over all edges.
   * retrieve        — one end-to-end query (seed -> PPR -> pack), writes OFF so the
                       measurement never pollutes the pack or the co-activation log.
@@ -106,21 +109,33 @@ def _load_cases(store: Path) -> List[Dict[str, Any]]:
 def bench_store(store: Path, repeats: int = 3, n_queries: int = 8,
                 project_root: Optional[Path] = None) -> Dict[str, Any]:
     """Time the read-only hot paths on the graph at `store`. Returns a dict of
-    seconds per operation plus the node count. Mutates nothing under `store`."""
+    seconds per operation plus the node count. Mutates nothing under `store` except
+    the disposable cache/index.sqlite (built/measured here; it is regenerated cache)."""
     cfg = _embeddings_off(R.load_config(store))
-    holder: Dict[str, Any] = {}
 
-    def _load() -> None:
-        holder["nodes"] = R.load_nodes(store)
-    t_load = _best(_load, repeats)
-    nodes: Dict[str, Dict[str, Any]] = holder["nodes"]
+    # The headline before/after: a full nodes/*.md scan vs an index-backed read.
+    t_scan = _best(lambda: R._scan_nodes(store), repeats)
+    nodes: Dict[str, Dict[str, Any]] = R._scan_nodes(store)
     n = len(nodes)
+    out: Dict[str, Any] = {"n_nodes": n, "scan_s": round(t_scan, 4)}
+
+    try:                                               # index timings (Group 2)
+        import index_store as IX
+        sig = IX.signature(store)
+        t_build = _best(lambda: IX.build(store, nodes, sig), repeats)
+        IX.build(store, nodes, sig)                     # leave it fresh for retrieve below
+        t_index = _best(lambda: IX.read_if_fresh(store), repeats)
+        out["index_build_s"] = round(t_build, 4)
+        out["index_read_s"] = round(t_index, 4)
+        out["speedup"] = round(t_scan / t_index, 1) if t_index > 0 else None
+    except Exception:
+        out["index_build_s"] = out["index_read_s"] = out["speedup"] = None
 
     t_adj = _best(lambda: R.build_adjacency(nodes, cfg), repeats) if nodes else None
 
     queries = _sample_queries(nodes, n_queries)
 
-    def _retr() -> None:
+    def _retr() -> None:                               # retrieve now reads the warm index
         for q in queries:
             R.retrieve(store, q, config=cfg, write_pack=False, log_coactivation=False)
     t_retr = (_best(_retr, repeats) / len(queries)) if nodes else None
@@ -129,15 +144,13 @@ def bench_store(store: Path, repeats: int = 3, n_queries: int = 8,
     # eval is heavier (a retrieve per case); time it once, not best-of-N.
     t_eval = _best(lambda: E.run(store, cases, cfg), 1) if (cases and nodes) else None
 
-    out: Dict[str, Any] = {
-        "n_nodes": n,
-        "load_nodes_s": round(t_load, 4),
+    out.update({
         "build_adjacency_s": round(t_adj, 4) if t_adj is not None else None,
         "retrieve_s_per_query": round(t_retr, 4) if t_retr is not None else None,
         "eval_s": round(t_eval, 4) if t_eval is not None else None,
         "queries": len(queries),
         "eval_cases": len(cases),
-    }
+    })
     if project_root is not None:
         out["bootstrap"] = _bench_bootstrap(project_root)
     return out
@@ -307,12 +320,16 @@ def make_bench_graph(root: Path, n_nodes: int, seed: int = 0,
 
 def print_report(res: Dict[str, Any]) -> None:
     def fmt(x: Optional[float]) -> str:
-        return "  n/a" if x is None else f"{x * 1000:8.1f} ms"
+        return "     n/a" if x is None else f"{x * 1000:8.1f} ms"
+    sp = res.get("speedup")
     print(f"  nodes               : {res['n_nodes']}")
-    print(f"  load_nodes          : {fmt(res.get('load_nodes_s'))}")
+    print(f"  load: scan  (before): {fmt(res.get('scan_s'))}   full nodes/*.md parse")
+    print(f"  load: index (after) : {fmt(res.get('index_read_s'))}   SQLite read"
+          + ("" if sp is None else f"   -> {sp}x faster"))
+    print(f"  index build/rebuild : {fmt(res.get('index_build_s'))}")
     print(f"  build_adjacency     : {fmt(res.get('build_adjacency_s'))}")
     print(f"  retrieve (per query): {fmt(res.get('retrieve_s_per_query'))}"
-          f"   over {res.get('queries')} queries")
+          f"   over {res.get('queries')} queries (warm index)")
     print(f"  eval (all cases)    : {fmt(res.get('eval_s'))}"
           f"   over {res.get('eval_cases')} cases")
     boot = res.get("bootstrap")

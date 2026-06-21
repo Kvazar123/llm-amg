@@ -113,6 +113,29 @@ def _part_of_for(unit: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 # --------------------------------------------------------------------------- #
+# Disposable read-index refresh (index_store lives in the amg-retrieve skill)
+# --------------------------------------------------------------------------- #
+
+def _refresh_index(amg_root: Path, tx: gs.Transaction) -> None:
+    """Best-effort: fold this committed write into the disposable SQLite read-index
+    (index_store) so the next retrieve reads it instead of re-scanning nodes/*.md.
+    Call under the caller's lock (the index signature must match disk). Cross-skill
+    import via sys.path — the established pattern (consolidate imports graph_store the
+    same way). Swallows everything: the index is a cache, and retrieve.load_nodes
+    rebuilds on any signature mismatch, so a missed refresh is harmless."""
+    try:
+        idx_dir = str(Path(__file__).resolve().parents[2] / "amg-retrieve" / "scripts")
+        if idx_dir not in sys.path:
+            sys.path.insert(0, idx_dir)
+        import index_store
+        written, deleted = tx.node_paths()
+        if written or deleted:
+            index_store.refresh_after_commit(amg_root, written, deleted)
+    except Exception:
+        pass
+
+
+# --------------------------------------------------------------------------- #
 # Plan / bootstrap
 # --------------------------------------------------------------------------- #
 
@@ -276,6 +299,8 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
             # authored / absorb notes are intentionally left untouched
 
         txid = tx.commit()
+        if txid:
+            _refresh_index(store.root, tx)     # warm the read-index under the lock
 
         # Persist the work queue for the semantic builder (crash-safe write).
         work_dir = store.root / "work"
@@ -565,8 +590,9 @@ def apply_derivation(project_root: Path, derivation_path: Path,
             tx.write(node["_path"], serialize_node(meta, node.get("_body", "")))
             applied += 1
         txid = tx.commit()
-        if txid:                              # transactional audit line (1.15)
-            store.append_log(
+        if txid:
+            _refresh_index(store.root, tx)     # warm the read-index under the lock
+            store.append_log(                  # transactional audit line (1.15)
                 "reconcile",
                 f"apply: applied={applied} created={created} skipped={skipped}", txid)
 

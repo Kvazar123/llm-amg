@@ -412,6 +412,16 @@ class Transaction:
     def is_empty(self) -> bool:
         return not self._writes and not self._deletes
 
+    def node_paths(self) -> tuple[List[str], List[str]]:
+        """The (written, deleted) relpaths under nodes/ this transaction carries — the
+        hook the disposable read-index (index_store) uses to refresh just what changed.
+        Filtering to nodes/ keeps the index in step with the graph without reacting to
+        journal/work/log writes. This stays a plain path filter — the store knows
+        nothing about the index itself (that lives in the retrieve layer)."""
+        written = [p for p in self._writes if p.startswith("nodes/")]
+        deleted = [p for p in self._deletes if p.startswith("nodes/")]
+        return written, deleted
+
     def commit(self, _fault_after_apply_ops: Optional[int] = None) -> Optional[str]:
         """Make the staged changes durable, atomic, and crash-recoverable.
 

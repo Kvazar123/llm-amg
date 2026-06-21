@@ -35,7 +35,7 @@ from typing import Any, Dict, List, Optional
 
 import graph_store as gs
 from extract_structure import _TS_DEF
-from reconcile import load_nodes, serialize_node, _now
+from reconcile import load_nodes, serialize_node, _now, _refresh_index
 
 
 def migrate(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
@@ -89,7 +89,9 @@ def migrate(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, An
                 meta = {k: v for k, v in node.items() if not k.startswith("_")}
                 tx.write(node["_path"], serialize_node(meta, node.get("_body", "")))
                 counts["nodes_updated"] += 1
-        tx.commit()
+        txid = tx.commit()
+        if txid:
+            _refresh_index(amg_root, tx)       # warm the read-index under the lock
 
     counts["overview_ids"] = overviews
     return counts

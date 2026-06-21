@@ -277,6 +277,8 @@ def fold_weights(project_root: Path, amg_root: Optional[Path] = None) -> Dict[st
             tx.delete("work/coactivation.log")
 
         txid = tx.commit()
+        if txid:
+            _refresh_index(store.root, tx)     # warm the read-index under the lock
         _log(store, f"weights folded: apply_hebbian={update_w}, "
                     f"{len(pair_counts)} co-activated pairs, {changed} nodes updated", txid)
 
@@ -954,6 +956,8 @@ def apply_actions(project_root: Path, actions_path: Path,
                 counts["introduce_subhub"] += 1
 
         txid = tx.commit()
+        if txid:
+            _refresh_index(store.root, tx)     # warm the read-index under the lock
         msg = f"consolidation applied: {dict(counts)}"
         if gate is not None and gate["status"] == "warn":
             msg += (f" | eval-gate WARNING applied despite recall drop "
@@ -981,6 +985,24 @@ def _log(store: gs.GraphStore, msg: str, txid: Optional[str]) -> None:
     log (de-duped by txid, bounded by rotation). Best-effort, under the lock the
     caller already holds (1.15: log is now part of a committed transaction)."""
     store.append_log("consolidate", msg, txid)
+
+
+def _refresh_index(amg: Path, tx: gs.Transaction) -> None:
+    """Best-effort: fold this committed write into the disposable SQLite read-index
+    (index_store, in the amg-retrieve skill) under the caller's lock, so the next
+    retrieve reads it instead of re-scanning nodes/*.md. Mirrors
+    reconcile._refresh_index; swallows everything — the index is a cache that
+    retrieve rebuilds on any signature mismatch."""
+    try:
+        idx_dir = str(Path(__file__).resolve().parents[2] / "amg-retrieve" / "scripts")
+        if idx_dir not in sys.path:
+            sys.path.insert(0, idx_dir)
+        import index_store
+        written, deleted = tx.node_paths()
+        if written or deleted:
+            index_store.refresh_after_commit(amg, written, deleted)
+    except Exception:
+        pass
 
 
 def main(argv: List[str]) -> int:

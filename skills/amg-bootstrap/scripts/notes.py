@@ -181,6 +181,8 @@ def add_note(project_root: Path, ntype: str, summary: str, body: str = "",
         tx = store.transaction()
         tx.write(relpath, rc.serialize_node(meta, body_final))
         txid = tx.commit()
+        if txid:
+            rc._refresh_index(amg_root, tx)    # warm the read-index under the lock
 
     return {"id": nid, "created": created_flag, "path": relpath, "txid": txid,
             "type": ntype, "status": status}
