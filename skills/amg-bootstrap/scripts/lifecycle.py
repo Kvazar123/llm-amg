@@ -13,11 +13,13 @@ active and `automation: on` (turning automation off leaves only the manual comma
                   report an unclean prior shutdown when one is healed, else stay silent.
   session-end   : fold the co-activation log into weights (deterministic; with
                   apply_hebbian off this only ACCUMULATES coact, never mutating
-                  conductance), refresh the digest, and dump the session transcript
-                  to <store>/sessions (Stage 9; from the hook's stdin payload). The
-                  JUDGMENT half of consolidation — the amg-consolidator subagent +
-                  apply — stays model-driven: a hook cannot run a subagent, so it
-                  lives in the activation loop, not here.
+                  conductance), refresh the digest, dump the session transcript to
+                  <store>/sessions (Stage 9; from the hook's stdin payload), and record
+                  USAGE provenance (work/usage.log: pack nodes whose source the session
+                  edited, with a coarse outcome — Stage 13, the non-circular substrate
+                  for Stage 14's Hebbian rule). The JUDGMENT half of consolidation — the
+                  amg-consolidator subagent + apply — stays model-driven: a hook cannot
+                  run a subagent, so it lives in the activation loop, not here.
 
 Four MANUAL commands, exposed as the `/amg <sub>` slash command (and reachable by
 verbal intent through the activation block):
@@ -165,6 +167,12 @@ _WRAPPER_PREFIXES = ("<local-command", "<command-name", "<command-message",
                      "<command-args", "<command-contents", "<bash-input",
                      "<bash-stdout", "<bash-stderr", "<task-notification")
 
+# Tool calls that EDIT a file; their input names the path -> usage attribution (Stage 13,
+# task 9). A few non-Claude-Code synonyms are tolerated for portability.
+_EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit",
+               "create_file", "edit_file", "apply_patch", "update_file"}
+_EDIT_PATH_KEYS = ("file_path", "path", "notebook_path")
+
 
 def _is_wrapper_text(s: str) -> bool:
     """A user 'message' that is a Claude Code wrapper (slash command, bash mode, task
@@ -192,6 +200,7 @@ def _render_transcript(transcript_path: Path) -> Optional[Dict[str, Any]]:
     pending: List[str] = []                        # attachment labels awaiting a flush
     started: Optional[str] = None
     ended: Optional[str] = None
+    edited: List[str] = []                          # files an edit/write tool touched (usage.log)
 
     def flush_attach() -> None:
         nonlocal attach_seq
@@ -233,7 +242,13 @@ def _render_transcript(transcript_path: Path) -> Optional[Dict[str, Any]]:
                 elif bt in ("thinking", "redacted_thinking"):
                     continue                       # cut raw model reasoning
                 elif bt == "tool_use":
-                    att.append(f"tool call ({b.get('name') or 'tool'})")
+                    name = b.get("name") or "tool"
+                    att.append(f"tool call ({name})")
+                    if name in _EDIT_TOOLS and isinstance(b.get("input"), dict):
+                        for k in _EDIT_PATH_KEYS:
+                            if b["input"].get(k):
+                                edited.append(str(b["input"][k]))
+                                break
                 elif bt == "tool_result":
                     att.append("tool result")
                 elif bt == "image":
@@ -258,7 +273,8 @@ def _render_transcript(transcript_path: Path) -> Optional[Dict[str, Any]]:
     if turns == 0:
         return None
     return {"markdown": "\n\n".join(out).rstrip() + "\n", "turns": turns,
-            "attachments": attach_seq, "started": started, "ended": ended}
+            "attachments": attach_seq, "started": started, "ended": ended,
+            "edited": edited}
 
 
 def _dump_session(project_root: Path, amg: Path, cfg: Dict[str, Any],
@@ -295,7 +311,74 @@ def _dump_session(project_root: Path, amg: Path, cfg: Dict[str, Any],
         rel = target.relative_to(amg).as_posix()
     except ValueError:
         rel = str(target)
-    return {"file": rel, "turns": rendered["turns"], "attachments": rendered["attachments"]}
+    return {"file": rel, "turns": rendered["turns"], "attachments": rendered["attachments"],
+            "edited": rendered.get("edited", [])}
+
+
+def _record_usage(project_root: Path, amg: Path, edited_raw: List[str],
+                  reason: Optional[str]) -> Dict[str, Any]:
+    """USAGE provenance (Stage 13, task 9). Cross the files edited this session (from the
+    transcript's edit/write tool calls) with the nodes the retrieval packs pointed at
+    (work/pack-log.jsonl, written by retrieve) and append the USED nodes + a coarse outcome
+    to work/usage.log. `used` is the non-circular signal — a node whose source was actually
+    EDITED, not merely retrieved — so it is kept SEPARATE from the blind coactivation.log.
+    consolidate does NOT read it yet; Stage 14's improved Hebbian rule will. The pack log
+    is session-scoped, so it is consumed (cleared) here.
+
+    Outcome is COARSE: reaching session-end means no crash, and editing pack-pointed files
+    means work landed -> `completed`. True accept / merge / revert is refined in Stage 14.
+    No-op without a pack log; records nothing when no edit hit a pack node. In an agent
+    environment without the SessionEnd transcript there are no edited files to attribute
+    (the portable fallback is capturing notes as you go)."""
+    pack_log = amg / "work" / "pack-log.jsonl"
+    if not pack_log.exists():
+        return {"skipped": "no pack log this session"}
+    try:
+        lines = pack_log.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {"skipped": "pack log unreadable"}
+    try:                                       # session-scoped: consume it once read
+        pack_log.unlink()
+    except OSError:
+        pass
+    if not edited_raw:
+        return {"used": 0, "note": "no edits to attribute"}
+
+    proj = project_root.resolve()
+    edited: set[str] = set()
+    for p in edited_raw:
+        try:
+            edited.add(Path(p).resolve().relative_to(proj).as_posix())
+        except (ValueError, OSError):
+            edited.add(Path(p).as_posix())     # outside the project / unresolvable: as-is
+
+    used: Dict[str, str] = {}
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        for it in rec.get("pack", []):
+            sp, nid = it.get("source_path"), it.get("id")
+            if nid and sp and sp in edited:
+                used.setdefault(nid, sp)
+    if not used:
+        return {"used": 0, "edited": len(edited)}
+
+    record = {"ts": time.time(), "session": time.strftime("%Y-%m-%d-%H%M"),
+              "reason": reason or "unknown", "outcome": "completed",
+              "used": sorted(used), "edited_files": sorted(edited)}
+    try:
+        out = amg / "work" / "usage.log"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with open(out, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError:
+        return {"skipped": "usage.log unwritable"}
+    return {"used": len(used), "edited": len(edited), "outcome": "completed"}
 
 
 # --------------------------------------------------------------------------- #
@@ -325,8 +408,12 @@ def session_end(project_root: Path, amg: Path, transcript_path: Optional[str] = 
     weights = co.fold_weights(project_root, amg)
     digest = co.write_digest(project_root, amg)
     session = _dump_session(project_root, amg, cfg, transcript_path, reason)
+    # Attribute usage: the files this session edited (popped off the dump result so the
+    # long list does not bloat the return) crossed with the packs retrieve logged.
+    edited = session.pop("edited", []) if isinstance(session, dict) else []
+    usage = _record_usage(project_root, amg, edited, reason)
     return {"action": "session-end", "weights": weights, "digest": digest,
-            "session": session}
+            "session": session, "usage": usage}
 
 
 # --------------------------------------------------------------------------- #

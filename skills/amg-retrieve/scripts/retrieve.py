@@ -606,6 +606,7 @@ def retrieve(store_root: os.PathLike[str] | str, query: str,
         _atomic_write(store_root / "cache" / "pack.md", pack)
     if log_coactivation:
         _log_coactivation(store_root, query, tiers, adj)
+        _log_pack(store_root, query, tiers, nodes)
 
     result = {"ranked": ranked, "pack": pack, "tiers": tiers,
               "seeds": seeds, "relevance": rel, "n_nodes": len(nodes)}
@@ -639,6 +640,30 @@ def _log_coactivation(store_root: Path, query: str, tiers: Dict[str, List[str]],
         line = json.dumps({"ts": time.time(), "q": query[:120], "coactivated": pairs},
                           ensure_ascii=False) + "\n"
         path = store_root / "work" / "coactivation.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line)
+    except OSError:
+        pass
+
+
+def _log_pack(store_root: Path, query: str, tiers: Dict[str, List[str]],
+              nodes: Dict[str, Dict[str, Any]]) -> None:
+    """Append-only record of WHAT WAS IN THE PACK (id + source_path) to
+    work/pack-log.jsonl. Session-end (lifecycle) intersects this with the files actually
+    edited in the session to derive the USAGE provenance (usage.log) — the non-circular
+    signal for Stage 13 task 9 / the improved Hebbian rule (Stage 14). It is kept SEPARATE
+    from coactivation.log: that is blind pack co-membership (circular, §8.1); this is the
+    surface a real outcome can be attributed to. Lock-free, best-effort."""
+    inpack = (tiers.get("strategic", []) + tiers.get("tactical", [])
+              + tiers.get("operational", []))
+    if not inpack:
+        return
+    items = [{"id": nid, "source_path": nodes[nid].get("source_path")} for nid in inpack]
+    try:
+        line = json.dumps({"ts": time.time(), "q": query[:120], "pack": items},
+                          ensure_ascii=False) + "\n"
+        path = store_root / "work" / "pack-log.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
             f.write(line)
