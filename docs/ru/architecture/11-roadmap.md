@@ -265,7 +265,7 @@ README.md — английская версия, ссылается на пер�
 
 ## 2.1. `docs/ru/THEORY.md`
 
-1. **Разрешение противоречий** — опережающее: `contradicts`/`supersedes`/`status` описаны как почти готовый цикл; сверяется на Этапах 13–14 (текущий минимум в коде — рёбра и статусы существуют).
+1. **Разрешение противоречий** — опережающее: `contradicts`/`supersedes`/`status` описаны как почти готовый цикл. Половина сверена на Этапе 13 — слой доверия (провенанс/уверенность/верификация, новый раздел THEORY §15); **цикл арбитража противоречий** (детекция, сравнение провенанса, действия `supersede`/`dispute`/`reject`) закрывается на Этапе 14 (`status_prior.disputed` и `verification.status: contradicted` уже заведены как заделы).
 2. Закрыты на Этапе 7: `absorb` как «переживает удаление источника» (1.16); §12 mirror — 4-й случай «перенесён/переименован → заработанный след следует за содержимым» по хешу (2.1.8); §5 «веса не обучаются градиентным спуском» (обновляются эвристиками Хебба/затухания/суждения); журнал решений памяти помечен planned (4.3) — `log.md` best-effort, без оценки/причины; язык §3. Типы рёбер (§4) и объяснимость (§14.2) закрыты на Этапе 2.
 
 ---
@@ -975,59 +975,7 @@ amg/                 # НЕ в репозитории: данные локаль
 
 ## Этап 13 — provenance, confidence и verification
 
-Цель: память не должна уверенно отвечать устаревшими или непроверенными фактами.
-
-Задачи:
-
-1. Добавить поля provenance/confidence/verification в schema.
-2. При ingest source-derived nodes заполнять:
-   - source path;
-   - hash;
-   - line range;
-   - optional commit.
-3. При builder derivation сохранять:
-   - derived_from_hash;
-   - source ids;
-   - confidence estimate.
-4. При retrieval surfaced facts маркировать:
-   - verified;
-   - stale;
-   - unverified;
-   - contradicted.
-5. Перед ответом по code fact выполнять lightweight verification:
-   - file exists;
-   - hash matches;
-   - symbol exists;
-   - grep/tree-sitter confirms.
-6. Добавить `verify_claims.py` или встроить в retrieval/consolidation.
-7. Добавить config:
-
-```yaml
-verification:
-  enabled: true
-  verify_code_claims: true
-  warn_on_unverified: true
-```
-
-8. Лёгкое правило верификации из Этапа 2 расширяется здесь до полного слоя (поля схемы, статусы, `verify_claims.py`).
-
-9. **Провенанс ИСПОЛЬЗОВАНИЯ — субстрат для полезного хеббова сигнала (мотивация: измерение Этапа 6, задача 7).** Этап 6 показал на реальном графе: хеббово усиление от сигнала «узлы вместе попали в пакет» **не даёт выигрыша** (off≡on до 4-го знака на 12 фолдах, устойчиво к засеву BM25/model2vec/ST). Причина не в баге, а в природе сигнала: он **циркулярен** (веса → пакет → пары → те же веса) и на плотном графе **равномерно** заливает весь релевантный подграф к потолку весов — различающей информации в нём нет (§8.1). Вывод: чтобы Хебб стал полезен, нужен сигнал **извне петли извлечения** — от исхода задачи. Здесь закладывается его провенанс-субстрат (само правило — задача 8 Этапа 14):
-   - **Атрибуция использования.** При сборке пакета уже пишется журнал ко-активаций (`work/coactivation.log`) — «что вместе попало в пакет». Добавить отдельный сигнал «что реально ИСПОЛЬЗОВАНО»: узлы, чьи `id`/`path:line` фактически попали в принятый ответ/изменение (грубая эвристика — пересечение пакета с правленными файлами сессии; точнее — явная отметка модели «опирался на X»). Писать в отдельный журнал `work/usage.log` (не смешивать со слепым `coact`).
-   - **Связь с исходом сессии** (зависит от Stage 9 sessions): принятый результат / смерженный код / прошедший тест = **положительный** сигнал на использованные узлы и рёбра их путей; откат / переделка = **отрицательный**. Хранить как поле ребра (`used_ok`/`used_bad` счётчики) или в `usage.log` с меткой исхода.
-   - **Только данные, без смены правила weights:** Этап 13 копит провенанс использования и исхода; `consolidate.py weights` его пока не трогает (правило меняется на Этапе 14). Это разрывает циркулярность: исход задачи приходит извне ранжирования, поэтому усиление «полезного» больше не само-подтверждается.
-
-**Прогресс (по группам).** Группа 1 (провенанс при ingest) — **выполнено**: поля схемы `line_end`, `confidence`, `provenance{kind, commit?, derived_from?}`, `verification{status, method}` (задача 1; форма решена без дублирования плоских `source_path`/`source_hash` — их несут существующие поля, блок provenance добавляет только `kind`/`commit`, а для авторских/синтезированных — `derived_from`); `extract_structure` считает `line_end` (Python/tree-sitter/markdown/rst/log/session/файл-единица), `reconcile` проставляет `provenance.kind`+`commit` (best-effort git)+`verification:unverified` на added/changed/move и **сбрасывает verification при changed** (источник сменился), `line_end` обновляется и на дрейфе указателя (задача 2); `apply_derivation` принимает `confidence` от билдера (дефолт `default_confidence` 0.7) и `provenance.derived_from` у синтезированных (задача 3 — код-сторона; промпты билдера/синтеза эхоят confidence в Группе 2); `notes.py` пишет `provenance.kind` (decision/adr→user→`verification:{verified,user}`, прочие→model_inference→unverified) + `confidence` + флаги `--kind`/`--confidence`; индекс синхронно проецирует `confidence`/`verification`/`line_end` (`index_store`+`retrieve._node_from_meta`); `migrate_schema` идемпотентно добивает старые графы (provenance.kind по классу, verification:unverified, `line_end` — следующим bootstrap-дрейфом); `schema_version`→3. Новые кейсы: `selftest_reconcile.case_provenance_and_confidence`, `selftest_notes.case_provenance`, `selftest_index.test_stage13_fields_roundtrip`, backfill в `selftest_migrate`, `line_end` в `selftest_stage2`.
-
-Группа 2 (слой верификации, задачи 4–8) — **выполнено**: новый **`verify_claims.py`** (read-only по умолчанию + опц. `--write`; пере-нарезает источник тем же нарезателем и сверяет файл/символ/хеш → `verified`/`stale`/`contradicted`/`skipped`; целевые id читаются по одному файлу без полного скана — дешёвый «before answer» на большом графе; `--write` стэмпит `verification` под локом + refresh индекса; метод `ast`/`grep`/`doc`). **`retrieve`** метит пакет (`_trust_marks`: stale/unverified/contradicted/low-confidence — флаги, НЕ понижение активации) и рендерит диапазонный указатель `path:start-end`. Блок конфига **`verification`** `{enabled, verify_code_claims, warn_on_unverified, min_confidence_warn, default_confidence}` (поднимается в `retrieve.load_config`; `default_confidence` читает `reconcile.apply_derivation`). Промпты: `amg-builder`/`amg-synth` эхоят `confidence` (+`derived_from`); `amg-retriever`/`SKILL amg-retrieve`/`entrypoint` опирают «verify before answer» на `verify_claims.py` и полный набор пометок. DRY-рефактор `extract_structure`: диспетч единиц вынесен в `_units_for_path`, добавлен `units_for_file` (одиночная сверка для verify). `verify_claims` в mypy-гейте (**16 модулей**). Новый `selftest_verify`; кейс `test_trust_marks` в `selftest_retrieve`. Промпт-пути `.claude` рендерятся установщиком под `agent_dir` (1.32, проверено: рендер в `.agents` не оставляет `.claude`).
-
-Группа 3 (`usage.log`, задача 9) — **выполнено**: `retrieve._log_pack` пишет состав пакета (id+source_path по ярусам strategic/tactical/operational) в `work/pack-log.jsonl` (гейт `log_coactivation`, **отдельно** от слепого `coactivation.log`); `lifecycle.session-end` собирает правленные файлы из стенограммы (tool_use `Edit`/`Write`/`MultiEdit`/`NotebookEdit` + синонимы), `_record_usage` пересекает их с пакетами сессии → `work/usage.log` (`used` = узлы, чей источник реально правился; `edited_files`; грубый `outcome: completed` — точный accept/merge/revert уходит на Этап 14); pack-log session-scoped и потребляется (чистится) на session-end; **`consolidate` его НЕ читает** (разрыв циркулярности — исход приходит извне ранжирования). Переносимость: атрибуция через стенограмму Claude-Code-специфична (как авто-дамп сессии Этапа 9); без хука usage не пишется (переносимая страховка — заметки по ходу). 18 селфтестов движка + `selftest_install` + mypy зелёные (новый `selftest_usage`). **Остаётся:** закрытие этапа (docs 02/05/06/08/09/03/`consistency-model` + новый раздел THEORY «модель доверия» + GUIDE + READMEs → DoD → сворачивание разделов 1/2 → релиз v1.4.0 → строка Этапа 14 в BASE-PROMPT).
-
-Definition of done:
-
-- устаревший факт не подаётся как актуальный;
-- stale source запускает проверку;
-- пользователь видит предупреждение, если память не уверена;
-- провенанс использования (`usage.log`: использованные узлы + исход сессии) накапливается, отдельно от слепого `coact` — готов как вход для улучшенного хеббова правила (Этап 14, задача 8).
+Выполнено (закрыт 2026-06-22, v1.4.0): добавлен **слой доверия** — память не отвечает уверенно устаревшими/непроверенными фактами. **Схема:** поля `line_end`, `confidence`, `provenance{kind, commit?, derived_from?}`, `verification{status, method, last_verified_at?}` (schema_version→3). Ключевое решение — **без дублирования**: у файлового узла происхождение и есть плоские `source_path`/`source_hash`/`lineno`/`line_end`; блок `provenance` добавляет лишь `kind`+`commit`, а `derived_from` («source ids», задача 3) несут синтез/заметки. **Заполнение:** `extract_structure` считает `line_end`; `reconcile` ставит provenance+`verification:unverified` на added/changed/move и **сбрасывает verification при `changed`** (та же хеш-машина, что метит `stale`, — отдельного срока годности не нужно); `apply_derivation` берёт `confidence` билдера (дефолт `default_confidence` 0.7); `notes` различает `kind: user|model_inference` (user→`verified/user`; флаги `--kind`/`--confidence`); `migrate_schema` идемпотентно добивает старые графы; индекс синхронно проецирует `confidence`/`verification`/`line_end`. **Верификация (задачи 4–8):** новый `verify_claims.py` (read-only + опц. `--write`) пере-нарезает источник и сверяет файл/символ/хеш → `verified`/`stale`/`contradicted`/`skipped`, ловя дрейф ещё до сверки; `retrieve._trust_marks` **помечает** (не понижает активацию) `stale`/`unverified`/`contradicted`/low-confidence и рендерит диапазон `path:start-end`; блок конфига `verification` (`enabled`/`verify_code_claims`/`warn_on_unverified`/`min_confidence_warn`/`default_confidence`). **Провенанс использования (задача 9):** `retrieve._log_pack`→`work/pack-log.jsonl`, `lifecycle.session-end` пересекает его с правленными файлами стенограммы → `work/usage.log` (использованные узлы + грубый исход), **отдельно** от слепого `coactivation.log` и **не читаемый** консолидацией — честный субстрат под хеббово правило Этапа 14 (разрыв циркулярности §8.1). Промпты (`amg-builder`/`amg-synth`/`amg-retriever`/SKILL/entrypoint) и `.claude`-пути рендерятся под `agent_dir`; DRY-рефактор `extract_structure._units_for_path`+`units_for_file`. **Новая теория** — THEORY §15 «Модель доверия» (иерархия источников `код > доки > ADR > сессия > legacy > догадка`; «уверенно-ложная память опаснее отсутствующей»; флаг-не-понижение; разрыв циркулярности usage). DoD выполнен: устаревший факт помечается, не подаётся как актуальный; stale source ловится `verify_claims` до ответа; пользователь видит предупреждение; `usage.log` копится отдельно от `coact`. **18 селфтестов движка** (+`selftest_verify`/`selftest_usage`) + `selftest_install` + `mypy --strict` (16 модулей) зелёные; eval-демо pack-recall 1.00. Детали → THEORY §15, `02-data-model` («Слой доверия»), `06-retrieval` (пометки/`verify_claims`/pack-log), `05-reconcile`, `09-config` (`verification`), `08-agents-skills` (usage в session-end), `03-storage`/`consistency-model §4`, `01-overview`, `GUIDE`, READMEs. Коммиты `e1ed94d`/`77f3bab`/`ed739c9` + релиз. Хвост на Этап 14: usage→правило весов (задача 8); `verification.status: contradicted` и `disputed`→арбитраж; THEORY-чекпойнт 2.1.1 (цикл противоречий) закрывается на 14.
 
 ---
 

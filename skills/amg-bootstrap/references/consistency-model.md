@@ -89,6 +89,11 @@ on an unchanged repo does zero model work and produces zero changes.
     code/ doc/ data/ notes/ _hubs/
   work/queue.json     units awaiting semantic derivation
   work/derived-*.json subagent output awaiting apply
+  work/coactivation.log  Hebbian co-activation signal (best-effort, append-only)
+  work/pack-log.jsonl    per-retrieval pack composition; session-scoped, consumed at
+                         session-end to attribute usage (Stage 13)
+  work/usage.log         usage provenance: nodes actually USED (their source was edited)
+                         + a coarse outcome; substrate for the improved Hebbian rule
   journal/            write-ahead log; EMPTY when the store is at rest
   archive/            originals evicted by compaction (reversible)
   cache/pack.md       last assembled retrieval context pack (disposable)

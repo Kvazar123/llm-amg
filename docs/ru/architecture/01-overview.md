@@ -57,12 +57,13 @@ flowchart TD
 | Извлечение из графа | `retrieve.py` | засев → PPR → сборка пакета по ярусам | `"<запрос>"` · `--store` |
 | Семантический засев | `embed.py` | опциональное обогащение засева эмбеддингами; диагностика | одиночный запуск (диагностика) |
 | Read-индекс | `index_store.py` | производный SQLite-кэш под `load_nodes` (автоматический, одноразовый, пересобираемый) | — (внутренний) |
+| Верификация | `verify_claims.py` | сверка утверждения о коде с живым источником (file/symbol/hash) перед ответом; read-only, опц. `--write` | `<id>` · `--store` · `--write` |
 | Консолидация | `consolidate.py` | свёртка весов, значимость, компрессия веток | `weights` · `plan` · `apply` |
 | Измерение | `eval_retrieval.py` | recall / precision / hop-recall против лексической базы | `--make-demo` · `--cases` |
 | Бенчмарк | `bench.py` | скорость на масштабе: scan vs index, `retrieve`/`eval`/bootstrap | `--make-bench` · `--store` |
 | Просмотр | `inspect_graph.py` | список узлов (id, тип, сводка) для разметки и контроля | `--grep` · `--bucket` |
 
-Ключевые модули сопровождаются самотестом (`selftest_*.py`), проверяющим их инварианты: `graph_store`, `reconcile`, `retrieve`, `embed`, `consolidate`, `notes`, `migrate_schema`, `index_store` (`selftest_index`), `bench` (`selftest_bench`) и хелперы очереди (`selftest_queue`), а извлечение структуры — через `selftest_extract_overrides`, `selftest_stage2` и `selftest_chunkers`. У `eval_retrieval.py` и `inspect_graph.py` собственного самотеста нет — они косвенно прогоняются через `selftest_retrieve`/`selftest_consolidate`. Самотесты не входят в рабочий поток и запускаются вручную при изменениях.
+Ключевые модули сопровождаются самотестом (`selftest_*.py`), проверяющим их инварианты: `graph_store`, `reconcile`, `retrieve`, `embed`, `consolidate`, `notes`, `migrate_schema`, `index_store` (`selftest_index`), `verify_claims` (`selftest_verify`), провенанс использования (`selftest_usage`), `bench` (`selftest_bench`) и хелперы очереди (`selftest_queue`), а извлечение структуры — через `selftest_extract_overrides`, `selftest_stage2` и `selftest_chunkers`. У `eval_retrieval.py` и `inspect_graph.py` собственного самотеста нет — они косвенно прогоняются через `selftest_retrieve`/`selftest_consolidate`. Самотесты не входят в рабочий поток и запускаются вручную при изменениях.
 
 Оркестрация описана в разделе [Субагенты и скиллы](./08-agents-skills.md): `CLAUDE.md` задаёт петлю активации (что делать в начале, по ходу и в конце сессии), скиллы — это процедуры (построить, извлечь, консолидировать), субагенты — исполнители семантической работы в изолированном контексте.
 
@@ -86,7 +87,7 @@ skills/                          скиллы — процедуры (когда
     scripts/  extract_structure.py · graph_store.py · reconcile.py · notes.py · selftest_*.py
   amg-retrieve/
     SKILL.md
-    scripts/  retrieve.py · embed.py · eval_retrieval.py · inspect_graph.py · selftest_*.py
+    scripts/  retrieve.py · embed.py · verify_claims.py · eval_retrieval.py · inspect_graph.py · index_store.py · selftest_*.py
   amg-consolidate/
     SKILL.md
     scripts/  consolidate.py · selftest_*.py
@@ -100,7 +101,7 @@ docs/                            документация (ru / en)
 | Скилл | Запускает скрипты | Вызывает субагентов |
 |---|---|---|
 | `amg-bootstrap` | `graph_store.py`, `extract_structure.py`, `reconcile.py` | `amg-classifier`, `amg-builder`, `amg-synth` |
-| `amg-retrieve` | `retrieve.py`, `embed.py`, `eval_retrieval.py` | `amg-retriever` |
+| `amg-retrieve` | `retrieve.py`, `embed.py`, `verify_claims.py`, `eval_retrieval.py` | `amg-retriever` |
 | `amg-consolidate` | `consolidate.py` | `amg-consolidator` |
 
 Роли субагентов (полные промпты и инструкции — в разделе [Субагенты и скиллы](./08-agents-skills.md)):
