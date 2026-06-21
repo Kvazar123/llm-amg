@@ -78,11 +78,21 @@ There are no SessionStart/SessionEnd hooks here, so **you** run each step at the
   (scratch), `journal/` (crash-recovery state), `archive/`, `sessions/`, `log.md` (the
   action log), and `digest.md` (read above).
 - Activation / sources / tunables: `.claude/amg/config.yml`.
-- Your source folders (`mirror_path` / `absorb_path`) are **read-only** for memory upkeep —
-  never modify them as a side effect of maintaining the graph.
-- AMG's own skills, subagents, and scripts (`.claude/skills/amg-*`, the TOML in
-  `.codex/agents`) are infrastructure. Do **not** edit them as task work; report a bug to
-  the user instead, so the canonical, tested version stays authoritative.
+
+### Boundaries — use the memory, don't edit its machinery mid-task
+Using AMG and developing AMG are different modes; do not mix them inside a task.
+- **Source folders are read-only.** Whatever `mirror_path` / `absorb_path` point to
+  changes only when the user's task changes it — never as a side effect of upkeep.
+- **The engine is infrastructure, not task surface.** Do **not** edit AMG's own skills,
+  subagents, or scripts (`.claude/skills/amg-*`, the TOML in `.codex/agents`) as part of
+  task work. If one looks buggy or limiting, report it to the user instead of patching it
+  live: the installed copy must stay identical to the canonical, tested version, and
+  editing the engine you are *currently running* is how a working memory gets silently
+  corrupted.
+- **Engine state is rebuilt, not hand-edited.** Node files and the disposable caches
+  (`cache/`, `work/`) are written only by the scripts, transactionally. If something looks
+  inconsistent, run the repair/sync above and let the engine rebuild — the caches are
+  derived and safe to delete, never to hand-edit.
 
 ### If anything looks inconsistent
 Run, from the project root:
