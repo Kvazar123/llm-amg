@@ -90,8 +90,35 @@ def test_stale_is_flagged(tmp: Path) -> None:
                                        status="stale"))
     res = R.retrieve(store, "background sync reconcile state",
                      write_pack=False, log_coactivation=False)
-    assert R._STALE_MARK in res["pack"], "stale node must be flagged in the pack"
+    assert R._STALE_TEXT in res["pack"], "stale node must be flagged in the pack"
     print("PASS  stale node flagged in pack")
+
+
+def test_trust_marks(tmp: Path) -> None:
+    """Stage 13 pack marking: an unverified code node, a contradicted one, and a
+    low-confidence one are each flagged (so the model confirms before relying), and a
+    code pointer renders the line RANGE when line_end is known. Marks never downrank —
+    they are annotations."""
+    store = tmp / "marks"
+    _write(store, "code", "u.md", _node(           # no verification field -> unverified
+        "code:src/u.py::f", "function", "validate the incoming request payload",
+        source_path="src/u.py", lineno=5, line_end=12))
+    _write(store, "code", "c.md", _node(           # explicitly contradicted
+        "code:src/c.py::g", "function", "validate the request schema thoroughly",
+        source_path="src/c.py", lineno=3,
+        verification={"status": "contradicted", "method": "grep"}))
+    _write(store, "code", "l.md", _node(           # verified but low confidence
+        "code:src/l.py::h", "function", "validate request fields and types",
+        source_path="src/l.py", lineno=8,
+        verification={"status": "verified", "method": "ast"}, confidence=0.2))
+    res = R.retrieve(store, "validate request payload schema fields",
+                     write_pack=False, log_coactivation=False)
+    pack = res["pack"]
+    assert "unverified: confirm this code claim" in pack, pack
+    assert "contradicted: source check failed" in pack, pack
+    assert "low confidence 0.20" in pack, pack
+    assert "src/u.py:5-12" in pack, "code pointer renders the line range when line_end is set"
+    print("PASS  trust marks: unverified/contradicted/low-confidence flagged; line range rendered")
 
 
 def test_decision_strategic_with_body(tmp: Path) -> None:
@@ -131,7 +158,10 @@ def test_config_deep_merge(tmp: Path) -> None:
     assert cfg["status_prior"]["active"] == 1.0, "unlisted status kept from defaults"
     assert cfg["token_budget"]["strategic"] == 9999, "budget override applied"
     assert cfg["token_budget"]["tactical"] == 2500, "unlisted budget kept from defaults"
-    print("PASS  config merges key-by-key (no silent loss of defaults)")
+    # the top-level verification block is surfaced into the retrieval cfg with defaults
+    assert cfg["verification"]["enabled"] is True, "verification defaults surfaced"
+    assert cfg["verification"]["min_confidence_warn"] == 0.5, "verification default kept"
+    print("PASS  config merges key-by-key (no silent loss of defaults; verification surfaced)")
 
 
 def test_inspect_bucket(tmp: Path) -> None:
@@ -183,6 +213,7 @@ def main() -> int:
         test_status_prior_unit()
         test_superseded_ranks_below_active(tmp)
         test_stale_is_flagged(tmp)
+        test_trust_marks(tmp)
         test_decision_strategic_with_body(tmp)
         test_config_deep_merge(tmp)
         test_inspect_bucket(tmp)

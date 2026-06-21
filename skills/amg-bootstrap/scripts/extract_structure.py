@@ -1228,6 +1228,58 @@ def _extract_sessions(project_root: Path, config: Dict[str, Any],
 # Driver
 # --------------------------------------------------------------------------- #
 
+def _units_for_path(path: Path, rel: str, policy: str, chunker: str,
+                    lang: Optional[str], log_lines: int, j_depth: int, j_min: int,
+                    j_cap: int) -> List[Dict[str, Any]]:
+    """Route ONE classified file to its chunker and return its units (the dispatch the
+    driver runs per file). Shared by extract() and units_for_file() so single-file
+    verification chunks a source exactly as ingest did. Dispatch is by `chunker` (which
+    already encodes the modality), so the category is not needed here. Returns [] for a
+    skipped file (binary, or an optional lib/grammar missing)."""
+    if chunker == "treesitter":
+        got = _treesitter_units(path, rel, policy, lang) if lang else None
+        if got is None:                           # graceful degradation (no grammar)
+            got = [_file_unit(rel, "code", policy,
+                              path.read_text(encoding="utf-8", errors="replace"), lang)]
+        return got
+    if chunker in ("pdf", "docx", "xlsx", "pptx"):
+        return CHUNKERS[chunker](path, rel, policy) or []     # lib missing/unreadable -> skip
+    if chunker == "log":
+        return _log_units(path, rel, policy, group_lines=log_lines)
+    if chunker in ("json", "ndjson"):
+        got = _chat_units(path, rel, policy)                  # structured chat export?
+        if got is None:
+            got = (_ndjson_units(path, rel, policy, cap=j_cap) if chunker == "ndjson"
+                   else _data_units(path, rel, policy, max_depth=j_depth,
+                                    recurse_min=j_min, cap=j_cap))
+        return got
+    if chunker in ("headings", "paragraphs") and _has_role_markers(path):
+        return _session_units(path, rel, policy)              # a dropped flat role-marker dump
+    out: List[Dict[str, Any]] = CHUNKERS[chunker](path, rel, policy)   # markdown/rst/text/...
+    return out
+
+
+def units_for_file(project_root: Path, rel: str, config: Dict[str, Any],
+                   amg_root: Optional[Path] = None) -> List[Dict[str, Any]]:
+    """Chunk a SINGLE source file into units the same way extract() would, for on-demand
+    verification of one node's source (verify_claims). Returns [] if the file is gone,
+    ignored, or skipped (binary). Policy is irrelevant here — the content hash and ids a
+    verifier compares do not depend on it — so a neutral `mirror` is passed."""
+    path = project_root / rel
+    if not path.is_file():
+        return []
+    overrides = load_overrides(amg_root)
+    _category, chunker, lang, _amb, _ov = _classify_path(path, rel, overrides)
+    if chunker == "skip":
+        return []
+    return _units_for_path(
+        path, rel, "mirror", chunker, lang,
+        int(config.get("log_group_lines", 50) or 50),
+        int(config.get("json_max_depth", 4) or 4),
+        int(config.get("json_recurse_min_chars", 2048) or 2048),
+        int(config.get("json_max_nodes", 500) or 500))
+
+
 def extract(project_root: Path, config: Dict[str, Any], amg_root: Optional[Path] = None) -> List[Dict[str, Any]]:
     gitignore = load_gitignore(project_root) if config.get("respect_gitignore", True) else []
     ignore_dirs = _effective_ignore_dirs(amg_root)
@@ -1241,33 +1293,11 @@ def extract(project_root: Path, config: Dict[str, Any], amg_root: Optional[Path]
         extra = _excludes_for_policy(config, policy)
         for path in iter_source_files(project_root, base_rel, extra, gitignore, ignore_dirs):
             rel = path.relative_to(project_root).as_posix()
-            category, chunker, lang, _amb, _ov = _classify_path(path, rel, overrides)
+            _category, chunker, lang, _amb, _ov = _classify_path(path, rel, overrides)
             if chunker == "skip":
                 continue
-            if chunker == "treesitter":
-                got = _treesitter_units(path, rel, policy, lang) if lang else None
-                if got is None:                       # graceful degradation (no grammar)
-                    got = [_file_unit(rel, "code", policy,
-                                      path.read_text(encoding="utf-8", errors="replace"), lang)]
-                units += got
-            elif chunker in ("pdf", "docx", "xlsx", "pptx"):
-                got = CHUNKERS[chunker](path, rel, policy)
-                if got is None:                       # lib missing / unreadable -> skip
-                    continue
-                units += got
-            elif chunker == "log":
-                units += _log_units(path, rel, policy, group_lines=log_lines)
-            elif chunker in ("json", "ndjson"):
-                got = _chat_units(path, rel, policy)       # structured chat export?
-                if got is None:
-                    got = (_ndjson_units(path, rel, policy, cap=j_cap) if chunker == "ndjson"
-                           else _data_units(path, rel, policy, max_depth=j_depth,
-                                            recurse_min=j_min, cap=j_cap))
-                units += got
-            elif chunker in ("headings", "paragraphs") and _has_role_markers(path):
-                units += _session_units(path, rel, policy)  # a dropped flat role-marker dump
-            else:
-                units += CHUNKERS[chunker](path, rel, policy)
+            units += _units_for_path(path, rel, policy, chunker, lang,
+                                     log_lines, j_depth, j_min, j_cap)
     units += _extract_sessions(project_root, config, amg_root)   # opted-in store source
     return units
 

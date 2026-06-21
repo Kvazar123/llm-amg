@@ -616,7 +616,10 @@ def apply_derivation(project_root: Path, derivation_path: Path,
     weights_cfg = config.get("weights") or {}
     renormalize = bool(weights_cfg.get("part_of_renormalize", True))
     default_w = float(weights_cfg.get("default_edge_weight", 0.5))
-    default_conf = _clamp01(config.get("default_confidence", DEFAULT_CONFIDENCE))
+    # default_confidence lives in the verification block (Stage 13); a top-level key is
+    # still honored for back-compat, then the constant.
+    default_conf = _clamp01((config.get("verification") or {}).get(
+        "default_confidence", config.get("default_confidence", DEFAULT_CONFIDENCE)))
     applied, created, skipped, skipped_stale = 0, 0, 0, 0
 
     with store.lock():

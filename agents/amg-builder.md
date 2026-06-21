@@ -45,6 +45,11 @@ For each unit:
    - `contradicts` — only if you see a real conflict; note it, low weight.
    Give each edge a weight in (0,1]: strong/direct ~0.8–1.0, incidental ~0.3–0.5.
    Only assert edges whose target id plausibly exists; do not invent targets.
+4. Estimate **confidence** (0–1): how sure you are the summary is correct and grounded
+   in what you actually read — ~0.9 for a clear, well-understood unit; ~0.5 when the code
+   is opaque, you are inferring intent, or the unit is ambiguous. The pack flags
+   low-confidence facts so the model double-checks them (and a verifier confirms code
+   claims against the live source). Omit it only if you truly cannot tell — a default applies.
 
 ## Output (the only thing you write to the graph layer)
 Write a JSON array to the given output path. Do **not** edit node files yourself —
@@ -61,6 +66,7 @@ loses no correctness and re-derives only what actually changed, not the whole qu
     "content_sha": "<echo the unit's content_sha verbatim>",
     "summary": "<1–3 sentences in working_language>",
     "lang": "ru",
+    "confidence": 0.9,
     "edges": [
       {"rel": "depends_on", "to": "code:src/config.py::settings", "w": 0.8}
     ]

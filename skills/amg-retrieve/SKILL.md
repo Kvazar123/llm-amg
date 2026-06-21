@@ -65,18 +65,29 @@ summary.
 The pack is **memory, not ground truth**: a summary can lag the source it points to
 (refactors happen between consolidations). Confidently-wrong memory is worse than no
 memory — the model answers convincingly and incorrectly. So before you state anything
-about code on the strength of the pack, confirm it against the live source; it costs
-one cheap check:
+about code on the strength of the pack, confirm it against the live source.
 
-- **the pointer resolves** — the `path:line` file exists;
-- **the symbol is real** — `grep` the function/class name at that path;
-- **stale wins from source** — if a node is flagged `⟨stale …⟩` in the pack, its
-  summary may lag; re-read the source slice before relying on it. On any conflict the
-  source wins over the summary (current code > a stale summary).
+The pack already **flags** a node whose trust is in doubt with a `⟨…⟩` suffix: `stale`
+(summary may lag), `unverified` (a code claim not yet checked against source),
+`contradicted` (a check failed), `low confidence`. Treat any flag as a prompt to verify
+before relying on that node.
 
-Use the pack to know *where to look and what matters*, then verify the specific claim
-you are about to make — only the claims you actually use, not the whole pack. This is
-the lightweight precursor to the full provenance/verification layer (roadmap Stage 13).
+`verify_claims.py` runs the check for you — read-only: the file exists, the symbol is
+still there, and the content hash still matches what was summarized:
+
+```bash
+python .claude/skills/amg-retrieve/scripts/verify_claims.py \
+    <node-id> [<node-id> ...] --store .claude/amg
+```
+
+It prints `verified` / `stale` / `contradicted` per node. On any conflict the **source
+wins** over the summary (current code > a stale summary). A maintenance or CI sweep can
+stamp the verdict back into the graph with `--write`; the default run touches nothing.
+
+Verify the specific claims you are about to make — only the claims you actually use, not
+the whole pack. This is the behavioral half of the provenance/verification layer
+(roadmap Stage 13); the schema fields (`provenance`, `confidence`, `verification`) and
+the marking above carry the rest.
 
 ## Measuring and tuning recall
 
@@ -104,6 +115,8 @@ and `relation_priors` (how strongly each edge type conducts).
 - `scripts/retrieve.py` — the retriever (importable `retrieve(...)` + CLI).
 - `scripts/embed.py` — OPTIONAL semantic seed enrichment (see below).
 - `scripts/eval_retrieval.py` — recall/precision/hop-recall vs lexical baseline.
+- `scripts/verify_claims.py` — verify a code claim against live source (file/symbol/hash);
+  read-only by default, `--write` stamps the verification block (Stage 13).
 
 ## Optional: embedding seed enrichment
 By default seeding is lexical (BM25). If an embedding backend is installed, retrieval

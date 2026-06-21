@@ -73,7 +73,11 @@ explicit request.
 
 2. **Retrieve before you work.** For each task, FIRST assemble context from the graph
    via the **`amg-retrieve`** skill (seed → spreading activation → a budgeted context
-   pack), then do the work. Do not dump the whole codebase into context.
+   pack), then do the work. Do not dump the whole codebase into context. The pack is
+   memory, not ground truth: before you state a code fact from it — especially a node it
+   flags `⟨stale / unverified / contradicted / low confidence⟩` — confirm it against the
+   live source. `verify_claims.py <id> --store .claude/amg` does this cheaply
+   (file/symbol/hash, read-only); on any conflict the current source wins.
 
 3. **Capture as you go; consolidate at the end.** When a decision, conclusion, open
    question, or forward-looking plan emerges, capture it with the safe note API — do

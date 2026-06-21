@@ -50,8 +50,11 @@ files. Work in your own context and return a concise report.
 ## Output format
 Write your nodes and edges as a derivation JSON array (same shape the builder uses;
 new hub nodes use ids like `hub:<topic>` and include `type`, `summary`, `lang`,
-`part_of`, `edges`). The driver applies it transactionally — do not edit node files
-directly. Write the gap report as markdown to its path.
+`part_of`, `edges`). For each hub also give a `confidence` (0–1: how well the
+synthesis is grounded in its members) and, optionally, `derived_from` — the list of
+node ids you distilled it from (its provenance, since a synthesized node has no source
+file). The driver applies it transactionally — do not edit node files directly. Write
+the gap report as markdown to its path.
 
 ## Rules
 - Justify every edge from node summaries/structure; do not invent targets.

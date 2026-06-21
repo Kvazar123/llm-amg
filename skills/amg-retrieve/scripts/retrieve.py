@@ -96,6 +96,11 @@ DEFAULTS = {
     "embeddings": {"enabled": "auto", "backend": "auto", "model": "", "blend": 0.5},
 }
 
+# Stage 13 trust layer defaults (a TOP-LEVEL config block, surfaced in load_config —
+# default_confidence is read at ingest by reconcile, the rest govern pack marking here).
+_VERIFICATION_DEFAULTS = {"enabled": True, "verify_code_claims": True,
+                          "warn_on_unverified": True, "min_confidence_warn": 0.5}
+
 # Which node types land in which abstraction tier of the pack.
 TIER_OF_TYPE = {
     "hub": "strategic", "overview": "strategic",
@@ -108,8 +113,36 @@ CODE_TYPES = {"module", "class", "function", "method", "file"}
 # Authored rulings carry their payload in the body (the rationale), so render it
 # inline whatever tier they land in — unlike a hub, whose body is a long overview.
 DOC_BODY_TYPES = {"decision", "adr"}
-# Appended to a stale node in the pack: its summary may lag the just-changed source.
-_STALE_MARK = "  ⟨stale: summary may lag — open the source to verify⟩"
+# Pack trust flag text (Stage 13). The stale flag predates the layer and is
+# unconditional; the verification/confidence flags are gated by the verification config.
+# A flag NEVER downranks a node — it tells the model to confirm the claim against source
+# (verify_claims.py) before relying on it (a just-changed node is often the most relevant).
+_STALE_TEXT = "stale: summary may lag — open the source to verify"
+
+
+def _trust_marks(node: Dict[str, Any], vcfg: Dict[str, Any]) -> str:
+    """Compose the pack's trust annotation for a node from its lifecycle status and the
+    Stage 13 trust fields. Returns a `  ⟨…⟩` suffix or "". The stale flag is
+    unconditional (backward-compatible); the rest fire only when verification.enabled, so
+    turning the layer off restores the prior behavior exactly."""
+    marks: List[str] = []
+    if node.get("status") == "stale":
+        marks.append(_STALE_TEXT)
+    if vcfg.get("enabled", True):
+        vstatus = (node.get("verification") or {}).get("status")
+        is_code = node.get("type") in CODE_TYPES
+        if vstatus == "contradicted":
+            marks.append("contradicted: source check failed — re-verify before relying")
+        elif (is_code and vstatus in (None, "unverified")
+              and vcfg.get("verify_code_claims", True) and vcfg.get("warn_on_unverified", True)):
+            marks.append("unverified: confirm this code claim against source")
+        conf = node.get("confidence")
+        try:
+            if conf is not None and float(conf) < float(vcfg.get("min_confidence_warn", 0.5)):
+                marks.append(f"low confidence {float(conf):.2f}")
+        except (TypeError, ValueError):
+            pass
+    return "  ⟨" + "; ".join(marks) + "⟩" if marks else ""
 
 
 # --------------------------------------------------------------------------- #
@@ -162,6 +195,9 @@ def load_config(store_root: Path) -> Dict[str, Any]:
     # weights.default_edge_weight is the fallback weight for an edge with no explicit
     # w (audit 1.23); read it here so build_adjacency does not hardcode 0.5.
     cfg["default_edge_weight"] = float((raw.get("weights") or {}).get("default_edge_weight", 0.5))
+    # Stage 13 trust layer is a TOP-LEVEL block (it governs ingest + pack marking), so
+    # surface it into the retrieval cfg the renderer reads, merged over its defaults.
+    cfg["verification"] = {**_VERIFICATION_DEFAULTS, **(raw.get("verification") or {})}
     return cfg
 
 
@@ -459,10 +495,11 @@ def assemble_pack(activation: Dict[str, float], nodes: Dict[str, Dict[str, Any]]
                                    "operational": [], "periphery": []}
     spent = {"strategic": 0, "tactical": 0, "operational": 0}
 
+    vcfg = cfg.get("verification") or {}
     for nid in ranked:
         node = nodes[nid]
         tier = TIER_OF_TYPE.get(node["type"], "operational")
-        line = _render(node, tier)
+        line = _render(node, tier, vcfg)
         cost = _toklen(line)
         if tier in spent and spent[tier] + cost <= budget[tier]:
             tiers[tier].append(nid)
@@ -471,14 +508,23 @@ def assemble_pack(activation: Dict[str, float], nodes: Dict[str, Dict[str, Any]]
             tiers["periphery"].append(nid)
 
     tiers["periphery"] = tiers["periphery"][: int(budget["periphery_links"])]
-    return _render_pack(tiers, nodes, activation), tiers
+    return _render_pack(tiers, nodes, activation, vcfg), tiers
 
 
-def _render(node: Dict[str, Any], tier: str) -> str:
+def _code_pointer(node: Dict[str, Any]) -> str:
+    """`path:line` for a code node, widened to `path:start-end` when line_end is known and
+    differs (Stage 13 line range), so the model can open the exact slice."""
+    sp, ln, le = node.get("source_path"), node.get("lineno"), node.get("line_end")
+    if le and ln and le != ln:
+        return f"{sp}:{ln}-{le}"
+    return f"{sp}:{ln}"
+
+
+def _render(node: Dict[str, Any], tier: str, vcfg: Dict[str, Any]) -> str:
     nid, summ = node["id"], (node["summary"] or "").strip()
-    mark = _STALE_MARK if node.get("status") == "stale" else ""
+    mark = _trust_marks(node, vcfg)
     if tier == "operational" and node["type"] in CODE_TYPES:
-        loc = f"{node['source_path']}:{node['lineno']}" if node.get("source_path") else nid
+        loc = _code_pointer(node) if node.get("source_path") else nid
         return f"- `{loc}` — {nid.split('::')[-1]} — {summ}{mark}"
     if tier == "operational" or node["type"] in DOC_BODY_TYPES:
         # operational docs/notes, and authored rulings in any tier: include the body
@@ -489,7 +535,7 @@ def _render(node: Dict[str, Any], tier: str) -> str:
 
 
 def _render_pack(tiers: Dict[str, List[str]], nodes: Dict[str, Dict[str, Any]],
-                 activation: Dict[str, float]) -> str:
+                 activation: Dict[str, float], vcfg: Dict[str, Any]) -> str:
     out: List[str] = ["# Context pack", ""]
     labels = [("strategic", "Strategic — overview & subsystems"),
               ("tactical", "Tactical — relevant modules"),
@@ -499,7 +545,7 @@ def _render_pack(tiers: Dict[str, List[str]], nodes: Dict[str, Dict[str, Any]],
             continue
         out.append(f"## {title}")
         for nid in tiers[key]:
-            out.append(_render(nodes[nid], key))
+            out.append(_render(nodes[nid], key, vcfg))
         out.append("")
     if tiers["periphery"]:
         out.append("## Related (follow if needed)")

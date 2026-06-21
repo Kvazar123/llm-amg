@@ -248,3 +248,19 @@ eval_gate:
   min_recall_delta: -0.02       # tolerated pack-recall drop (after - before)
   min_hop_recall_delta: -0.02   # tolerated hop-recall drop
   on_fail: reject               # reject | warn | revert (revert == reject here)
+
+# -----------------------------------------------------------------------------
+# Provenance & verification (Stage 13). The trust layer: every fact knows its origin
+# (provenance.kind) and how sure it is (confidence), and a CODE claim is checked against
+# live source before it is answered. Confidently-wrong memory is worse than none, so an
+# unverified / stale / contradicted / low-confidence node is FLAGGED in the pack — never
+# silently downranked (a just-changed node is often the MOST relevant; it is flagged, not
+# buried, exactly like `stale`). The live check is verify_claims.py (read-only by default;
+# --write stamps the verification block for a maintenance/CI sweep).
+# -----------------------------------------------------------------------------
+verification:
+  enabled: true              # master switch for the marking layer (off -> only the stale flag)
+  verify_code_claims: true   # the loop runs verify_claims.py on a code claim before answering
+  warn_on_unverified: true   # the pack flags an unverified code node
+  min_confidence_warn: 0.5   # the pack flags a node whose confidence is below this
+  default_confidence: 0.7    # confidence for a derived summary the builder left unrated

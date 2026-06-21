@@ -39,9 +39,12 @@ context; return only a short summary plus the pack path.
 - The pack path: `.claude/amg/cache/pack.md`.
 - A 3–5 line summary: which subsystem(s) activated, the top 4–6 nodes by activation,
   and anything notable (e.g. a relevant decision note or a contradiction surfaced).
-- **Flag stale pointers.** If a top node is marked `⟨stale …⟩` in the pack, its
-  summary may lag the source — say so, so the caller re-checks it against the live
-  file before relying on it (cheap verify-before-answer; SKILL.md).
+- **Flag untrusted nodes.** The pack annotates a node with `⟨…⟩` when its trust is in
+  doubt — `stale` (summary may lag the source), `unverified` (a code claim not yet
+  checked), `contradicted` (a source check failed), or `low confidence`. Call these out
+  for the top nodes, so the caller confirms them against the live source before relying
+  on them. A code claim is confirmed cheaply with
+  `verify_claims.py <id> --store .claude/amg` (file/symbol/hash check; read-only).
 - Do NOT paste the whole pack back; the caller reads it from the file.
 
 ## Rules
