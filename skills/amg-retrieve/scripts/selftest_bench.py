@@ -48,8 +48,9 @@ def test_bench_keys_and_determinism(tmp: Path) -> None:
     for k in ("scan_s", "index_read_s", "index_build_s", "build_adjacency_s",
               "retrieve_s_per_query", "eval_s"):
         assert isinstance(res[k], float), f"{k} must be a float second count, got {res[k]!r}"
-    # speedup direction is NOT asserted: on a tiny graph sqlite overhead can exceed the
-    # scan, so the index only wins at scale — bench just reports both numbers.
+    # speedup direction is NOT asserted: the index wins from ~dozens of nodes (measured:
+    # ~13x at 52, ~15x at 1900), but on this small fixture the absolute times are a few ms,
+    # so a single timed run is noise-prone on a loaded CI box — bench just reports both.
     assert res["n_nodes"] == len(R.load_nodes(root)), "n_nodes must match the graph"
     assert res["eval_cases"] >= 1 and res["queries"] >= 1
     # the generator is deterministic: same (nodes, seed) -> same node set.
