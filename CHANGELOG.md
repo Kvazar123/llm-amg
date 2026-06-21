@@ -4,6 +4,28 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-06-21
+
+Stage 12 closed — performance and scaling. Large graphs stay fast without giving up the Markdown canon: a generated SQLite read-index under retrieval (≈15× on the per-query load path), resumable derivation, queue helpers, model-effort tiering, a benchmark, and the transactional action log. Additive, no data-contract change (MINOR).
+
+### Added
+- Generated SQLite read-index `cache/index.sqlite` (new `skills/amg-retrieve/scripts/index_store.py`) under `retrieve.load_nodes`, the one per-query hot path. It stores a PROJECTION of the retrieval-relevant node fields (id/type/status/summary/source_path/lineno/searchable-text/edges/part_of/body), not the whole frontmatter or the sources — Markdown stays canon. `load_nodes` reads the index when a cheap stat-walk signature of `nodes/` (stored inside the sqlite, taken before the scan) matches, else falls back UNCONDITIONALLY to the scan and best-effort rebuilds — never a wrong result, only a faster path. All six graph writers (`reconcile.plan`/`apply_derivation`, `consolidate.fold_weights`/`apply_actions`, `notes.add_note`, `migrate_schema`) incrementally upsert it under their lock via a new `graph_store.Transaction.node_paths()`. The node-dict shape is byte-identical to the scan (shared `retrieve._node_from_meta`), so BM25 / build_adjacency / assemble_pack are untouched and `eval --make-demo` hop-recall stays 1.00. Measured ≈15× at 7600 nodes (7.9s → 0.5s). Disposable, no config key, no size threshold. `selftest_index.py`.
+- `bench.py` (+ `selftest_bench.py`): a read-only performance ruler over the engine — scan vs index `load_nodes`, `build_adjacency`, `retrieve`, `eval`, and (with `--project`) bootstrap; best-of-N, embeddings off. A self-contained deterministic generator (`--make-bench --nodes N`) or any `--store`.
+- Queue helpers `partition_queue.py` (split `work/queue.json` into per-subtree batches for parallel builders) and `inspect_queue.py` (a read-only queue summary), with `selftest_queue.py`.
+- Resumable derivation: `amg-builder` echoes each unit's `content_sha`, and `reconcile.apply_derivation` skips an item whose `content_sha` no longer matches the node's current `source_hash` (`skipped_stale`) — a leftover `derived-*.json` from an interrupted run never derives against stale content, and re-derives only what changed. `case_resume_freshness`.
+- Transactional action log: `GraphStore.append_log` (de-dup by txid, rotation into `archive/`), written by both `consolidate` and `reconcile` (audit 1.15). `selftest_graph_store.case_action_log`.
+- Model-effort tiering: the `config.yml` `models` block ships the structured `{model, reasoning_effort}` form with a gradient — `discovery: {haiku, low}`, `synthesis: {opus, high}`; `module_summary` stays flat (its summaries feed retrieval). A measurement protocol is documented in 09-config; the live (paid) measurement is deferred.
+
+### Changed
+- `consolidate.make_plan` restricts the near-duplicate Jaccard scan to episodic, non-source-derived nodes (the ones `merge_near_duplicates` can merge) — O(k²) instead of O(n²) over the whole graph, and it no longer proposes futile mirror merges (audit 1.27). `test_near_dup_scope`.
+- The engine passes `mypy --strict` in one pass; the gate is `mypy.ini` (`files=`, run `python -m mypy` with no args) over 15 engine modules; selftests are excluded by decision (audit 1.31).
+- The "don't edit the engine mid-task" barrier is sharpened into a named "Boundaries" section across all three activation blocks and 08-agents-skills (registry 2.16 p.6).
+- Docs synced: the read-index documented across 06-retrieval (main), 02-data-model / 03-storage / consistency-model §4 (layout, `node_paths`), 09-config (caches are keyless); resumable derivation in 05-reconcile / 08; the `episodic_types` drift fixed and near-dup scope in 07-consolidation; `log.md` described as transactional in 02-data-model + THEORY §9; model tiering + bench in 09-config / 10-eval-tools / GUIDE; READMEs move index + scaling from "planned" to "implemented" (stages 0–12). Roadmap §1 items 1.15 / 1.27 / 1.31 collapsed; the Stage 12 body folded.
+
+### Deferred
+- The adjacency cache (Stage 12 task 3) is deferred by measurement: `build_adjacency` is <1% of `load_nodes`' cost and serializing a large adjacency blob would risk costing more than the rebuild; the index already removed the dominant cost. Revisit only if a tens-of-thousands measurement disproves it (then a binary format, not JSON).
+- Lazy/on-demand derivation (Stage 12 task 7): the safe building blocks are in place (structural-first, partition scoping, resumable derivation); the speculative `derivation` switch is not introduced — full on-demand/background laziness with an eval-gated default flip stays roadmap §4.10 / Stage 17.
+
 ## [1.2.0] — 2026-06-18
 
 Stage 11 closed — broader input formats. AMG now ingests far more than code, Markdown, and JSON: dedicated chunkers for reStructuredText, NDJSON, CSV/TSV, logs, presentations, and external chat exports, plus recursive chunking of deeply nested JSON, a frozen `absorb_once` source policy, and source-overlap / missing-path diagnostics. Additive, no data-contract change (MINOR).
