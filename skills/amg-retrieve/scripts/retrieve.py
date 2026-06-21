@@ -87,10 +87,12 @@ DEFAULTS = {
     "relation_prior_default": 0.5,
     # Per-status activation prior, applied AFTER PPR (re-ranking by node validity,
     # NOT a teleport gate). stale is NOT penalized — a just-changed node is often the
-    # hottest; it is flagged in the pack instead. superseded is pushed down so a
-    # retired claim never competes as an active fact. disputed is forward-looking
-    # (Stage 14 arbitration): kept here so the knob is ready when the status exists.
-    "status_prior": {"active": 1.0, "stale": 1.0, "superseded": 0.2, "disputed": 0.5},
+    # hottest; it is flagged in the pack instead. superseded is pushed down so a retired
+    # claim never competes as an active fact; disputed (an open contradiction, Stage 14
+    # arbitration) sits in between and is surfaced as a conflict; rejected (a claim
+    # arbitration found false) is pushed down hardest.
+    "status_prior": {"active": 1.0, "stale": 1.0, "superseded": 0.2,
+                     "disputed": 0.5, "rejected": 0.1},
     # Optional semantic seed enrichment (Stage 1.5). enabled: auto|on|off;
     # blend: 0=pure BM25 .. 1=pure semantic. Falls back to BM25 if no backend.
     "embeddings": {"enabled": "auto", "backend": "auto", "model": "", "blend": 0.5},

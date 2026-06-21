@@ -171,6 +171,8 @@ retrieval:
     active: 1.0
     stale: 1.0                    # not penalized — flagged in the pack instead
     superseded: 0.2               # a retired claim must not compete as an active fact
+    disputed: 0.5                 # an open contradiction (arbitration) — surfaced as conflict
+    rejected: 0.1                 # a claim arbitration found false — pushed down hardest
   # Optional semantic seed enrichment (Stage 1.5). Improves recall on paraphrased
   # queries by blending embedding similarity into the seed; the PPR spread is
   # unchanged. OPTIONAL: with no backend installed, retrieval stays pure-BM25.

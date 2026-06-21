@@ -431,6 +431,76 @@ def test_branch_downward(proj):
     print("PASS  branch: hub reaches its branch downward via containment edges (1.20)")
 
 
+def test_contradiction_plan(proj):
+    """make_plan surfaces contradiction PAIRS (contradicts/supersedes edges) with the
+    per-side comparison inputs (incl. source rank), and SOURCE-CONTRADICTED nodes whose
+    live-source check failed — the detection half of arbitration (Stage 14)."""
+    amg = proj / ".claude" / "amg"
+    store = gs.GraphStore(amg)
+    write_node(store, "code:arb/new.py::f", "code",
+               {"type": "function", "source_kind": "derived_from_file",
+                "provenance": {"kind": "code"}, "summary": "new behavior",
+                "edges": [{"rel": "contradicts", "to": "doc:arb/old.md::s", "w": 0.3}]})
+    write_node(store, "doc:arb/old.md::s", "doc",
+               {"type": "section", "source_kind": "derived_from_file",
+                "provenance": {"kind": "doc"}, "summary": "old behavior"})
+    write_node(store, "code:arb/gone.py::g", "code",
+               {"type": "function", "source_kind": "derived_from_file",
+                "provenance": {"kind": "code"}, "summary": "vanished",
+                "verification": {"status": "contradicted", "method": "ast"}})
+    C.make_plan(proj)
+    plan = json.loads((amg / "work" / "consolidation-plan.json").read_text())
+    pairs = {frozenset((c["a"], c["b"])) for c in plan["contradictions"]}
+    assert frozenset(("code:arb/new.py::f", "doc:arb/old.md::s")) in pairs, plan["contradictions"]
+    c = next(c for c in plan["contradictions"]
+             if frozenset((c["a"], c["b"])) == frozenset(("code:arb/new.py::f", "doc:arb/old.md::s")))
+    code_info = c["a_info"] if c["a"] == "code:arb/new.py::f" else c["b_info"]
+    doc_info = c["b_info"] if c["a"] == "code:arb/new.py::f" else c["a_info"]
+    assert code_info["source_rank"] > doc_info["source_rank"], c       # code outranks doc (§15.1)
+    assert "code:arb/gone.py::g" in {s["id"] for s in plan["source_contradicted"]}
+    print("PASS  arbitration plan: contradiction pairs + source rank + source-contradicted")
+
+
+def test_arbitration(proj):
+    """Arbitration verdicts (Stage 14): supersede / dispute / reject / keep_both_with_context
+    / ask_user set the right statuses + linking edges, write arbitration.md (with reasons),
+    are non-destructive (nodes kept), and run regardless of the compaction gate."""
+    amg = proj / ".claude" / "amg"
+    store = gs.GraphStore(amg)
+    for nid in ("notes:arb/w", "notes:arb/l", "notes:arb/d1", "notes:arb/d2",
+                "notes:arb/k1", "notes:arb/k2", "notes:arb/rej", "notes:arb/q1", "notes:arb/q2"):
+        write_node(store, nid, "notes", {"type": "note", "summary": nid, "status": "active"})
+    actions = [
+        {"action": "supersede", "winner_id": "notes:arb/w", "loser_id": "notes:arb/l",
+         "reason": "current code wins", "sources": "code(6) > doc(5)"},
+        {"action": "dispute", "ids": ["notes:arb/d1", "notes:arb/d2"], "reason": "same source rank"},
+        {"action": "keep_both_with_context", "ids": ["notes:arb/k1", "notes:arb/k2"],
+         "reason": "both valid in their own context"},
+        {"action": "reject", "id": "notes:arb/rej", "reason": "false claim, no grounding"},
+        {"action": "ask_user", "ids": ["notes:arb/q1", "notes:arb/q2"], "reason": "cannot decide"},
+    ]
+    counts = C.apply_actions(proj, _write_actions(amg, actions))
+    n = C.load_nodes(store)
+    assert n["notes:arb/l"]["status"] == "superseded" and n["notes:arb/w"]["status"] == "active"
+    assert any(e.get("rel") == "supersedes" and e.get("to") == "notes:arb/l"
+               for e in n["notes:arb/w"]["edges"]), "supersedes edge added winner->loser"
+    assert n["notes:arb/d1"]["status"] == "disputed" and n["notes:arb/d2"]["status"] == "disputed"
+    assert any(e.get("rel") == "contradicts" and e.get("to") == "notes:arb/d2"
+               for e in n["notes:arb/d1"]["edges"]), "dispute links the pair"
+    assert n["notes:arb/k1"]["status"] == "active" and n["notes:arb/k2"]["status"] == "active", \
+        "keep_both leaves both active"
+    assert any(e.get("rel") == "contradicts" and e.get("to") == "notes:arb/k2"
+               for e in n["notes:arb/k1"]["edges"]), "keep_both links the pair"
+    assert n["notes:arb/rej"]["status"] == "rejected"
+    assert n["notes:arb/q1"]["status"] == "disputed" and n["notes:arb/q2"]["status"] == "disputed"
+    arb = (store.root / "arbitration.md").read_text(encoding="utf-8")
+    assert "supersede" in arb and "current code wins" in arb and "NEEDS USER" in arb, arb
+    assert all(k in n for k in ("notes:arb/l", "notes:arb/rej")), "verdicts are non-destructive"
+    problems = store.verify(repair=False)
+    assert all(not v for v in problems.values()), f"store not clean: {problems}"
+    print(f"PASS  arbitration: verdicts set statuses+edges, non-destructive, arbitration.md ({dict(counts)})")
+
+
 def _armed_demo(on_fail):
     """A fresh demo store with the eval gate armed at an ABSOLUTE cases path (the demo
     writes resolvable cases.json into the graph root)."""
@@ -590,6 +660,8 @@ if __name__ == "__main__":
         test_consolidation_nodes_schema(proj)
         test_grounded_inbound()
         test_branch_downward(proj)
+        test_contradiction_plan(proj)
+        test_arbitration(proj)
         test_eval_gate()
         test_gate_robust()
         test_hebbian_demo()

@@ -144,6 +144,25 @@ GROUND_RELS = {"documents", "implements", "specifies"}
 # down to non-hub nodes recovers the branch. The walk stops at any other hub.
 HUB_DOWN_RELS = {"documents", "defines", "specifies", "implements", "contains"}
 
+# Relations whose two endpoints form a CONTRADICTION pair for the arbitration pass
+# (Stage 14). amg-synth emits them as judgment edges; arbitration compares the two
+# endpoints (source rank / freshness / confidence / verification) and issues a verdict.
+CONFLICT_RELS = {"contradicts", "supersedes"}
+
+# Arbitration verdict actions (Stage 14): NON-destructive status changes (+ a linking
+# edge) that resolve a contradiction. Unlike COMPACTION_ACTIONS they archive/delete
+# nothing — a node keeps its history — so they need neither the compaction.enabled gate,
+# the protected-type guard, nor the eval gate. The judgment is the consolidator's; the
+# code only detects candidates (make_plan) and applies the verdict transactionally.
+ARBITRATION_ACTIONS = {"supersede", "dispute", "reject", "keep_both_with_context", "ask_user"}
+
+# Source-priority hierarchy (THEORY §15.1: current code > docs > ADR > session > legacy
+# > model guess) as a numeric rank the PLAN exposes to the consolidator. It is a HINT for
+# judgment, not the verdict: the model still weighs freshness / confidence / verification
+# (passed alongside) and decides. A settled ruling (decision/adr) ranks as ADR regardless
+# of its (authored) provenance kind.
+_SOURCE_RANK = {"code": 6, "doc": 5, "data": 5, "user": 5, "chat": 3, "model_inference": 1}
+
 
 # --------------------------------------------------------------------------- #
 # Node IO
@@ -553,6 +572,57 @@ def _dedup_edges(edges: List[Dict[str, Any]], owner_id: str) -> List[Dict[str, A
     return list(out.values())
 
 
+def _source_rank(node: Dict[str, Any]) -> int:
+    """Numeric source-priority rank for arbitration (higher = more authoritative), from
+    THEORY §15.1. A decision/ADR ranks as a settled ruling; otherwise rank by provenance
+    kind (code/doc/data/user/chat/model_inference), defaulting to 2."""
+    typ = (node.get("type") or "").lower()
+    if typ in ("adr", "decision"):
+        return 4
+    kind = ((node.get("provenance") or {}).get("kind") or "").lower()
+    return _SOURCE_RANK.get(kind, 2)
+
+
+def _node_arb_info(node: Dict[str, Any]) -> Dict[str, Any]:
+    """The comparison inputs the consolidator weighs when arbitrating a contradiction:
+    source rank, confidence, freshness (updated), verification status, provenance kind,
+    and current lifecycle status. The code lays these out; the model judges."""
+    return {"type": node.get("type"), "status": node.get("status") or "active",
+            "source_rank": _source_rank(node), "confidence": node.get("confidence"),
+            "updated": node.get("updated"),
+            "verification": (node.get("verification") or {}).get("status"),
+            "provenance_kind": (node.get("provenance") or {}).get("kind")}
+
+
+def _contradiction_candidates(nodes: Dict[str, Dict[str, Any]]
+                              ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Detect contradictions for the arbitration pass (Stage 14):
+
+      * pairs — node-vs-node conflicts: two nodes linked by a contradicts/supersedes edge
+        (CONFLICT_RELS), each side with its comparison inputs (_node_arb_info);
+      * source_contradicted — single nodes whose summary lost to their LIVE source
+        (verification.status == 'contradicted'; the source won, §15.1) — candidates to
+        supersede/reject.
+
+    Detection is deterministic; the verdict is the subagent's (mechanics determined,
+    meaning by the model)."""
+    pairs: List[Dict[str, Any]] = []
+    seen: Set[FrozenSet[str]] = set()
+    for nid, n in nodes.items():
+        for e in (n.get("edges") or []):
+            if not (isinstance(e, dict) and e.get("rel") in CONFLICT_RELS):
+                continue
+            to = e.get("to")
+            if to not in nodes or to == nid or frozenset((nid, to)) in seen:
+                continue
+            seen.add(frozenset((nid, to)))
+            pairs.append({"a": nid, "b": to, "rel": e["rel"],
+                          "a_info": _node_arb_info(n), "b_info": _node_arb_info(nodes[to])})
+    source_contradicted = [{"id": nid, **_node_arb_info(n)} for nid, n in nodes.items()
+                           if (n.get("verification") or {}).get("status") == "contradicted"]
+    return pairs, source_contradicted
+
+
 def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
     amg = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     store = gs.GraphStore(amg)
@@ -606,14 +676,21 @@ def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, 
                              "protected": (n.get("type") or "").lower() in cmp_cfg["protect_types"]})
     episodic.sort(key=lambda x: float(x["salience"]))
 
+    # contradiction candidates for the arbitration pass (detect only; the consolidator
+    # compares the laid-out inputs and issues the verdict — Stage 14)
+    contradictions, source_contradicted = _contradiction_candidates(nodes)
+
     plan = {"generated": _now(), "n_nodes": len(nodes),
             "over_budget_branches": over_budget,
             "near_duplicates": dups,
-            "episodic_candidates": episodic[:50]}
+            "episodic_candidates": episodic[:50],
+            "contradictions": contradictions,
+            "source_contradicted": source_contradicted}
     gs.atomic_write_text(store.root / "work" / "consolidation-plan.json",
                          json.dumps(plan, ensure_ascii=False, indent=2))
     return {"over_budget": len(over_budget), "duplicates": len(dups),
-            "episodic": len(episodic)}
+            "episodic": len(episodic), "contradictions": len(contradictions),
+            "source_contradicted": len(source_contradicted)}
 
 
 # --------------------------------------------------------------------------- #
@@ -898,6 +975,32 @@ def apply_actions(project_root: Path, actions_path: Path,
             h = gs.sha256_text(nid)[:8]
             return f"nodes/{kind}/{slug}-{h}.md"
 
+        arb_audit: List[str] = []           # arbitration verdict lines -> arbitration.md
+
+        def set_status(nid: str, status: str) -> None:
+            """Arbitration verdict: set a node's lifecycle status (superseded/disputed/
+            rejected) and bump updated. Non-destructive — the node and its history stay."""
+            n = nodes.get(nid)
+            if n:
+                n["status"] = status
+                n["updated"] = _now()
+                tx.write(n["_path"], serialize(n, n["_body"]))
+
+        def ensure_edge(src: str, rel: str, dst: str) -> None:
+            """Add a (rel, dst) edge to src if absent (origin consolidation), so the
+            contradiction/supersession is explicit and retrieval surfaces both sides."""
+            n = nodes.get(src)
+            if not n or src == dst or dst not in nodes:
+                return
+            edges = n.get("edges") or []
+            if any(isinstance(e, dict) and e.get("rel") == rel and e.get("to") == dst
+                   for e in edges):
+                return
+            edges.append({"rel": rel, "to": dst, "w": cfg["default_edge_weight"],
+                          "coact": 0, "origin": "consolidation"})
+            n["edges"] = edges
+            tx.write(n["_path"], serialize(n, n["_body"]))
+
         for act in actions:
             kind = act.get("action")
             force = bool(act.get("force"))
@@ -1053,6 +1156,58 @@ def apply_actions(project_root: Path, actions_path: Path,
                     tx.write(mn["_path"], serialize(mn, mn["_body"]))
                 counts["introduce_subhub"] += 1
 
+            # --- arbitration verdicts (Stage 14): non-destructive status changes + a
+            # linking edge; no compaction gate / protection / eval gate applies ---
+            elif kind == "supersede":
+                winner, loser = act.get("winner_id"), act.get("loser_id")
+                if not (winner and loser) or winner == loser:
+                    continue
+                if not (nodes.get(winner) and nodes.get(loser)):
+                    continue
+                set_status(loser, "superseded")
+                ensure_edge(winner, "supersedes", loser)   # make the supersession explicit
+                arb_audit.append(_arb_line("supersede", f"{winner} <- {loser}", act))
+                counts["supersede"] += 1
+
+            elif kind in ("dispute", "ask_user"):
+                ids = [i for i in (act.get("ids") or []) if nodes.get(i)]
+                if len(ids) < 2:
+                    continue
+                for i in ids:                            # both/all sides marked disputed
+                    set_status(i, "disputed")
+                for i in ids[1:]:                        # link them so retrieval surfaces it
+                    ensure_edge(ids[0], "contradicts", i)
+                arb_audit.append(_arb_line(kind, " <> ".join(ids), act,
+                                           extra="NEEDS USER" if kind == "ask_user" else ""))
+                counts[kind] += 1
+
+            elif kind == "keep_both_with_context":
+                ids = [i for i in (act.get("ids") or []) if nodes.get(i)]
+                if len(ids) < 2:
+                    continue
+                for i in ids[1:]:                        # link both sides but leave active
+                    ensure_edge(ids[0], "contradicts", i)
+                arb_audit.append(_arb_line("keep_both_with_context", " <> ".join(ids), act))
+                counts["keep_both_with_context"] += 1
+
+            elif kind == "reject":
+                rid = act.get("id")
+                if not (rid and nodes.get(rid)):
+                    continue
+                set_status(rid, "rejected")
+                arb_audit.append(_arb_line("reject", str(rid), act))
+                counts["reject"] += 1
+
+        # Arbitration audit trail: append the verdicts to arbitration.md within THIS
+        # transaction (atomic with the status/edge changes), so the basis of every memory
+        # verdict is durably visible — conflicts are never resolved silently (Stage 14 DoD).
+        if arb_audit:
+            arb_rel = "arbitration.md"
+            prior = (store.abspath(arb_rel).read_text(encoding="utf-8")
+                     if store.abspath(arb_rel).exists() else "")
+            head = "" if prior else "# AMG arbitration log — contradiction verdicts (auto-generated)\n\n"
+            tx.write(arb_rel, prior + head + "\n".join(arb_audit) + "\n")
+
         txid = tx.commit()
         if txid:
             _refresh_index(store.root, tx)     # warm the read-index under the lock
@@ -1076,6 +1231,17 @@ def apply_actions(project_root: Path, actions_path: Path,
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _arb_line(action: str, subject: str, act: Dict[str, Any], extra: str = "") -> str:
+    """One human-readable arbitration audit line for arbitration.md (Stage 14): what was
+    decided, on which nodes, the reason, and the sources compared — so the user can see
+    the basis of a memory verdict (DoD: conflicts are not resolved silently)."""
+    reason = " ".join(str(act.get("reason", "")).split()) or "(no reason given)"
+    sources = act.get("sources")
+    src = f"  | sources: {sources}" if sources else ""
+    tag = f"  [{extra}]" if extra else ""
+    return f"## [{_now()}] {action}{tag}  {subject}  | reason: {reason}{src}"
 
 
 def _log(store: gs.GraphStore, msg: str, txid: Optional[str]) -> None:
