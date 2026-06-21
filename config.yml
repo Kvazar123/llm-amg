@@ -125,13 +125,18 @@ log_group_lines: 50            # lines per .log episode block
 #   ignored unless passed explicitly on spawn; `effort` is honored. We still render
 #   `model:` (documented, forward-compatible).
 # -----------------------------------------------------------------------------
+# Default tiering pairs each role's model with a reasoning_effort gradient: LOW on the
+# simple read-only discovery roles, full effort on foundational synthesis. module_summary
+# is deliberately left FLAT (env-default effort): its per-unit summaries feed retrieval
+# (BM25 + embeddings), so it is not cut without measuring. To tune, follow the measurement
+# protocol in 09-config "Модели субагентов": rebuild + eval off/on per tier, and lower a
+# tier only where recall / hop-recall hold. A role is a flat model string OR a
+# {model, reasoning_effort} mapping (both work; see the caveat block above).
 models:
-  structural_extraction: none      # extract_structure.py - exact, reproducible
-  discovery:            haiku       # read-only file discovery / search
-  module_summary:       sonnet      # per-file / per-section summaries (bulk)
-  synthesis:            opus        # architecture overview, cross-domain edges, gaps
-  # structured form (model + reasoning effort), e.g.:
-  # synthesis: {model: opus, reasoning_effort: high}
+  structural_extraction: none                              # extract_structure.py - exact, no model
+  discovery:      {model: haiku,  reasoning_effort: low}   # read-only classify / assemble — cheap
+  module_summary: sonnet                                   # bulk summaries; full effort (feeds retrieval)
+  synthesis:      {model: opus,   reasoning_effort: high}  # architecture, gaps, consolidation judgment
 
 # -----------------------------------------------------------------------------
 # Spreading-activation retrieval (amg-retrieve). Query-biased Personalized PageRank.
