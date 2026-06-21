@@ -52,13 +52,17 @@ flowchart TD
 | Извлечение структуры | `extract_structure.py` | классификация типа файла и нарезка на единицы | `<путь>` · `--stats` |
 | Сверка | `reconcile.py` | диф графа с источником, очередь на обогащение, применение | `bootstrap` · `plan` · `apply` |
 | Захват заметок | `notes.py` | безопасная запись авторских узлов (решение / вывод / план / открытый вопрос) через транзакцию | `add` |
+| Нарезка очереди | `partition_queue.py` | делит `work/queue.json` на партии по поддеревьям для параллельных сборщиков | `[<root>]` · `--depth` |
+| Сводка очереди | `inspect_queue.py` | счётчики очереди (category / поддерево / kind / с текстом) | `[<root>]` |
 | Извлечение из графа | `retrieve.py` | засев → PPR → сборка пакета по ярусам | `"<запрос>"` · `--store` |
 | Семантический засев | `embed.py` | опциональное обогащение засева эмбеддингами; диагностика | одиночный запуск (диагностика) |
+| Read-индекс | `index_store.py` | производный SQLite-кэш под `load_nodes` (автоматический, одноразовый, пересобираемый) | — (внутренний) |
 | Консолидация | `consolidate.py` | свёртка весов, значимость, компрессия веток | `weights` · `plan` · `apply` |
 | Измерение | `eval_retrieval.py` | recall / precision / hop-recall против лексической базы | `--make-demo` · `--cases` |
+| Бенчмарк | `bench.py` | скорость на масштабе: scan vs index, `retrieve`/`eval`/bootstrap | `--make-bench` · `--store` |
 | Просмотр | `inspect_graph.py` | список узлов (id, тип, сводка) для разметки и контроля | `--grep` · `--bucket` |
 
-Ключевые модули сопровождаются самотестом (`selftest_*.py`), проверяющим их инварианты: `graph_store`, `reconcile`, `retrieve`, `embed`, `consolidate`, `notes`, `migrate_schema`, а извлечение структуры — через `selftest_extract_overrides` и `selftest_stage2`. У `eval_retrieval.py` и `inspect_graph.py` собственного самотеста нет — они косвенно прогоняются через `selftest_retrieve`/`selftest_consolidate`. Самотесты не входят в рабочий поток и запускаются вручную при изменениях.
+Ключевые модули сопровождаются самотестом (`selftest_*.py`), проверяющим их инварианты: `graph_store`, `reconcile`, `retrieve`, `embed`, `consolidate`, `notes`, `migrate_schema`, `index_store` (`selftest_index`), `bench` (`selftest_bench`) и хелперы очереди (`selftest_queue`), а извлечение структуры — через `selftest_extract_overrides`, `selftest_stage2` и `selftest_chunkers`. У `eval_retrieval.py` и `inspect_graph.py` собственного самотеста нет — они косвенно прогоняются через `selftest_retrieve`/`selftest_consolidate`. Самотесты не входят в рабочий поток и запускаются вручную при изменениях.
 
 Оркестрация описана в разделе [Субагенты и скиллы](./08-agents-skills.md): `CLAUDE.md` задаёт петлю активации (что делать в начале, по ходу и в конце сессии), скиллы — это процедуры (построить, извлечь, консолидировать), субагенты — исполнители семантической работы в изолированном контексте.
 

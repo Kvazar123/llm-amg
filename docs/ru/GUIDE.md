@@ -193,6 +193,8 @@ python .claude/skills/amg-bootstrap/scripts/reconcile.py bootstrap .
 | `python .claude/skills/amg-bootstrap/scripts/reconcile.py plan .` | то же, что `bootstrap` (синоним) |
 | `python .claude/skills/amg-bootstrap/scripts/reconcile.py apply <файл.json> .` | внести семантический результат (сводки и рёбра) |
 | `python .claude/skills/amg-bootstrap/scripts/extract_structure.py . --stats` | показать классификацию файлов и доступность извлекателей |
+| `python .claude/skills/amg-bootstrap/scripts/inspect_queue.py .` | сводка очереди обогащения (счётчики по category / поддереву / kind) |
+| `python .claude/skills/amg-bootstrap/scripts/partition_queue.py .` | разбить очередь на партии по поддеревьям (для параллельных сборщиков) |
 
 **Извлечение** (скилл `amg-retrieve`, скрипты в `.claude/skills/amg-retrieve/scripts/`):
 
@@ -204,6 +206,12 @@ python .claude/skills/amg-bootstrap/scripts/reconcile.py bootstrap .
 | `... eval_retrieval.py --store .claude/amg --cases cases.json --out results.json` | измерить полноту/точность/hop-recall на своей разметке |
 | `python .claude/skills/amg-retrieve/scripts/inspect_graph.py --grep <строка>` | просмотреть узлы (id, тип, сводка), выбрать `gold_ids` |
 | `python .claude/skills/amg-retrieve/scripts/embed.py` | диагностика эмбеддингов: бэкенды, модель, кросс-язычность |
+| `python .claude/skills/amg-retrieve/scripts/bench.py --make-bench <путь> --nodes N [--seed S]` | сгенерировать синтетический граф из ~N узлов и замерить скорость |
+| `python .claude/skills/amg-retrieve/scripts/bench.py --store .claude/amg [--project .]` | замерить на **своём** графе (+ время bootstrap, если задан `--project`) |
+
+`bench.py` печатает время **загрузки узлов сканом против индекса** (и во сколько раз индекс быстрее), `build_adjacency`, полного `retrieve` на запрос и `eval`; эмбеддинги при замере выключены, каждая операция берётся как лучшее из нескольких прогонов (`--repeats`), результат можно сохранить в JSON (`--out`). Назначение — **регрессия скорости «до/после»**: прогнать до изменения горячего пути и после. Стенд самодостаточен (`--make-bench` пишет синтетический граф прямо в `nodes/`, офлайн) либо наводится на реальный граф (`--store`).
+
+> **Ускоряющий индекс — сам по себе.** На больших графах извлечение само держит производный индекс `.claude/amg/cache/index.sqlite` (≈15× к загрузке узлов): запрос читает одну таблицу SQLite вместо тысяч `.md`. Он **одноразовый и автоматический** — настраивать нечего, выдачу не меняет (только скорость), а при сомнении весь `cache/` можно удалить, он пересоберётся. Сам выигрыш на своём масштабе меряет `bench.py` выше.
 
 **Консолидация** (скилл `amg-consolidate`, скрипты в `.claude/skills/amg-consolidate/scripts/`):
 
@@ -234,13 +242,15 @@ python .claude/skills/amg-bootstrap/scripts/reconcile.py bootstrap .
 
 ```
 models:
-  discovery:      haiku                                    # лёгкие задачи только на чтение
-  module_summary: {model: sonnet, reasoning_effort: low}   # массовая генерация сводок
+  discovery:      {model: haiku,  reasoning_effort: low}   # простые read-only задачи — дёшево
+  module_summary: sonnet                                   # массовые сводки; полный effort (питают извлечение)
   synthesis:      {model: opus,   reasoning_effort: high}  # синтез, межслойные рёбра, пробелы
 ```
 
 - `model` — любая строка, понятная вашей среде: семейный алиас (`opus`/`sonnet`/`haiku`/`fable`), точный id (`claude-opus-4-8`) или модель другого провайдера (`gpt-5.5`), если Claude Code направлен на шлюз/Bedrock/Vertex. AMG строку лишь пробрасывает — маршрутизацию к провайдеру задаёт развёртывание, а не имя модели.
 - `reasoning_effort` — уровень рассуждения `minimal | low | medium | high | xhigh | max`, нейтральный к среде: сводится к тому, что среда поддерживает (Claude Code — поле `effort`, `low…max`; Codex — `model_reasoning_effort`, `minimal…xhigh`). Не задан — действует умолчание среды (у Claude Code `high`). Модель и уровень задаются раздельно.
+
+**Дефолтный тиринг и как его настраивать.** Шаблон задаёт градиент усилия: `low` на простых read-only ролях (`discovery` — классификация, сборка пакета), полное усилие на фундаментальном синтезе (`synthesis`). `module_summary` оставлен на полном усилии **намеренно** — его посводочные сводки питают извлечение (BM25 + эмбеддинги), поэтому усилие билдера не понижают без замера. Подобрать тир под свой граф — числом, не на глаз: снять базу `eval_retrieval.py`, понизить тир, **пересобрать** сводки, прогнать eval снова и оставить дешёвый тир там, где полнота держится; вернуть прежний, где просела. Живой (платный) замер отложен — шаблон несёт разумные дефолты и метод (полный протокол — в [справочнике конфигурации](./architecture/09-config.md), «Модели субагентов»).
 
 Карта ролей → субагенты и оговорка про апстрим-баг Claude Code (frontmatter `model:` применяется только при явной передаче модели) — в [справочнике конфигурации](./architecture/09-config.md), раздел «Модели субагентов».
 

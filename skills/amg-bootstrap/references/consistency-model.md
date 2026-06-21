@@ -93,6 +93,8 @@ on an unchanged repo does zero model work and produces zero changes.
   archive/            originals evicted by compaction (reversible)
   cache/pack.md       last assembled retrieval context pack (disposable)
   cache/embeddings.json  node embedding cache (disposable)
+  cache/index.sqlite  generated read-index over nodes/ for retrieve.load_nodes
+                      (disposable; rebuilt on a signature miss; never the source of truth)
   log.md              human-readable action audit log (transactional, de-duped by txid, rotated)
   LOCK                single-writer lock (absent when no writer holds it)
 ```
