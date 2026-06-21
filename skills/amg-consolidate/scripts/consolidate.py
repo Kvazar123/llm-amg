@@ -486,15 +486,23 @@ def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, 
                                     "budget_nodes": budget, "members": mem,
                                     "staged_steps": cmp_cfg["steps"]})
 
-    # near-duplicate candidates (lexical Jaccard over summaries)
-    ids = list(nodes)
-    toks = {nid: set(_node_text(nodes[nid])) for nid in ids}
+    # near-duplicate candidates (lexical Jaccard over summaries). Restricted to the
+    # EPISODIC, non-source-derived nodes that merge_near_duplicates can actually merge
+    # (§1.27): the old all-pairs scan was O(n^2) over the WHOLE graph (~5e7 set
+    # comparisons at 10^4 nodes) and could even propose merging two mirror nodes —
+    # futile, since reconcile just recreates them. Same filter as episodic_candidates
+    # below, so the consolidator only ever sees mergeable pairs. (If a real graph ever
+    # shows a large episodic k, add a MinHash/LSH prefilter — measured, not preemptive.)
+    dup_ids = [nid for nid, n in nodes.items()
+               if n.get("type") in cfg["episodic_types"]
+               and n.get("source_kind") not in ("derived_from_file",)]
+    toks = {nid: set(_node_text(nodes[nid])) for nid in dup_ids}
     dups = []
-    for i in range(len(ids)):
-        for j in range(i + 1, len(ids)):
-            sim = _jaccard(toks[ids[i]], toks[ids[j]])
+    for i in range(len(dup_ids)):
+        for j in range(i + 1, len(dup_ids)):
+            sim = _jaccard(toks[dup_ids[i]], toks[dup_ids[j]])
             if sim >= cfg["near_duplicate_sim"]:
-                dups.append({"a": ids[i], "b": ids[j], "sim": round(sim, 3)})
+                dups.append({"a": dup_ids[i], "b": dup_ids[j], "sim": round(sim, 3)})
 
     # episodic candidates + salience
     grounded_in = _inbound_grounded(nodes)

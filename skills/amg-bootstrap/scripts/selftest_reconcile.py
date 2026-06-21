@@ -471,6 +471,64 @@ def case_absorb_once() -> None:
         shutil.rmtree(proj, ignore_errors=True)
 
 
+def case_resume_freshness() -> None:
+    """Resumable derivation (task 13): a derived item echoes content_sha; apply skips it
+    when the source has changed since (the node's source_hash moved on), so a leftover
+    derived-*.json never blindly derives against stale content. An item with NO
+    content_sha still applies (back-compat / synthesized hub items)."""
+    proj = Path(tempfile.mkdtemp(prefix="amg-resume-"))
+    try:
+        amg = proj / ".claude" / "amg"
+        amg.mkdir(parents=True)
+        (amg / "config.yml").write_text(
+            "active: true\nworking_language: en\nmirror_path: src\n", encoding="utf-8")
+        src = proj / "src"
+        src.mkdir()
+        f = src / "m.py"
+        f.write_text("def a():\n    return 1\n", encoding="utf-8")
+        RC.plan(proj, amg)
+        nid = "code:src/m.py::a"
+        sha_v1 = RC.load_nodes(gs.GraphStore(amg))[nid]["source_hash"]
+        work = amg / "work"
+        work.mkdir(exist_ok=True)
+
+        # fresh item (content_sha matches the current source) -> applied, active
+        (work / "d1.json").write_text(json.dumps(
+            [{"id": nid, "summary": "v1 summary", "content_sha": sha_v1}]), encoding="utf-8")
+        r = RC.apply_derivation(proj, work / "d1.json", amg)
+        assert r["applied"] == 1 and r["skipped_stale"] == 0, r
+        assert RC.load_nodes(gs.GraphStore(amg))[nid]["status"] == "active"
+
+        # change the source -> source_hash moves on; re-plan marks the node stale
+        f.write_text("def a():\n    return 2  # changed\n", encoding="utf-8")
+        RC.plan(proj, amg)
+        n = RC.load_nodes(gs.GraphStore(amg))[nid]
+        assert n["status"] == "stale" and n["source_hash"] != sha_v1, n
+
+        # a LEFTOVER item with the OLD content_sha must be SKIPPED, not blindly applied
+        r = RC.apply_derivation(proj, work / "d1.json", amg)
+        assert r["skipped_stale"] == 1 and r["applied"] == 0, r
+        assert RC.load_nodes(gs.GraphStore(amg))[nid]["status"] == "stale", \
+            "a stale-sha item must not flip the node active"
+
+        # a fresh item with the CURRENT content_sha applies
+        sha_v2 = RC.load_nodes(gs.GraphStore(amg))[nid]["source_hash"]
+        (work / "d2.json").write_text(json.dumps(
+            [{"id": nid, "summary": "v2 summary", "content_sha": sha_v2}]), encoding="utf-8")
+        r = RC.apply_derivation(proj, work / "d2.json", amg)
+        assert r["applied"] == 1, r
+        assert RC.load_nodes(gs.GraphStore(amg))[nid]["status"] == "active"
+
+        # back-compat: an item with NO content_sha still applies (e.g. synthesized hubs)
+        (work / "d3.json").write_text(json.dumps(
+            [{"id": nid, "summary": "v3 no sha"}]), encoding="utf-8")
+        r = RC.apply_derivation(proj, work / "d3.json", amg)
+        assert r["applied"] == 1 and r["skipped_stale"] == 0, r
+        print("PASS  resume: stale-sha item skipped; current-sha applies; no-sha back-compat (task 13)")
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+
 if __name__ == "__main__":
     proj = setup_project()
     try:
@@ -491,6 +549,7 @@ if __name__ == "__main__":
         case_lineno_in_pack(proj)
         case_root_resolution(proj)
         case_absorb_once()
+        case_resume_freshness()
         print("\nALL RECONCILE CHECKS PASSED")
     finally:
         shutil.rmtree(proj, ignore_errors=True)

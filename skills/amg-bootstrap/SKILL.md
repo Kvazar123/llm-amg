@@ -86,13 +86,18 @@ delegating per-unit reading to subagents.
         own fallback, so each labeled file now routes to the right chunker (code by
         symbol, data by record) instead of the prose default.
 
-3. **Semantic derivation (bulk).** Read `.claude/amg/work/queue.json`. If it is
-   large, split it into batches by subtree (e.g. per top-level package) and spawn an
-   `amg-builder` subagent per batch **in parallel**. Give each subagent its batch
-   slice and an output path like `.claude/amg/work/derived-<batch>.json`. The
-   subagent reads the queued units, writes summaries (in the configured
-   `working_language` for docs/notes; keep code identifiers verbatim) and local
-   edges, and returns a one-line summary. It does **not** write graph files.
+3. **Semantic derivation (bulk).** Read `.claude/amg/work/queue.json`. To see its shape
+   first, run `inspect_queue.py .` (counts by category / subtree / kind). If it is large,
+   split it into batches by subtree with the helper rather than an ad-hoc script:
+   ```bash
+   python .claude/skills/amg-bootstrap/scripts/partition_queue.py .   # -> work/queue-<part>.json
+   ```
+   Then spawn an `amg-builder` subagent per batch **in parallel**, each given its
+   `work/queue-<part>.json` and an output path like `.claude/amg/work/derived-<part>.json`.
+   The subagent reads the queued units, writes summaries (in the configured
+   `working_language` for docs/notes; keep code identifiers verbatim) and local edges,
+   **echoes each unit's `content_sha`** into its output item (so a re-run re-derives only
+   what changed), and returns a one-line summary. It does **not** write graph files.
 
 4. **Apply derivations.** For each produced file, apply it transactionally:
    ```bash
@@ -115,6 +120,11 @@ delegating per-unit reading to subagents.
 ## Scale and safety notes
 - For very large repos, run step 3 as several scoped subagents rather than one; each
   works in its own isolated context so nothing overflows.
+- **Resume after an interrupted run:** if a prior run left `work/derived-*.json`
+  (builders wrote them, but `apply` never ran), apply those FIRST (step 4) before
+  re-running step 2. It is freshness-safe — each item carries its `content_sha`, so
+  `apply` skips any whose source has since changed (they re-queue) and you re-derive
+  only the remainder, not the whole queue.
 - Every write goes through the journal, so an interruption at any point recovers via
   step 1 on the next run.
 - Re-running the whole skill on an unchanged repo is free: extraction is exact and
@@ -129,5 +139,8 @@ delegating per-unit reading to subagents.
 - `scripts/extract_structure.py` — deterministic source → units: classifier +
   chunker registry (python/tree-sitter/markdown/text/json/pdf/docx/xlsx), ignore
   defaults, `--stats` for a classification + extractor-availability summary.
+- `scripts/partition_queue.py` — split `work/queue.json` into `work/queue-<part>.json`
+  batches by subtree (for parallel step 3); `scripts/inspect_queue.py` — a read-only
+  queue summary (counts by category / subtree / kind, units carrying pre-extracted text).
 - Subagents: `../../agents/amg-builder.md`, `../../agents/amg-synth.md`,
   `../../agents/amg-classifier.md` (optional, for ambiguous files).

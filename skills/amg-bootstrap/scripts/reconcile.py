@@ -516,9 +516,12 @@ def apply_derivation(project_root: Path, derivation_path: Path,
                      amg_root: Optional[Path] = None) -> Dict[str, Any]:
     """Apply derivation items to the graph. Two item shapes are supported:
 
-      * update : {id, summary?, lang?, edges?, part_of?, body?} -> update the node
-        with that id. Several items may target the SAME node (e.g. a part_of item
-        plus a supersedes-edge item); each accumulates onto it.
+      * update : {id, summary?, lang?, edges?, part_of?, body?, content_sha?} -> update
+        the node with that id. Several items may target the SAME node (e.g. a part_of
+        item plus a supersedes-edge item); each accumulates onto it. If content_sha is
+        present and no longer equals the node's source_hash (the source changed since
+        the item was derived), the item is SKIPPED (skipped_stale) — resumable
+        derivation never applies a summary built against stale content (task 13).
       * create : {id, type, summary?, lang?, part_of?, edges?, body?} -> when no node
         with that id exists, CREATE it. This is how amg-synth materializes hub /
         overview nodes. Created with source_kind 'synthesized' (not derived_from_file)
@@ -539,7 +542,7 @@ def apply_derivation(project_root: Path, derivation_path: Path,
     weights_cfg = config.get("weights") or {}
     renormalize = bool(weights_cfg.get("part_of_renormalize", True))
     default_w = float(weights_cfg.get("default_edge_weight", 0.5))
-    applied, created, skipped = 0, 0, 0
+    applied, created, skipped, skipped_stale = 0, 0, 0, 0
 
     with store.lock():
         store.recover()
@@ -567,6 +570,16 @@ def apply_derivation(project_root: Path, derivation_path: Path,
                     created += 1
                 else:
                     skipped += 1                          # update for an unknown id
+                continue
+            # Resumable derivation (task 13): a derived item echoes the content_sha it was
+            # built from. If the source changed since (the node's source_hash moved on),
+            # applying it would attach a summary for STALE content AND mark the node derived
+            # for the NEW hash — a blind stale derivation. Skip it; the node stays stale and
+            # the next reconcile re-queues it. Only for source-derived nodes (synthesized/
+            # authored carry source_hash null -> no check, so a leftover hub item still applies).
+            isha = item.get("content_sha")
+            if isha and node.get("source_hash") and isha != node["source_hash"]:
+                skipped_stale += 1
                 continue
             # existing node: read _path/_body WITHOUT popping, so repeated items on
             # the same node accumulate instead of losing the path on the second pass.
@@ -596,7 +609,8 @@ def apply_derivation(project_root: Path, derivation_path: Path,
                 "reconcile",
                 f"apply: applied={applied} created={created} skipped={skipped}", txid)
 
-    return {"applied": applied, "created": created, "skipped_missing": skipped}
+    return {"applied": applied, "created": created, "skipped_missing": skipped,
+            "skipped_stale": skipped_stale}
 
 
 def _merge_part_of(existing: List[Dict[str, Any]], incoming: List[Dict[str, Any]],

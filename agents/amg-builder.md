@@ -48,12 +48,17 @@ For each unit:
 
 ## Output (the only thing you write to the graph layer)
 Write a JSON array to the given output path. Do **not** edit node files yourself —
-the driver applies your output transactionally so it is crash-safe.
+the driver applies your output transactionally so it is crash-safe. **Echo each
+unit's `content_sha` verbatim** into its item: the driver uses it to skip an item
+whose source changed since you derived it (resumable derivation — it never applies a
+summary built against stale content), so a crash between your write and the apply
+loses no correctness and re-derives only what actually changed, not the whole queue.
 
 ```json
 [
   {
     "id": "code:src/db/pool.py::get_conn",
+    "content_sha": "<echo the unit's content_sha verbatim>",
     "summary": "<1–3 sentences in working_language>",
     "lang": "ru",
     "edges": [

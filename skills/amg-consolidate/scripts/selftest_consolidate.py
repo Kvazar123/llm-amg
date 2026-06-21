@@ -135,6 +135,30 @@ def test_plan(proj):
     print(f"PASS  plan: detected over-budget branch (members > budget)")
 
 
+def test_near_dup_scope(proj):
+    """near_duplicates is restricted to episodic, non-source-derived nodes (§1.27):
+    two source-derived code nodes with identical summaries are NOT flagged (merging
+    them is futile — reconcile recreates them), while two authored notes ARE."""
+    amg = proj / ".claude" / "amg"
+    store = gs.GraphStore(amg)
+    dup = "identical duplicate summary text for the near dup scope test"
+    write_node(store, "code:nd/a.py::f", "code",
+               {"type": "function", "source_kind": "derived_from_file", "summary": dup})
+    write_node(store, "code:nd/b.py::g", "code",
+               {"type": "function", "source_kind": "derived_from_file", "summary": dup})
+    write_node(store, "notes:nd/a", "notes",
+               {"type": "note", "source_kind": "authored", "summary": dup})
+    write_node(store, "notes:nd/b", "notes",
+               {"type": "note", "source_kind": "authored", "summary": dup})
+    C.make_plan(proj)
+    plan = json.loads((amg / "work" / "consolidation-plan.json").read_text())
+    pairs = {frozenset((d["a"], d["b"])) for d in plan["near_duplicates"]}
+    assert frozenset(("notes:nd/a", "notes:nd/b")) in pairs, "episodic notes must be flagged"
+    assert frozenset(("code:nd/a.py::f", "code:nd/b.py::g")) not in pairs, \
+        "source-derived code nodes must NOT be near-dup candidates"
+    print("PASS  near-dup: candidates restricted to episodic non-derived nodes (§1.27)")
+
+
 def test_apply_and_recall(proj):
     amg = proj / ".claude" / "amg"
     store = gs.GraphStore(amg)
@@ -531,6 +555,7 @@ if __name__ == "__main__":
     try:
         test_weights(proj)
         test_plan(proj)
+        test_near_dup_scope(proj)
         test_apply_and_recall(proj)
         test_protect_and_force(proj)
         test_centrality_protect()
