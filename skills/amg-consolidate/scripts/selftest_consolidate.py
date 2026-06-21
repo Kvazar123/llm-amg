@@ -76,52 +76,63 @@ def gold_recall(proj, amg):
 # --------------------------------------------------------------------------- #
 
 def test_weights(proj):
-    """apply_hebbian off (default) only accumulates coact; on reinforces/decays/prunes."""
+    """The improved rule (Stage 14). off (default): only accumulate coact, w untouched,
+    usage.log left intact. on: an edge CO-USED in an accepted session is REWARDED by the
+    discriminative headroom rate*(1-w); an edge merely SURFACED (co-activation) but not
+    used DECAYS (and prunes if it falls below threshold); an edge neither surfaced nor
+    used is UNTOUCHED; usage.log is consumed (archived)."""
     amg = proj / ".claude" / "amg"
     store = gs.GraphStore(amg)
     cfg_path = amg / "config.yml"
     original_cfg = cfg_path.read_text(encoding="utf-8")
+    work = store.root / "work"
+    work.mkdir(exist_ok=True)
 
-    cc, ct = "code:src/billing.py::charge_card", "code:src/billing.py::compute_total"
-    # a faded, un-coactivated edge that WOULD be pruned if decay ran (0.04 - 0.02 < 0.05)
-    edit_node(store, ct, lambda n: n.__setitem__(
-        "edges", [{"rel": "relates_to", "to": "code:src/auth.py::login", "w": 0.04, "coact": 0}]))
-    pair = [cc, ct]
+    # A source node with three edges: A (will be co-used -> reward), B (surfaced but
+    # unused -> decay/prune; starts low so one decay prunes it), C (neither -> untouched).
+    src = "notes:wtest/src"
+    A, Bn, Cn = "notes:wtest/a", "notes:wtest/b", "notes:wtest/c"
+    write_node(store, src, "notes", {"type": "note", "summary": "weights test source",
+        "edges": [{"rel": "relates_to", "to": A, "w": 0.5, "coact": 0},
+                  {"rel": "relates_to", "to": Bn, "w": 0.06, "coact": 0},
+                  {"rel": "relates_to", "to": Cn, "w": 0.5, "coact": 0}]})
+    for t in (A, Bn, Cn):
+        write_node(store, t, "notes", {"type": "note", "summary": t})
 
-    def write_log():
-        (store.root / "work").mkdir(exist_ok=True)
-        (store.root / "work" / "coactivation.log").write_text(
-            "".join(json.dumps({"coactivated": [pair]}) + "\n" for _ in range(3)))
+    def write_logs():
+        (work / "coactivation.log").write_text(           # A and B are surfaced together
+            json.dumps({"coactivated": [[src, A], [src, Bn]]}) + "\n")
+        (work / "usage.log").write_text(                  # only A is co-used (accepted)
+            json.dumps({"outcome": "completed", "used": [src, A]}) + "\n")
 
-    w_before = edge_of(store, cc, ct)["w"]
-
-    # Phase 1 — default (apply_hebbian off): coact ACCUMULATES, w untouched, no prune;
-    # the journal is still rotated (the signal is consumed into coact).
-    write_log()
+    # Phase 1 — off (default): coact accumulates on the surfaced edges, w untouched,
+    # coactivation rotated, usage.log left intact (it is the substrate, read only when on).
+    write_logs()
     res = C.fold_weights(proj)
     assert res["hebbian_applied"] is False, res
-    e = edge_of(store, cc, ct)
-    assert e["coact"] == 3, "coact must accumulate even with hebbian off"
-    assert e["w"] == w_before, "w must NOT change while apply_hebbian is off"
-    assert abs(edge_of(store, "code:src/billing.py", cc)["w"] - 1.0) < 1e-9, "no decay when off"
-    assert edge_of(store, ct, "code:src/auth.py::login") is not None, "no prune when off"
-    assert not (store.root / "work" / "coactivation.log").exists(), "log rotated (signal consumed)"
+    assert edge_of(store, src, A)["coact"] == 1 and edge_of(store, src, Bn)["coact"] == 1
+    assert edge_of(store, src, A)["w"] == 0.5 and edge_of(store, src, Bn)["w"] == 0.06, "w untouched off"
+    assert not (work / "coactivation.log").exists(), "coactivation rotated (consumed)"
+    assert (work / "usage.log").exists(), "usage.log left intact while off (substrate)"
 
-    # Phase 2 — apply_hebbian on: reinforcement + decay + prune apply.
+    # Phase 2 — on: A rewarded (headroom), B surfaced-unused -> decays below prune, C untouched.
     cfg_path.write_text(original_cfg + "\nweights:\n  apply_hebbian: true\n", encoding="utf-8")
     try:
-        write_log()
+        write_logs()
         res = C.fold_weights(proj)
         assert res["hebbian_applied"] is True, res
-        r = edge_of(store, cc, ct)
-        assert r["w"] > w_before, "co-activated edge should strengthen when on"
-        assert r["coact"] == 6, "coact keeps accumulating across folds"
-        assert abs(edge_of(store, "code:src/billing.py", cc)["w"] - 0.98) < 1e-6, "unused edge decays"
-        assert edge_of(store, ct, "code:src/auth.py::login") is None, "faded edge pruned when on"
+        assert res["rewarded_edges"] == 1 and res["decayed_edges"] == 1, res
+        wa = edge_of(store, src, A)["w"]
+        assert abs(wa - 0.55) < 1e-6, ("reward = 0.5 + 0.1*(1-0.5)", wa)
+        assert edge_of(store, src, Bn) is None, "surfaced-unused faded edge pruned (0.06-0.02<0.05)"
+        assert edge_of(store, src, Cn)["w"] == 0.5, "neither surfaced nor used -> untouched"
+        assert not (work / "usage.log").exists(), "usage.log consumed when the rule applies"
+        assert list((store.root / "archive").glob("usage-*.log")), "usage.log archived"
     finally:
         cfg_path.write_text(original_cfg, encoding="utf-8")
-    assert list((store.root / "archive").glob("coactivation-*.log")), "rotated log archived"
-    print("PASS  weights: hebbian off accumulates coact only; on reinforces + decays + prunes")
+    assert list((store.root / "archive").glob("coactivation-*.log")), "rotated coactivation archived"
+    print("PASS  weights: off accumulates coact only; on = outcome reward (headroom) + "
+          "exposure decay/prune; untouched edge stable; usage consumed")
 
 
 def test_plan(proj):
@@ -507,10 +518,14 @@ def test_gate_robust():
 
 
 def test_hebbian_demo():
-    """Mechanism correctness (NOT a default-on justification): a gold node behind a WEAK
-    edge is missed with static weights (hop-recall 0) and recovered after folding a
-    co-activation journal with apply_hebbian on (hop-recall 1). Negative control: on the
-    hand-optimal demo weights, Hebbian folding must not reduce recall."""
+    """Mechanism correctness of the improved rule (NOT a default-on justification): a gold
+    node behind a WEAK edge is missed with static weights (hop-recall 0) and recovered when
+    the CO-USED pair is recorded in usage.log (outcome-gated reward) while the unused sibling
+    is only surfaced in coactivation.log (decays) — apply_hebbian on (hop-recall 1). Negative
+    control: on the hand-optimal demo weights, the rule must not reduce recall."""
+    seed = "code:src/jobs.py::nightly_charge"
+    gold = "notes:decisions/backoff"
+    sib = "code:src/jobs.py::send_receipt"
     # positive control
     proj = Path(tempfile.mkdtemp(prefix="amg-heb-"))
     amg = proj / ".claude" / "amg"
@@ -519,19 +534,24 @@ def test_hebbian_demo():
         cases = E.build_hebbian_demo(amg)
         off = E.run(amg, cases, R.load_config(amg))["aggregate"]
         assert off["amg"]["hop_recall"] == 0.0, off       # weak edge: gold not reached
-        (amg / "work").mkdir(exist_ok=True)
-        pair = ["code:src/jobs.py::nightly_charge", "notes:decisions/backoff"]
-        (amg / "work" / "coactivation.log").write_text(
-            "".join(json.dumps({"coactivated": [pair]}) + "\n" for _ in range(5)))
+        work = amg / "work"
+        work.mkdir(exist_ok=True)
         cp = amg / "config.yml"
         cp.write_text(cp.read_text() + "weights:\n  apply_hebbian: true\n", encoding="utf-8")
-        assert C.fold_weights(proj)["hebbian_applied"] is True
+        applied = False
+        for _ in range(5):                                 # each fold consumes the logs
+            (work / "coactivation.log").write_text(        # both edges surfaced
+                json.dumps({"coactivated": [[seed, gold], [seed, sib]]}) + "\n")
+            (work / "usage.log").write_text(               # only seed+gold co-USED (accepted)
+                json.dumps({"outcome": "completed", "used": [seed, gold]}) + "\n")
+            applied = C.fold_weights(proj)["hebbian_applied"] or applied
+        assert applied is True
         on = E.run(amg, cases, R.load_config(amg))["aggregate"]
-        assert on["amg"]["hop_recall"] == 1.0, on          # folded journal recovered it
+        assert on["amg"]["hop_recall"] == 1.0, on          # reward recovered it; sibling faded
     finally:
         shutil.rmtree(proj, ignore_errors=True)
 
-    # negative control: Hebbian must not hurt recall on already-good weights
+    # negative control: the rule must not hurt recall on already-good weights
     proj2 = Path(tempfile.mkdtemp(prefix="amg-negheb-"))
     amg2 = proj2 / ".claude" / "amg"
     amg2.mkdir(parents=True)
@@ -539,7 +559,10 @@ def test_hebbian_demo():
         cases2 = E.build_demo_store(amg2)
         before = E.run(amg2, cases2, R.load_config(amg2))["aggregate"]["amg"]["recall"]
         R.retrieve(amg2, cases2[0]["query"], config=R.load_config(amg2),
-                   write_pack=False, log_coactivation=True)       # generate a real journal
+                   write_pack=False, log_coactivation=True)       # real co-activation (exposure)
+        (amg2 / "work").mkdir(exist_ok=True)
+        (amg2 / "work" / "usage.log").write_text(                  # reward the (already strong) gold
+            json.dumps({"outcome": "completed", "used": cases2[0]["gold_ids"]}) + "\n")
         cp2 = amg2 / "config.yml"
         cp2.write_text(cp2.read_text() + "weights:\n  apply_hebbian: true\n", encoding="utf-8")
         C.fold_weights(proj2)
@@ -547,7 +570,8 @@ def test_hebbian_demo():
         assert after >= before, (before, after)
     finally:
         shutil.rmtree(proj2, ignore_errors=True)
-    print("PASS  hebbian: weak-edge gold recovered off->on (hop 0->1); good weights keep recall")
+    print("PASS  hebbian: weak-edge gold recovered off->on (hop 0->1) via usage reward; "
+          "good weights keep recall")
 
 
 if __name__ == "__main__":

@@ -115,8 +115,9 @@ def case_usage_and_consume(proj: Path) -> None:
 
 
 def case_separation(proj: Path) -> None:
-    """usage.log is a different file from coactivation.log, and the weight fold (which
-    rotates coactivation.log) leaves usage.log intact — consolidate does not read it."""
+    """usage.log is a different file from coactivation.log, and the weight fold here (with
+    apply_hebbian OFF, the default) leaves usage.log intact — the rule reads/consumes it
+    only when enabled, so the substrate accrues until then (Stage 14)."""
     amg = amg_of(proj)
     usage = amg / "work" / "usage.log"
     assert usage.exists(), "precondition: usage.log written by the prior case"

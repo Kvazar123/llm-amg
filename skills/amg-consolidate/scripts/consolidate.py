@@ -4,9 +4,14 @@ consolidate.py — close the AMG memory loop. Crash-safe & idempotent.
 
 Three jobs, mirroring how memory is maintained:
 
-  weights : fold the co-activation log into edge weights (Hebbian reinforcement +
-            passive decay + pruning + part_of renormalization). Fully deterministic,
-            no LLM. "What fires together wires together; what is unused fades."
+  weights : fold edge weights from the OUTCOME signal — outcome-gated, discriminative
+            Hebbian reinforcement + exposure-gated decay + pruning + part_of
+            renormalization. Fully deterministic, no LLM. Reinforce an edge only when
+            both endpoints were USED in an accepted session (work/usage.log — a signal
+            from OUTSIDE the retrieval loop, so it does not self-confirm like blind
+            co-activation, §8.1); fade an edge that was merely surfaced in a pack
+            (work/coactivation.log) but never used. "What helps the task wires together;
+            what is shown but unused fades."
 
   plan    : analyze the graph and emit a work plan for the consolidator subagent:
             per-branch budget overflow (what to compact, in staged order),
@@ -50,7 +55,7 @@ import tempfile
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 
 # Import the crash-safe store from the bootstrap skill (fixed relative layout).
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "amg-bootstrap" / "scripts"))
@@ -65,14 +70,28 @@ except ImportError:                                        # pragma: no cover
 FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n?(.*)$", re.DOTALL)
 WORD_RE = re.compile(r"\w+", re.UNICODE)   # Unicode: must match non-Latin scripts too
 
+# Outcome buckets for work/usage.log records (Stage 14). The improved Hebbian rule is
+# OUTCOME-GATED: it reinforces an edge only when both endpoints were USED in a session
+# with an ACCEPTED outcome (its source was edited and the work landed). That signal comes
+# from OUTSIDE the retrieval loop — what the human did with the node — so reinforcing by it
+# does NOT self-confirm like blind co-activation (§8.1). A REVERTED outcome weakens instead.
+# The pipeline emits only `completed` today; accept/merge and revert are forward-compatible
+# (auto-detecting a revert needs git/test integration — a later refinement).
+USAGE_ACCEPTED = {"completed", "accepted", "merged"}
+USAGE_REVERTED = {"reverted"}
+
 DEFAULTS = {
     "hebbian_rate": 0.10, "decay_rate": 0.02, "prune_below": 0.05,
     "part_of_renormalize": True, "default_edge_weight": 0.5,
-    # Hebbian weight updates are OFF by default: the co-activation signal is partly
-    # circular (PPR weights -> pack -> co-activated pairs -> the same weights), so
-    # `weights` only ACCUMULATES coact (which feeds salience) until an eval on/off
-    # comparison proves the updates help retrieval (roadmap task 14). Flip on via
-    # weights.apply_hebbian once measured.
+    # Hebbian weight updates are OFF by default until a measured uplift (roadmap task 14).
+    # The rule is OUTCOME-GATED + DISCRIMINATIVE — NOT the old blind co-activation rule,
+    # which measurably HURT recall on a sparse graph (the "highways" effect, §8.1/§8.2):
+    #   * reinforce an edge only when both endpoints were USED in an accepted session
+    #     (work/usage.log, the non-circular signal), by the discriminative headroom
+    #     hebbian_rate*(1-w) so an already-strong edge does not run to the ceiling;
+    #   * an edge merely surfaced in a pack (co-activation) but NOT used FADES by decay_rate
+    #     — this demotes the highways instead of strengthening them.
+    # While off, `weights` only ACCUMULATES coact (which feeds salience) and leaves w alone.
     "apply_hebbian": False,
     "compaction": {
         "enabled": True,
@@ -189,8 +208,46 @@ def _toklen(text: str) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# weights: Hebbian + decay + prune + renormalize
+# weights: outcome-gated reinforcement + exposure-gated decay + prune + renormalize
 # --------------------------------------------------------------------------- #
+
+def _usage_pairs(amg_root: Path) -> Tuple[Set[FrozenSet[str]], Set[FrozenSet[str]], bool]:
+    """Read work/usage.log into (reward_pairs, punish_pairs, present).
+
+    A reward pair is any unordered pair of nodes CO-USED in an ACCEPTED session (their
+    source was edited and the work landed); a punish pair is the same in a REVERTED
+    session. This is the OUTCOME-GATED signal that drives the improved Hebbian rule — it
+    comes from outside the retrieval loop (what the human did), so reinforcing by it does
+    not self-confirm like the circular co-activation signal (§8.1 / THEORY §15.5). The
+    journal is written by lifecycle.session-end (Stage 13). `present` is True whenever the
+    log exists, so the caller can consume it after folding even if no record carried an
+    actionable outcome."""
+    path = amg_root / "work" / "usage.log"
+    reward: Set[FrozenSet[str]] = set()
+    punish: Set[FrozenSet[str]] = set()
+    if not path.exists():
+        return reward, punish, False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        outcome = str(rec.get("outcome", "")).lower()
+        if outcome in USAGE_ACCEPTED:
+            bucket = reward
+        elif outcome in USAGE_REVERTED:
+            bucket = punish
+        else:
+            continue
+        used = sorted({u for u in rec.get("used", []) if isinstance(u, str)})
+        for i in range(len(used)):
+            for j in range(i + 1, len(used)):
+                bucket.add(frozenset((used[i], used[j])))
+    return reward, punish, True
+
 
 def fold_weights(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
     amg = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
@@ -201,6 +258,10 @@ def fold_weights(project_root: Path, amg_root: Optional[Path] = None) -> Dict[st
     default_w = cfg["default_edge_weight"]
     apply_hebbian = bool(cfg.get("apply_hebbian", False))
 
+    # Exposure signal (co-activation): which edges were SURFACED together in a pack. It
+    # always feeds the coact counter (salience) and, when the rule is on, marks an edge as
+    # "considered" so a surfaced-but-unused edge fades (demoting highways). It is NOT used
+    # to reinforce — that was the circular blind rule that hurt recall (§8.1/§8.2).
     log_path = store.root / "work" / "coactivation.log"
     pair_counts: Dict[Tuple[str, ...], int] = defaultdict(int)
     if log_path.exists():
@@ -214,19 +275,30 @@ def fold_weights(project_root: Path, amg_root: Optional[Path] = None) -> Dict[st
                 continue
             for u, v in rec.get("coactivated", []):
                 pair_counts[tuple(sorted((u, v)))] += 1
-    max_co = max(pair_counts.values()) if pair_counts else 1
-    # Touch w (decay + reinforcement + prune) ONLY when Hebbian updates are enabled
-    # AND a new co-activation journal exists. Otherwise just ACCUMULATE coact (which
-    # feeds salience) and leave w alone: the signal is partly circular, so weight
-    # updates stay off until eval proves them (task 14); tying decay to the journal's
-    # presence also makes a no-signal re-run a w-no-op (audit 1.9 idempotency).
-    update_w = apply_hebbian and bool(pair_counts)
+
+    # Outcome signal (usage): co-used pairs from accepted / reverted sessions. Read ONLY
+    # when the rule is on, so the default-off path never touches usage.log — it keeps
+    # accumulating as the substrate and selftest_usage's separation holds.
+    reward_pairs: Set[FrozenSet[str]] = set()
+    punish_pairs: Set[FrozenSet[str]] = set()
+    usage_present = False
+    if apply_hebbian:
+        reward_pairs, punish_pairs, usage_present = _usage_pairs(store.root)
+
+    # Touch w ONLY when the rule is on AND there is an OUTCOME signal to learn from.
+    # Without usage a read-only period teaches nothing about usefulness, so weights stay
+    # frozen (idempotent re-run; audit 1.9). The reinforcement is outcome-gated +
+    # discriminative (headroom (1-w)), the decay is exposure-gated — together they invert
+    # the blind rule's highway effect: productive edges strengthen with diminishing
+    # returns, surfaced-but-unused edges fade (§8.1/§8.2).
+    update_w = apply_hebbian and bool(reward_pairs or punish_pairs)
 
     with store.lock():
         store.recover()
         nodes = load_nodes(store)
         tx = store.transaction()
         changed = 0
+        rewarded = punished = decayed = 0
 
         def co_for(u: str, v: str) -> int:
             return pair_counts.get(tuple(sorted((u, v))), 0)
@@ -242,13 +314,23 @@ def fold_weights(project_root: Path, amg_root: Optional[Path] = None) -> Dict[st
                     kept.append(e)
                     continue
                 co = co_for(nid, e["to"])
-                if co > 0:                                # accumulate the signal ALWAYS
+                if co > 0:                                # accumulate exposure ALWAYS (salience)
                     e["coact"] = int(e.get("coact", 0)) + co
                     touched = True
                 if update_w:
-                    w = float(e.get("w", default_w)) - lam    # passive decay
-                    if co > 0:                                # Hebbian reinforcement
-                        w += eta * (co / max_co)
+                    pairkey = frozenset((nid, e["to"]))
+                    is_reward = pairkey in reward_pairs
+                    is_punish = pairkey in punish_pairs
+                    w = float(e.get("w", default_w))
+                    if is_reward:                         # outcome reward: discriminative headroom
+                        w += eta * (1.0 - w)
+                        rewarded += 1
+                    if is_punish:                         # negative outcome: weaken proportionally
+                        w -= eta * w
+                        punished += 1
+                    if co > 0 and not is_reward and not is_punish:
+                        w -= lam                          # surfaced but unused -> fade (anti-highway)
+                        decayed += 1
                     w = max(0.0, min(1.0, w))
                     e["w"] = round(w, 4)
                     touched = True
@@ -258,7 +340,7 @@ def fold_weights(project_root: Path, amg_root: Optional[Path] = None) -> Dict[st
             if kept != edges:
                 node["edges"] = kept
                 touched = True
-            # renormalize part_of so memberships sum to <= 1
+            # renormalize part_of so memberships sum to <= 1 (always; an invariant)
             if cfg["part_of_renormalize"] and node.get("part_of"):
                 s = sum(float(p.get("w", 0)) for p in node["part_of"] if isinstance(p, dict))
                 if s > 1.0:
@@ -270,21 +352,29 @@ def fold_weights(project_root: Path, amg_root: Optional[Path] = None) -> Dict[st
                 tx.write(node["_path"], serialize(node, node["_body"]))
                 changed += 1
 
-        # rotate the co-activation log into the archive (auditable, then cleared)
+        # rotate the consumed signals into the archive (auditable, then cleared)
         if log_path.exists() and pair_counts:
             arch = f"{cfg['compaction']['archive_dir']}/coactivation-{int(time.time())}.log"
             tx.write(arch, log_path.read_text(encoding="utf-8"))
             tx.delete("work/coactivation.log")
+        usage_path = store.root / "work" / "usage.log"
+        if apply_hebbian and usage_present and usage_path.exists():
+            arch = f"{cfg['compaction']['archive_dir']}/usage-{int(time.time())}.log"
+            tx.write(arch, usage_path.read_text(encoding="utf-8"))
+            tx.delete("work/usage.log")
 
         txid = tx.commit()
         if txid:
             _refresh_index(store.root, tx)     # warm the read-index under the lock
         _log(store, f"weights folded: apply_hebbian={update_w}, "
-                    f"{len(pair_counts)} co-activated pairs, {changed} nodes updated", txid)
+                    f"{len(pair_counts)} co-activated pairs, "
+                    f"{rewarded} rewarded / {punished} punished / {decayed} decayed edges, "
+                    f"{changed} nodes updated", txid)
 
     write_digest(project_root, amg)         # refresh the always-on digest post-fold
     return {"coact_pairs": len(pair_counts),
-            "reinforced_edges": len(pair_counts) if update_w else 0,
+            "reward_pairs": len(reward_pairs), "punish_pairs": len(punish_pairs),
+            "rewarded_edges": rewarded, "punished_edges": punished, "decayed_edges": decayed,
             "nodes_updated": changed, "hebbian_applied": update_w}
 
 

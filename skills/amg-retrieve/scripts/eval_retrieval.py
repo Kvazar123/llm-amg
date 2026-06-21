@@ -310,10 +310,11 @@ def build_hebbian_demo(root: Path) -> List[Dict[str, Any]]:
     """A POSITIVE control for Hebbian weight folding, kept separate from the other
     demos. A gold node is reachable ONLY through a WEAK structural edge that competes
     against a stronger sibling edge and lexical distractors, so with static weights it
-    loses its top-K / pack slot (hop-recall 0). Replaying a co-activation journal for
-    that pair and folding with `weights.apply_hebbian: true` strengthens the weak edge
-    enough to recover the node (hop-recall 1) — the off→on flip isolates exactly what
-    Hebbian conductance learning adds (analogous to build_embeddings_demo 0→1).
+    loses its top-K / pack slot (hop-recall 0). Recording the CO-USED pair in usage.log
+    (an accepted outcome) while the unused sibling is only surfaced in coactivation.log,
+    then folding with `weights.apply_hebbian: true`, reinforces the weak edge (outcome-
+    gated reward) and fades the sibling enough to recover the node (hop-recall 1) — the
+    off→on flip isolates exactly what Hebbian conductance learning adds (cf. build_embeddings_demo 0→1).
 
     This proves the MECHANISM is correct; it does NOT justify turning the default on —
     a hand-built graph would always flatter Hebb. The default `apply_hebbian: false`

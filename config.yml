@@ -194,14 +194,17 @@ retrieval:
 # -----------------------------------------------------------------------------
 weights:
   default_edge_weight: 0.5        # starting weight for a semantic edge with no explicit w
-  hebbian_rate: 0.10
-  decay_rate: 0.02
+  hebbian_rate: 0.10              # reward strength: a co-used edge grows by rate*(1-w) (headroom)
+  decay_rate: 0.02               # a surfaced-but-unused edge fades by this each fold
   prune_below: 0.05
   part_of_renormalize: true
-  # Hebbian weight updates are OFF until an eval on/off comparison proves they help:
-  # the co-activation signal is partly circular (weights -> pack -> pairs -> weights),
-  # so `consolidate.py weights` only ACCUMULATES coact (which feeds salience) and
-  # leaves w untouched while this is false. Flip on after measuring the uplift.
+  # Hebbian weight updates are OFF until a measured uplift. The rule is OUTCOME-GATED +
+  # DISCRIMINATIVE (Stage 14), NOT blind co-activation (which measurably hurt recall —
+  # the "highways" effect): it reinforces an edge only when both endpoints were USED in an
+  # accepted session (work/usage.log, the non-circular signal) by the headroom rate*(1-w)
+  # so a strong edge does not run to the ceiling, and FADES an edge merely surfaced in a
+  # pack but not used. While false, `consolidate.py weights` only ACCUMULATES coact (which
+  # feeds salience) and leaves w untouched. Flip on after measuring the uplift.
   apply_hebbian: false
 
 # -----------------------------------------------------------------------------

@@ -322,11 +322,14 @@ def _record_usage(project_root: Path, amg: Path, edited_raw: List[str],
     (work/pack-log.jsonl, written by retrieve) and append the USED nodes + a coarse outcome
     to work/usage.log. `used` is the non-circular signal — a node whose source was actually
     EDITED, not merely retrieved — so it is kept SEPARATE from the blind coactivation.log.
-    consolidate does NOT read it yet; Stage 14's improved Hebbian rule will. The pack log
-    is session-scoped, so it is consumed (cleared) here.
+    The improved Hebbian rule (consolidate.fold_weights, Stage 14) reinforces co-used edges
+    from this log when apply_hebbian is on (consuming it); with the default off it accrues.
+    The pack log is session-scoped, so it is consumed (cleared) here.
 
     Outcome is COARSE: reaching session-end means no crash, and editing pack-pointed files
-    means work landed -> `completed`. True accept / merge / revert is refined in Stage 14.
+    means work landed -> `completed` (an ACCEPTED outcome the weight rule rewards). True
+    accept / merge / revert detection (a REVERTED outcome would weaken) needs git/test
+    integration — a later refinement; the rule already handles a `reverted` record.
     No-op without a pack log; records nothing when no edit hit a pack node. In an agent
     environment without the SessionEnd transcript there are no edited files to attribute
     (the portable fallback is capturing notes as you go)."""
@@ -405,13 +408,17 @@ def session_end(project_root: Path, amg: Path, transcript_path: Optional[str] = 
     cfg = _read_config(amg)
     if not (_is_active(cfg) and _automation_on(cfg)):
         return {"skipped": "amg inactive or automation off"}
-    weights = co.fold_weights(project_root, amg)
-    digest = co.write_digest(project_root, amg)
+    # Order matters: dump the transcript, RECORD usage, THEN fold weights — so this
+    # session's outcome (work/usage.log) is available to the fold. The improved Hebbian
+    # rule reinforces co-used edges from usage.log (consuming it when apply_hebbian is on);
+    # with the default apply_hebbian off the fold leaves usage.log untouched (it accrues).
     session = _dump_session(project_root, amg, cfg, transcript_path, reason)
     # Attribute usage: the files this session edited (popped off the dump result so the
     # long list does not bloat the return) crossed with the packs retrieve logged.
     edited = session.pop("edited", []) if isinstance(session, dict) else []
     usage = _record_usage(project_root, amg, edited, reason)
+    weights = co.fold_weights(project_root, amg)
+    digest = co.write_digest(project_root, amg)
     return {"action": "session-end", "weights": weights, "digest": digest,
             "session": session, "usage": usage}
 
