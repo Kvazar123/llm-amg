@@ -28,13 +28,20 @@
   var LINKS_RAW = (DATA.links || []).map(function (l) { return Object.assign({}, l); });
   var META = DATA.meta || {};
 
-  // ---- palettes ----------------------------------------------------------------
+  // ---- CONFIG: look + behavior in one place ------------------------------------
   var BUCKET_COLOR = { code: "#4aa3ff", doc: "#37c98b", data: "#f0b429",
                        notes: "#b48ef0", _hubs: "#ff7a45" };
   var STATUS_COLOR = { superseded: "#7a8699", disputed: "#f59e0b", rejected: "#ef4444" };
   var CONFLICT_RELS = { contradicts: 1, supersedes: 1 };
   var DEFAULT_NODE = "#9aa5b8";
-  var LARGE_THRESHOLD = (META.large_graph_nodes | 0) || 1500;
+  // render quality -> [nodeResolution, linkResolution] (sphere / tube smoothness vs cost)
+  var QUALITY = { high: [16, 12], medium: [10, 8], low: [6, 4] };
+  var AUTO_BANDS = [[300, "high"], [1500, "medium"]];   // by on-screen node count; else low
+
+  // ---- settings from config.yml (meta.viewer): a few AMG keys + raw passthrough ---
+  var VCFG = META.viewer || {};
+  var LARGE_THRESHOLD = num(VCFG.large_graph_nodes, 1500);
+  var qualityMode = VCFG.quality || "auto";             // auto | high | medium | low
 
   // ---- indexes -----------------------------------------------------------------
   var byId = {};
@@ -52,7 +59,7 @@
     status: setFromList(keysOf(META.statuses)),
     bucket: setFromList(keysOf(META.buckets)),
   };
-  var minW = 0;
+  var minW = clamp01(num(VCFG.min_edge_weight, 0));
   var term = "";
   var clusterMode = false;                        // color by cluster (group) vs by bucket
   var largeMode = NODES.length > LARGE_THRESHOLD;
@@ -157,9 +164,40 @@
     .onNodeClick(onNodeClick)
     .onBackgroundClick(function () { closePanel(); });
 
+  // raw config.yml `viewer.options` -> applied verbatim (each key a ForceGraph3D method),
+  // so config.yml can set any library option without AMG enumerating them. Bad key/value
+  // is ignored, never breaking the viewer. Applied here as a baseline; quality owns
+  // node/link resolution below, so set smoothness via `quality`, not options.
+  (function applyOptions() {
+    var opts = VCFG.options || {};
+    Object.keys(opts).forEach(function (k) {
+      try { if (typeof Graph[k] === "function") Graph[k](opts[k]); } catch (e) { /* ignore */ }
+    });
+  })();
+
+  var shownCount = 0, lastQ = null;
+  function qualityRes(count) {
+    var lvl = qualityMode;
+    if (lvl === "auto") {
+      lvl = "low";
+      for (var i = 0; i < AUTO_BANDS.length; i++) {
+        if (count < AUTO_BANDS[i][0]) { lvl = AUTO_BANDS[i][1]; break; }
+      }
+    }
+    return QUALITY[lvl] || QUALITY.medium;
+  }
+  function applyQuality(count) {                   // smoother when few nodes, cheaper when many
+    var q = qualityRes(count), key = q.join("x");
+    if (key === lastQ) return;                     // rebuild geometry only when the band changes
+    lastQ = key;
+    Graph.nodeResolution(q[0]).linkResolution(q[1]);
+  }
+
   function refresh() {
     var d = currentData();
     Graph.graphData({ nodes: d.nodes, links: d.links });
+    shownCount = d.nodes.length;
+    applyQuality(shownCount);
     setMeta(d.nodes.length, d.links.length);
     document.getElementById("empty").style.display = NODES.length ? "none" : "flex";
   }
@@ -203,8 +241,11 @@
         var to = known
           ? '<a data-go="' + esc(e.to) + '">' + esc(e.to) + "</a>"
           : '<span style="color:#7a8699">' + esc(e.to) + " (external)</span>";
-        var w = e.w == null ? "" : ' <span style="color:#9aa5b8">w=' + esc(String(e.w)) + "</span>";
-        return '<div class="edge"><span class="rel">' + esc(e.rel || "rel") + "</span>" + to + w + "</div>";
+        var bits = [];                            // w is the (Hebbian-tuned) strength; coact its substrate
+        if (e.w != null) bits.push("w=" + esc(String(e.w)));
+        if (e.coact != null) bits.push("coact=" + esc(String(e.coact)));
+        var mw = bits.length ? ' <span style="color:#9aa5b8">' + bits.join(" · ") + "</span>" : "";
+        return '<div class="edge"><span class="rel">' + esc(e.rel || "rel") + "</span>" + to + mw + "</div>";
       }).join("");
       ew.style.display = "";
     } else { ew.style.display = "none"; }
@@ -248,7 +289,8 @@
       + section("Status", "status", META.statuses, function (k) { return STATUS_COLOR[k]; })
       + section("Type", "type", META.types, null)
       + '<h4>Min edge weight</h4><div class="row"><input type="range" id="minw" min="0" max="1" '
-      + 'step="0.05" value="0"><span id="minw-val" class="count">0.00</span></div>';
+      + 'step="0.05" value="' + minW + '"><span id="minw-val" class="count">' + minW.toFixed(2)
+      + "</span></div>";
     box.querySelectorAll("input[type=checkbox]").forEach(function (cb) {
       cb.addEventListener("change", function () {
         filt[cb.getAttribute("data-dim")][cb.getAttribute("data-key")] = cb.checked;
@@ -274,7 +316,8 @@
       + '<div class="row">' + dot("#3fae9e") + "semantic (documents, depends_on…)</div>"
       + '<div class="row">' + dot("#5b7aa8") + "structural (calls, imports…)</div>"
       + '<div class="row">' + dot("#2f7a55") + "part_of</div>"
-      + '<div class="row">' + dot("#39425a") + "follows</div>";
+      + '<div class="row">' + dot("#39425a") + "follows</div>"
+      + '<div class="row" style="color:#9aa5b8">width = edge weight w (Hebbian-tuned strength)</div>';
     document.getElementById("legend").innerHTML = b;
   }
   function togglePop(id, btn) {
@@ -302,6 +345,14 @@
     clusterBtn.classList.toggle("on", clusterMode);
     Graph.nodeColor(nodeColor);                   // re-apply accessor -> recolor in place
   });
+
+  var qualSel = document.getElementById("quality");
+  if (qualSel) {
+    qualSel.value = qualityMode;                  // reflect the config default
+    qualSel.addEventListener("change", function () {
+      qualityMode = qualSel.value; lastQ = null; applyQuality(shownCount);
+    });
+  }
 
   var largeBtn = document.getElementById("btn-large");
   function syncLargeBtn() { largeBtn.classList.toggle("on", largeMode); largeBtn.textContent = largeMode ? "Show all" : "Large mode"; }
@@ -342,6 +393,8 @@
     });
   }
   function trunc(s, n) { s = String(s); return s.length > n ? s.slice(0, n) + "…" : s; }
+  function num(v, d) { var x = parseFloat(v); return isFinite(x) ? x : d; }
+  function clamp01(x) { return Math.max(0, Math.min(1, x)); }
 
   refresh();
   if (NODES.length) setTimeout(function () { Graph.zoomToFit(800, 50); }, 600);

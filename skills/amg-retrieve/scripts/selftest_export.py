@@ -45,7 +45,13 @@ def _node(root: Path, bucket: str, name: str, fm: str, body: str = "") -> None:
 def _build_fixture(root: Path) -> None:
     """A small graph touching every mapping the exporter must get right."""
     root.mkdir(parents=True, exist_ok=True)
-    (root / "config.yml").write_text("active: true\n", encoding="utf-8")
+    (root / "config.yml").write_text(
+        "active: true\n"
+        "viewer:\n"
+        "  quality: medium\n"
+        "  large_graph_nodes: 50\n"
+        "  options:\n"
+        "    linkOpacity: 0.7\n", encoding="utf-8")
 
     # code: a function carrying the full Stage 13 trust layer + a VALID call, a DANGLING
     # call (target absent), and two part_of memberships (one hub id, one directory).
@@ -98,7 +104,8 @@ def _build_fixture(root: Path) -> None:
           "id: note:old-claim-1111\ntype: note\nstatus: superseded\nsummary: Old fee was 2%.\n")
     _node(root, "notes", "new-0007",
           "id: note:new-claim-2222\ntype: note\nstatus: active\nsummary: Fee is 3%.\n"
-          "edges:\n  - {rel: supersedes, to: note:old-claim-1111, w: 0.3, origin: consolidation}\n")
+          "edges:\n  - {rel: supersedes, to: note:old-claim-1111, w: 0.3, "
+          "coact: 5, origin: consolidation}\n")
     _node(root, "notes", "dispA-0008",
           "id: note:dispA-3333\ntype: note\nstatus: disputed\nsummary: Refund window is 30 days.\n"
           "edges:\n  - {rel: contradicts, to: note:dispB-4444, w: 0.3, origin: consolidation}\n")
@@ -186,11 +193,21 @@ def test_stage14_statuses_and_conflict_edges(root: Path) -> None:
     assert nodes["note:rej-5555"]["status"] == "rejected"
     assert ("note:new-claim-2222", "note:old-claim-1111", "supersedes") in links
     assert ("note:dispA-3333", "note:dispB-4444", "contradicts") in links
+    # the Hebbian substrate rides along on the link (coact), not just w
+    sup = next(lk for lk in data["links"] if lk["rel"] == "supersedes")
+    assert sup.get("coact") == 5, "coact must be carried on the link for the viewer"
     # the meta tallies expose what the filter UI needs
     assert data["meta"]["statuses"].get("disputed") == 2
     assert data["meta"]["rels"].get("contradicts") == 1
     assert set(data["meta"]["buckets"]) == {"code", "doc", "notes", "_hubs"}
     print("PASS  stage14: disputed/rejected/superseded + contradicts/supersedes exported")
+
+
+def test_viewer_config_in_meta(root: Path) -> None:
+    v = E.build_graph_data(root)["meta"]["viewer"]
+    assert v["quality"] == "medium" and v["large_graph_nodes"] == 50, v
+    assert v["options"]["linkOpacity"] == 0.7, "raw 3d-force-graph passthrough must survive verbatim"
+    print("PASS  viewer config: meta.viewer carries AMG keys + raw options passthrough")
 
 
 def test_read_only(root: Path) -> None:
@@ -274,6 +291,7 @@ def main() -> int:
         test_links_and_dangling(root)
         test_part_of_hub_vs_directory(root)
         test_stage14_statuses_and_conflict_edges(root)
+        test_viewer_config_in_meta(root)
         test_read_only(root)
         test_html_self_contained(root)
         test_html_is_default_action(root)

@@ -47,6 +47,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import yaml                                # store config.yml -> meta.viewer (engine dep)
+
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import retrieve as R                       # reuse the same store resolver + frontmatter parser
@@ -101,6 +103,22 @@ def _group_of(meta: Dict[str, Any], bucket: str) -> str:
     return best_topic or bucket or "?"
 
 
+def _viewer_cfg(store: Path) -> Dict[str, Any]:
+    """The store's top-level `viewer:` config block (or {}). A thin friendly layer: a few
+    AMG keys (quality / large_graph_nodes / min_edge_weight) plus a raw `options` map the
+    viewer applies verbatim to 3d-force-graph — so config.yml need not enumerate the
+    library's options. Carried in meta so the inlined HTML honors the user's settings."""
+    f = store / "config.yml"
+    if not f.exists():
+        return {}
+    try:
+        raw = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return {}
+    v = raw.get("viewer") if isinstance(raw, dict) else None
+    return {str(k): val for k, val in v.items()} if isinstance(v, dict) else {}
+
+
 def _tally(values: List[Any]) -> Dict[str, int]:
     """Sorted {value: count}, with None rendered as an em dash. Feeds the viewer's
     filter UI (what types / statuses / buckets / rels actually exist) and the summary."""
@@ -126,8 +144,12 @@ def build_graph_data(store: Path) -> Dict[str, Any]:
                 continue
             to = e.get("to")
             if isinstance(to, str) and to in ids and to != nid:
+                # w is the conductance weight Hebbian learning tunes; coact is the raw
+                # co-activation counter that feeds it — both carried so the viewer can
+                # show edge strength (width) and expose the Hebbian substrate.
                 links.append({"source": nid, "target": to,
                               "rel": e.get("rel", "relates_to"), "w": e.get("w"),
+                              "coact": e.get("coact"), "last_used": e.get("last_used"),
                               "origin": e.get("origin", "semantic")})
                 degree[nid] += 1
                 degree[to] += 1
@@ -166,6 +188,7 @@ def build_graph_data(store: Path) -> Dict[str, Any]:
             "statuses": _tally([n["status"] for n in nodes]),
             "buckets": _tally([n["bucket"] for n in nodes]),
             "rels": _tally([lk["rel"] for lk in links]),
+            "viewer": _viewer_cfg(store),
         },
         "nodes": nodes,
         "links": links,

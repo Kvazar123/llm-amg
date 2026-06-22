@@ -269,3 +269,28 @@ verification:
   warn_on_unverified: true   # the pack flags an unverified code node
   min_confidence_warn: 0.5   # the pack flags a node whose confidence is below this
   default_confidence: 0.7    # confidence for a derived summary the builder left unrated
+
+# -----------------------------------------------------------------------------
+# Graph viewer (Stage 15). `export_graph.py` renders the graph into ONE self-contained
+# offline HTML (no server, no network, read-only). This block is a THIN friendly layer
+# over the vendored 3d-force-graph library:
+#   * the few AMG keys below have short, clear names and AMG meaning;
+#   * `options` is a PASS-THROUGH map applied to the graph VERBATIM — each key is a
+#     ForceGraph3D method name, each value its single argument — so you can set any
+#     library option WITHOUT AMG enumerating them here. Full list of option keys:
+#     https://github.com/vasturiano/3d-force-graph#api-reference
+# All keys are optional; omit the block to use the defaults shown.
+# -----------------------------------------------------------------------------
+viewer:
+  quality: auto              # auto | high | medium | low — node/edge smoothness.
+                             # auto raises quality when fewer nodes are on screen and
+                             # lowers it on big graphs (controls node + link resolution).
+  large_graph_nodes: 1500    # above this many nodes, start in large-graph mode: show
+                             # hubs + their neighbors and expand a node's neighborhood
+                             # on click, so a big graph is explorable, not a hairball.
+  min_edge_weight: 0.0       # default for the "hide weak edges" slider (0 = show all).
+  options: {}                # raw 3d-force-graph pass-through (overrides AMG defaults), e.g.:
+  #   nodeRelSize: 4
+  #   linkOpacity: 0.7
+  #   backgroundColor: "#0b0e14"
+  #   cooldownTime: 12000

@@ -29,9 +29,9 @@
   #search { background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
     border-radius: 8px; padding: 6px 10px; width: 230px; outline: none; font-size: 13px; }
   #search:focus { border-color: var(--accent); }
-  button.tb { background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
+  button.tb, select.tb { background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
     border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 13px; }
-  button.tb:hover { border-color: var(--accent); }
+  button.tb:hover, select.tb:hover { border-color: var(--accent); }
   button.tb.on { border-color: var(--accent); color: #fff; }
 
   /* popovers (filters, legend) */
@@ -88,6 +88,12 @@
   <button class="tb" id="btn-legend">Legend</button>
   <button class="tb" id="btn-cluster" title="Color by cluster (heaviest part_of topic)">Cluster</button>
   <button class="tb" id="btn-large" title="Large-graph mode: start with hubs, expand on click">Large mode</button>
+  <select class="tb" id="quality" title="Render quality: smoothness vs speed (auto adapts to node count)">
+    <option value="auto">Quality: auto</option>
+    <option value="high">Quality: high</option>
+    <option value="medium">Quality: medium</option>
+    <option value="low">Quality: low</option>
+  </select>
   <button class="tb" id="btn-reset" title="Reset camera">Reset view</button>
 </div>
 
