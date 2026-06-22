@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<!-- AMG memory graph — self-contained 3D viewer (roadmap Stage 15).
+     export_graph.py replaces the three markers below with the graph JSON, the vendored
+     3d-force-graph library, and the AMG viewer glue. The result is one offline file:
+     no server, no network, read-only. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AMG memory graph</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #131826; --panel2: #1b2336; --line: #2a3450;
+    --fg: #e6eaf2; --muted: #9aa5b8; --accent: #4aa3ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; overflow: hidden; }
+  #graph { position: fixed; inset: 0; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; }
+
+  /* top bar */
+  #topbar { position: fixed; top: 0; left: 0; right: 0; z-index: 10; display: flex;
+    align-items: center; gap: 10px; padding: 8px 12px; background: rgba(11,14,20,.82);
+    backdrop-filter: blur(6px); border-bottom: 1px solid var(--line); }
+  #topbar .title { font-weight: 600; letter-spacing: .2px; }
+  #topbar .meta { color: var(--muted); font-size: 12px; }
+  #topbar .spacer { flex: 1; }
+  #search { background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 8px; padding: 6px 10px; width: 230px; outline: none; font-size: 13px; }
+  #search:focus { border-color: var(--accent); }
+  button.tb { background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 13px; }
+  button.tb:hover { border-color: var(--accent); }
+  button.tb.on { border-color: var(--accent); color: #fff; }
+
+  /* popovers (filters, legend) */
+  .pop { position: fixed; top: 52px; z-index: 11; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; min-width: 220px;
+    max-height: 75vh; overflow: auto; box-shadow: 0 10px 30px rgba(0,0,0,.5); display: none; }
+  .pop h4 { margin: 6px 0 4px; font-size: 12px; text-transform: uppercase; color: var(--muted);
+    letter-spacing: .6px; }
+  .pop label { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 3px 0;
+    cursor: pointer; }
+  .pop .row { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 0; }
+  .swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+  .count { color: var(--muted); margin-left: auto; font-size: 12px; }
+  input[type=range] { width: 150px; accent-color: var(--accent); }
+
+  /* side panel */
+  #panel { position: fixed; top: 0; right: 0; bottom: 0; width: 420px; max-width: 92vw; z-index: 12;
+    background: var(--panel); border-left: 1px solid var(--line); transform: translateX(110%);
+    transition: transform .18s ease; overflow: auto; padding: 16px 18px 40px; }
+  #panel.open { transform: translateX(0); }
+  #panel .close { position: absolute; top: 10px; right: 12px; cursor: pointer; color: var(--muted);
+    font-size: 20px; line-height: 1; background: none; border: none; }
+  #panel .pid { word-break: break-all; font-size: 13px; color: var(--accent); margin: 2px 40px 8px 0; }
+  #panel .badges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line);
+    color: var(--fg); background: var(--panel2); }
+  #panel h3 { font-size: 12px; text-transform: uppercase; color: var(--muted); letter-spacing: .6px;
+    margin: 16px 0 6px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+  #panel .summary { font-size: 14px; line-height: 1.5; }
+  #panel .ptr { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  #panel pre { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px; font-size: 12px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+  #panel .edge { font-size: 12px; padding: 3px 0; border-bottom: 1px dashed var(--line); }
+  #panel .edge a { color: var(--accent); cursor: pointer; text-decoration: none; word-break: break-all; }
+  #panel .edge a:hover { text-decoration: underline; }
+  #panel .rel { display: inline-block; min-width: 92px; color: var(--muted); }
+
+  #hint { position: fixed; bottom: 8px; left: 12px; z-index: 9; color: var(--muted);
+    font-size: 11px; pointer-events: none; }
+  #empty { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 15px; z-index: 8; }
+</style>
+</head>
+<body>
+<div id="graph"></div>
+<div id="empty">No nodes to show — build the graph first (/amg sync), then re-export.</div>
+
+<div id="topbar">
+  <span class="title">AMG memory graph</span>
+  <span class="meta" id="meta"></span>
+  <span class="spacer"></span>
+  <input id="search" type="search" placeholder="search id / summary…" autocomplete="off">
+  <button class="tb" id="btn-filters">Filters</button>
+  <button class="tb" id="btn-legend">Legend</button>
+  <button class="tb" id="btn-cluster" title="Color by cluster (heaviest part_of topic)">Cluster</button>
+  <button class="tb" id="btn-large" title="Large-graph mode: start with hubs, expand on click">Large mode</button>
+  <button class="tb" id="btn-reset" title="Reset camera">Reset view</button>
+</div>
+
+<div class="pop" id="filters"></div>
+<div class="pop" id="legend"></div>
+
+<aside id="panel">
+  <button class="close" id="panel-close" aria-label="close">×</button>
+  <div class="pid mono" id="p-id"></div>
+  <div class="badges" id="p-badges"></div>
+  <div class="summary" id="p-summary"></div>
+  <div class="ptr mono" id="p-ptr"></div>
+  <div id="p-edges-wrap" style="display:none"><h3>Edges</h3><div id="p-edges"></div></div>
+  <div id="p-body-wrap" style="display:none"><h3>Body</h3><pre id="p-body"></pre></div>
+  <h3>Frontmatter</h3><pre class="mono" id="p-fm"></pre>
+</aside>
+
+<div id="hint">drag = rotate · scroll = zoom · right-drag = pan · click a node for details</div>
+
+<script type="application/json" id="amg-data">__AMG_DATA__</script>
+<script>/*__AMG_LIB__*/</script>
+<script>/*__AMG_VIEWER__*/</script>
+</body>
+</html>

@@ -15,12 +15,16 @@ Proves the exporter is a faithful, read-only projection of the graph:
   5. read-only   : nodes/ is byte-for-byte unchanged after an export; the only write is
                    the output JSON (under cache/).
   6. round-trip  : the written file re-parses to the same data; the CLI writes it.
+  7. html        : the viewer HTML is self-contained — library + glue + data inlined, no
+                   external <script src=, no data fetch; the inlined JSON survives a
+                   </script> in a node body (escaping) and re-parses to the same data.
 
 No graph engine or model is needed. Run:  python selftest_export.py
 """
 from __future__ import annotations
 
 import json
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -77,10 +81,11 @@ def _build_fixture(root: Path) -> None:
           "edges:\n  - {rel: documents, to: code:src/billing.py::charge, w: 1.0, origin: semantic}\n")
 
     # _hubs: the synthesized hub that `charge` is part_of (so part_of becomes a link).
+    # The body deliberately contains </script> to prove the HTML inlining escapes it.
     _node(root, "_hubs", "billing-0004",
           "id: hub:billing\ntype: hub\nsource_kind: synthesized\npolicy: authored\n"
           "status: active\nsummary: Billing subsystem hub.\n",
-          body="Billing groups card charging, retries and refunds.\n")
+          body="Billing groups card charging, retries and refunds. <x></script>\n")
 
     # notes: an authored decision (user provenance) + Stage 14 arbitration verdicts.
     _node(root, "notes", "decision-0005",
@@ -201,6 +206,47 @@ def test_read_only(root: Path) -> None:
     print("PASS  read-only: nodes/ unchanged; only cache/graph.json written")
 
 
+def test_html_self_contained(root: Path) -> None:
+    data = E.build_graph_data(root)
+    html = E.render_html(data)
+    # every injection marker is consumed
+    for mark in (E._DATA_MARK, E._LIB_MARK, E._VIEWER_MARK):
+        assert mark not in html, f"marker {mark!r} not replaced"
+    # the vendored library and the viewer glue are inlined (no external load)
+    assert "ForceGraph3D" in html and "3d-force-graph" in html, "library must be inlined"
+    assert "AMG memory graph — viewer glue" in html, "viewer glue must be inlined"
+    assert len(html) > 1_000_000, "lib (~1.3MB) should be inlined, not linked"
+    # self-contained: nothing is fetched at view time
+    assert "<script src=" not in html.lower(), "no external <script src="
+    assert "graph.json" not in html, "data is inlined, never fetched"
+    assert 'id="amg-data"' in html and "code:src/billing.py::charge" in html
+    # the inlined JSON survived a </script> in a node body and re-parses to the SAME data
+    m = re.search(r'<script type="application/json" id="amg-data">(.*?)</script>',
+                  html, re.DOTALL)
+    assert m, "the data <script> node must be present and not broken by </script>"
+    restored = json.loads(m.group(1).replace("<\\/", "</"))   # reverse the </ escaping
+    assert restored == data, "inlined JSON must round-trip to the exported data"
+    assert any("</script>" in (n.get("body") or "") for n in restored["nodes"]), \
+        "the tricky </script> body must be preserved intact after parse"
+    print("PASS  html: self-contained (lib+glue+data inlined, escaped, round-trips)")
+
+
+def test_html_is_default_action(root: Path) -> None:
+    cache = root / "cache"
+    for f in (cache / "graph.html", cache / "graph.json"):
+        if f.exists():
+            f.unlink()
+    argv = sys.argv
+    sys.argv = ["export_graph.py", "--store", str(root)]      # no flags -> HTML default
+    try:
+        assert E.main() == 0
+    finally:
+        sys.argv = argv
+    assert (cache / "graph.html").exists(), "default action writes the HTML viewer"
+    assert not (cache / "graph.json").exists(), "JSON is written only when --json is asked"
+    print("PASS  html: the default CLI action writes the self-contained viewer")
+
+
 def test_round_trip_and_cli(root: Path) -> None:
     out = root / "cache" / "graph.json"
     argv = sys.argv
@@ -229,6 +275,8 @@ def main() -> int:
         test_part_of_hub_vs_directory(root)
         test_stage14_statuses_and_conflict_edges(root)
         test_read_only(root)
+        test_html_self_contained(root)
+        test_html_is_default_action(root)
         test_round_trip_and_cli(root)
         print("\nALL EXPORT CHECKS PASSED")
     finally:

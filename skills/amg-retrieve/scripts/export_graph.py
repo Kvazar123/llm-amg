@@ -13,12 +13,16 @@ shows it (Stage 15, task 4: "show frontmatter"). The cost — a one-shot full sc
 instead of the disposable read-index — is irrelevant for an on-demand inspection tool
 (the index exists to speed the PER-QUERY load, not a single export).
 
-This JSON is the data the self-contained HTML viewer (Group 2) inlines into one file;
-`build_graph_data` is the shared core both paths use.
+The same {meta, nodes, links} core feeds the SELF-CONTAINED HTML viewer: render_html
+inlines the data, the vendored 3d-force-graph library, and the viewer glue into one
+file that opens by double-click — no server, no network, read-only (the graph data is
+embedded, not fetched, because a file:// page cannot fetch a sibling .json under CORS).
 
 CLI:
-    python export_graph.py                       # -> <store>/cache/graph.json
-    python export_graph.py --store <path> --json out.json
+    python export_graph.py                       # -> <store>/cache/graph.html (the viewer)
+    python export_graph.py --open                # render the viewer and open it in a browser
+    python export_graph.py --json                # -> <store>/cache/graph.json (data only)
+    python export_graph.py --store <path> --json out.json --html out.html
     python export_graph.py --stdout              # print JSON to stdout
 
 What it carries (from the data model, 02-data-model.md):
@@ -46,6 +50,11 @@ from typing import Any, Dict, List, Optional, Tuple
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import retrieve as R                       # reuse the same store resolver + frontmatter parser
+
+VIEWER_DIR = HERE / "viewer"              # vendored 3d-force-graph + template + glue
+_DATA_MARK = "__AMG_DATA__"
+_LIB_MARK = "/*__AMG_LIB__*/"
+_VIEWER_MARK = "/*__AMG_VIEWER__*/"
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
@@ -176,6 +185,22 @@ def _write_json(data: Dict[str, Any], out: Path) -> None:
     out.write_text(_dumps(data), encoding="utf-8")
 
 
+def render_html(data: Dict[str, Any]) -> str:
+    """Inline the graph data, the vendored 3d-force-graph library, and the viewer glue
+    into ONE self-contained HTML string — no server, no network, read-only.
+
+    The data goes into a <script type="application/json"> node, with `</` escaped to
+    `<\\/` so a summary or body containing </script> cannot break out of the tag (and
+    `\\/` stays valid JSON — JSON.parse restores it). The library is replaced FIRST and
+    the data LAST, so a node whose content happens to contain a marker cannot corrupt
+    the lib/glue injection."""
+    template = (VIEWER_DIR / "viewer.template.html").read_text(encoding="utf-8")
+    lib = (VIEWER_DIR / "3d-force-graph.min.js").read_text(encoding="utf-8")
+    glue = (VIEWER_DIR / "viewer.js").read_text(encoding="utf-8")
+    html = template.replace(_LIB_MARK, lib).replace(_VIEWER_MARK, glue)
+    return html.replace(_DATA_MARK, _dumps(data).replace("</", "<\\/"))
+
+
 def _opt(flag: str) -> Tuple[bool, Optional[str]]:
     """(present, value): value is the token after `flag` unless that is another --flag."""
     if flag not in sys.argv:
@@ -190,16 +215,32 @@ def main() -> int:
     _, store_arg = _opt("--store")
     store = Path(store_arg) if store_arg else R._default_store()
     data = build_graph_data(store)
+    m = data["meta"]
 
     if "--stdout" in sys.argv:
         print(_dumps(data))
         return 0
 
-    _, json_val = _opt("--json")
-    out = Path(json_val) if json_val else (store / "cache" / "graph.json")
-    _write_json(data, out)
-    m = data["meta"]
-    print(f"graph: {m['node_count']} node(s), {m['link_count']} link(s) -> {out}")
+    wrote: List[Path] = []
+    json_present, json_val = _opt("--json")
+    if json_present:
+        out = Path(json_val) if json_val else (store / "cache" / "graph.json")
+        _write_json(data, out)
+        wrote.append(out)
+
+    # HTML (the viewer) is the default action; skipped only when ONLY --json was asked.
+    html_present, html_val = _opt("--html")
+    if html_present or not json_present:
+        out = Path(html_val) if html_val else (store / "cache" / "graph.html")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(render_html(data), encoding="utf-8")
+        wrote.append(out)
+        if "--open" in sys.argv:
+            import webbrowser
+            webbrowser.open(out.resolve().as_uri())
+
+    for w in wrote:
+        print(f"graph: {m['node_count']} node(s), {m['link_count']} link(s) -> {w}")
     return 0
 
 
