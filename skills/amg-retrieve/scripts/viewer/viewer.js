@@ -112,9 +112,9 @@
     if (l.origin === "structural") return "#5b7aa8";
     return "#3fae9e";                              // semantic
   }
-  function linkWidth(l) {
+  function linkWidth(l) {                           // ~half the old width — edges were too heavy
     var w = (l.w == null) ? 0.5 : l.w;
-    return CONFLICT_RELS[l.rel] ? 1.5 + 2 * w : 0.4 + 1.6 * w;
+    return CONFLICT_RELS[l.rel] ? 0.75 + w : 0.2 + 0.8 * w;
   }
 
   // ---- filtering ---------------------------------------------------------------
@@ -239,11 +239,11 @@
         var known = byId[e.to];
         var to = known
           ? '<a data-go="' + esc(e.to) + '">' + esc(e.to) + "</a>"
-          : '<span style="color:#7a8699">' + esc(e.to) + " (external)</span>";
+          : '<span style="color:var(--faint)">' + esc(e.to) + " (external)</span>";
         var bits = [];                            // w is the (Hebbian-tuned) strength; coact its substrate
         if (e.w != null) bits.push("w=" + esc(String(e.w)));
         if (e.coact != null) bits.push("coact=" + esc(String(e.coact)));
-        var mw = bits.length ? ' <span style="color:#9aa5b8">' + bits.join(" · ") + "</span>" : "";
+        var mw = bits.length ? ' <span style="color:var(--muted)">· ' + bits.join(" · ") + "</span>" : "";
         return '<div class="edge"><span class="rel">' + esc(e.rel || "rel") + "</span>" + to + mw + "</div>";
       }).join("");
       ew.style.display = "";
@@ -269,7 +269,7 @@
   // ---- controls ----------------------------------------------------------------
   var PROJECT = META.project || "";
   function setMeta(nShown, lShown) {
-    var head = PROJECT ? "[" + PROJECT + "] · " : "";
+    var head = PROJECT ? PROJECT + " · " : "";
     document.getElementById("meta").textContent = head
       + nShown + "/" + NODES.length + " nodes · " + lShown + "/" + LINKS_RAW.length + " links"
       + (largeMode ? " · large mode" : "");
@@ -318,7 +318,7 @@
       + '<div class="row">' + dot("#5b7aa8") + "structural (calls, imports…)</div>"
       + '<div class="row">' + dot("#2f7a55") + "part_of</div>"
       + '<div class="row">' + dot("#39425a") + "follows</div>"
-      + '<div class="row" style="color:#9aa5b8">width = edge weight w (Hebbian-tuned strength)</div>';
+      + '<div class="row" style="color:var(--muted)">width = edge weight w (Hebbian-tuned strength)</div>';
     document.getElementById("legend").innerHTML = b;
   }
   function togglePop(id, btn) {
@@ -377,7 +377,7 @@
   });
 
   var largeBtn = document.getElementById("btn-large");
-  function syncLargeBtn() { largeBtn.classList.toggle("on", largeMode); largeBtn.textContent = largeMode ? "Show all" : "Large mode"; }
+  function syncLargeBtn() { largeBtn.classList.toggle("on", largeMode); }  // keep label; .on (blue border) marks active
   largeBtn.addEventListener("click", function () {
     largeMode = !largeMode;
     if (largeMode) seedVisible();
@@ -406,6 +406,13 @@
       openPanel(byId[go]);
       var t = byId[go]; if (t.x != null) focusNode(t);
     }
+  });
+
+  // The ~5-7% CPU is the live WebGL render loop (three.js redraws every frame even when the
+  // graph is idle), not a background task of ours. Stop it while the tab is hidden, resume
+  // on return — so an open-but-unwatched tab costs nothing.
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) Graph.pauseAnimation(); else Graph.resumeAnimation();
   });
 
   // ---- helpers -----------------------------------------------------------------
