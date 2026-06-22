@@ -17,8 +17,10 @@ reversible). Work in your own context; return a short summary.
 
 ## Inputs
 - `.claude/amg/work/consolidation-plan.json`: over-budget branches (with staged
-  steps), near-duplicate candidates, and episodic notes ranked by a deterministic
-  salience score.
+  steps), near-duplicate candidates, episodic notes ranked by a deterministic
+  salience score, and — for arbitration (below) — `contradictions` (node-vs-node
+  conflict pairs, each side with its comparison inputs) and `source_contradicted`
+  (nodes whose live-source check failed).
 - Read the bodies of the nodes the plan references as needed.
 - `working_language` from `.claude/amg/config.yml` (write summaries in it).
 
@@ -36,6 +38,35 @@ capture are reversible; deletion of meaning is not.
 the staged steps in order and STOP as soon as the branch is back under budget. Do not
 compact branches that are within budget.
 
+## Arbitrate contradictions
+When the plan lists `contradictions` or `source_contradicted`, resolve each with the
+judgment the code cannot — it only detected them. Weigh the supplied inputs in this
+priority (the source hierarchy): **current code > current docs > ADR/decision > fresh
+session > legacy docs > model guess** (`source_rank` encodes it), then freshness
+(`updated`), then `confidence`. When a code claim is in doubt, confirm it against the
+live source first (read-only):
+```bash
+python .claude/skills/amg-retrieve/scripts/verify_claims.py <id> --store .claude/amg
+```
+Then issue ONE verdict per conflict. Verdicts are non-destructive (a status change plus a
+linking edge — nothing is deleted), so **surfacing beats silent resolution and every
+verdict is reversible**:
+- **supersede** — one side clearly wins (current code vs a stale doc claim; a
+  `source_contradicted` node whose source moved on): the loser becomes `superseded`.
+- **reject** — a claim is clearly false (refuted by a higher source, or `verify_claims`
+  returns `contradicted`): it becomes `rejected`.
+- **dispute** — a genuine conflict with no clear winner: BOTH become `disputed` and are
+  linked, so retrieval surfaces the conflict instead of hiding it.
+- **ask_user** — high-impact and you cannot decide: like `dispute`, and the audit is
+  flagged `NEEDS USER`.
+- **keep_both_with_context** — both are legitimately true in different contexts (not a
+  real conflict): leave both `active`, linked.
+
+Give a one-line `reason` and the `sources` you compared on every verdict — they are written
+to `.claude/amg/arbitration.md`, the auditable basis of each decision. **When unsure between
+supersede/reject and dispute, choose `dispute`.** Old facts are retired by provenance, never
+by how often a query hits them.
+
 ## Decide and emit
 Write `.claude/amg/work/actions.json` — a JSON array. Action shapes:
 
@@ -50,7 +81,13 @@ Write `.claude/amg/work/actions.json` — a JSON array. Action shapes:
   {"action": "introduce_subhub", "hub_id": "hub:<topic>", "summary": "<role>",
    "parent_topic": "hub:<parent>", "member_ids": ["...","..."]},
   {"action": "shorten", "id": "...", "summary": "<kept gist>", "body": "<essence>"},
-  {"action": "retire", "id": "notes:<low-value one-off>"}
+  {"action": "retire", "id": "notes:<low-value one-off>"},
+  {"action": "supersede", "winner_id": "code:...", "loser_id": "doc:...",
+   "reason": "current code overrides the stale doc", "sources": "code > doc"},
+  {"action": "dispute", "ids": ["...","..."], "reason": "same-rank sources disagree"},
+  {"action": "reject", "id": "...", "reason": "refuted by source", "sources": "verify_claims: contradicted"},
+  {"action": "keep_both_with_context", "ids": ["...","..."], "reason": "both hold in their own context"},
+  {"action": "ask_user", "ids": ["...","..."], "reason": "high-impact, cannot decide"}
 ]
 ```
 
@@ -61,6 +98,11 @@ Notes:
 - For `introduce_subhub`, group cohesive LEAF members to reduce a branch's width; do
   not group nodes that are central or highly query-relevant on their own.
 - Preserve meaning in summaries — capture the gist, decisions, and key links.
+- Arbitration verdicts (supersede / dispute / reject / keep_both_with_context / ask_user)
+  only change a node's status and add a linking edge — nothing is archived or deleted, so
+  the recall gate does not apply to them. If you emit both compaction and arbitration in
+  one file the gate measures their combined effect; when in doubt, emit the arbitration
+  verdicts in a separate apply from compaction.
 
 ## Return to the caller
 3–5 lines: counts by action type, which branches you compacted and why, and anything

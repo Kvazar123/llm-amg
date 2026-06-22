@@ -59,15 +59,20 @@ compacted).
    python .claude/skills/amg-consolidate/scripts/consolidate.py plan .
    ```
    Writes `.claude/amg/work/consolidation-plan.json`: branches over budget (with
-   staged steps), near-duplicate candidates, and episodic notes ranked by a
-   deterministic salience score (recency, frequency, bridging, provenance, type).
+   staged steps), near-duplicate candidates, episodic notes ranked by a deterministic
+   salience score (recency, frequency, bridging, provenance, type), and — for
+   arbitration — `contradictions` (conflict pairs with comparison inputs) and
+   `source_contradicted` (nodes whose live-source check failed).
 
 4. **Judge** — spawn the `amg-consolidator` subagent with the plan. It reads the plan
    and the relevant node bodies and decides, per the salience rubric and branch
    budgets, which notes to **promote / retire**, which near-duplicates to **merge**,
    which stale episodes to **summarize**, where to **introduce a sub-hub**, and what
-   low-value detail to **shorten**. It emits `.claude/amg/work/actions.json`. It does
-   **not** edit the graph directly.
+   low-value detail to **shorten**; and it **arbitrates contradictions** — by provenance,
+   freshness and source rank, not query frequency — emitting **supersede / dispute /
+   reject / keep_both_with_context / ask_user** (non-destructive status verdicts, logged
+   to `arbitration.md`). It emits `.claude/amg/work/actions.json`. It does **not** edit
+   the graph directly.
 
 5. **Apply** (deterministic, transactional, archived):
    ```bash

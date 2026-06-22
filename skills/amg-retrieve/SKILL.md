@@ -48,7 +48,11 @@ summary.
        --store .claude/amg
    ```
    which writes `.claude/amg/cache/pack.md` and returns the ranked nodes. The
-   subagent returns the pack path and a 3–5 line summary.
+   subagent returns the pack path and a 3–5 line summary. For a **history/audit** query
+   ("what was X before", "why was it changed") or a **contradictions** query ("show the
+   conflicts") it adds `--intent history|conflict`, which surfaces retired/contradicted
+   nodes that are otherwise pushed down (the subagent reads the intent from the query in
+   any language — no keyword list).
 
 3. **Read the pack** (`.claude/amg/cache/pack.md`) and work from it. The pack has
    four tiers: *Strategic* (overview/subsystem hubs), *Tactical* (relevant modules),

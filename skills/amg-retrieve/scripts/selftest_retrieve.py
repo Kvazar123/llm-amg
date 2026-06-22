@@ -201,6 +201,56 @@ def test_explain(tmp: Path) -> None:
           f"({top['share'] * 100:.0f}%)")
 
 
+def test_intent_and_conflict(tmp: Path) -> None:
+    """Stage 14 surfacing, driven by a caller-supplied intent flag (the model recognizes
+    intent in any language; the code only applies it):
+      (a) status prior: disputed/rejected get their multipliers, and `lift` neutralizes
+          ALL retired downranks;
+      (b) a superseded node, normally downranked, is lifted by intent=['history'];
+      (c) a conflict intent seeds the conflict subgraph so a disputed node (lexically
+          off-topic) surfaces and is flagged."""
+    # (a) unit
+    nodes: Dict[str, Dict[str, Any]] = {"a": {"status": "active"}, "s": {"status": "superseded"},
+                                        "d": {"status": "disputed"}, "r": {"status": "rejected"}}
+    act = {"a": 1.0, "s": 1.0, "d": 1.0, "r": 1.0}
+    cfg = {"status_prior": {"active": 1.0, "superseded": 0.2, "disputed": 0.5, "rejected": 0.1}}
+    out = R._apply_status_prior(act, nodes, cfg)
+    assert abs(out["d"] - 0.5) < 1e-9 and abs(out["r"] - 0.1) < 1e-9, out
+    lifted = R._apply_status_prior(act, nodes, cfg, lift=True)
+    assert all(abs(lifted[k] - 1.0) < 1e-9 for k in nodes), "lift neutralizes every downrank"
+
+    # (b) history intent lifts the superseded downrank end-to-end
+    store = tmp / "intent"
+    summ = "the billing retry schedule"
+    _write(store, "notes", "act.md", _node("notes:cur", "note", summ))
+    _write(store, "notes", "sup.md", _node("notes:old", "note", summ, status="superseded"))
+    base = R.retrieve(store, "billing retry schedule", write_pack=False, log_coactivation=False)
+    brank = {nid: a for nid, a in base["ranked"]}
+    assert brank["notes:cur"] > brank["notes:old"], "without intent, superseded is downranked"
+    hist = R.retrieve(store, "billing retry schedule", write_pack=False,
+                      log_coactivation=False, intent=["history"])
+    hrank = {nid: a for nid, a in hist["ranked"]}
+    assert abs(hrank["notes:cur"] - hrank["notes:old"]) < 1e-9, "history intent lifts the downrank"
+    assert hist["intent"] == ["history"]
+
+    # (c) conflict intent seeds the conflict subgraph: a disputed node off-topic to the
+    # query surfaces and is flagged
+    store2 = tmp / "conflict"
+    _write(store2, "notes", "q.md", _node("notes:topic", "note", "alpha beta gamma"))
+    _write(store2, "notes", "disp.md", _node("notes:contested", "note",
+           "completely unrelated zeta payload", status="disputed",
+           edges=[{"rel": "contradicts", "to": "notes:other"}]))
+    _write(store2, "notes", "oth.md", _node("notes:other", "note", "another zeta payload"))
+    plain = R.retrieve(store2, "alpha beta gamma", write_pack=False, log_coactivation=False)
+    conf = R.retrieve(store2, "alpha beta gamma", write_pack=False,
+                      log_coactivation=False, intent=["conflict"])
+    pa = {nid: a for nid, a in plain["ranked"]}
+    ca = {nid: a for nid, a in conf["ranked"]}
+    assert ca["notes:contested"] > pa["notes:contested"], "conflict intent seeds the disputed node"
+    assert "disputed: an unresolved contradiction" in conf["pack"], conf["pack"]
+    print("PASS  intent: history lifts retired downrank; conflict seeds the conflict subgraph + flags disputed")
+
+
 def main() -> int:
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
@@ -215,6 +265,7 @@ def main() -> int:
         test_stale_is_flagged(tmp)
         test_trust_marks(tmp)
         test_decision_strategic_with_body(tmp)
+        test_intent_and_conflict(tmp)
         test_config_deep_merge(tmp)
         test_inspect_bucket(tmp)
         test_explain(tmp)

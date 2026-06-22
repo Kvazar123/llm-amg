@@ -36,6 +36,10 @@ CLI:
     python retrieve.py "how do we handle a declined card charge"
     python retrieve.py "<query>" --store /path/to/.claude/amg --top 12 --no-pack
     python retrieve.py "<query>" --explain      # show the edges that drove the top nodes
+    python retrieve.py "<query>" --intent conflict   # history|conflict — surface retired /
+        # contradicted nodes for a history/audit or "show contradictions" query. The
+        # RETRIEVER SUBAGENT sets this from the query in ANY language (intent is the model's
+        # to recognize; the code only applies it), so no language-specific keywords live here.
 """
 from __future__ import annotations
 
@@ -48,7 +52,7 @@ import time
 import tempfile
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 try:
     import yaml
@@ -128,8 +132,13 @@ def _trust_marks(node: Dict[str, Any], vcfg: Dict[str, Any]) -> str:
     unconditional (backward-compatible); the rest fire only when verification.enabled, so
     turning the layer off restores the prior behavior exactly."""
     marks: List[str] = []
-    if node.get("status") == "stale":
+    status = node.get("status")
+    if status == "stale":
         marks.append(_STALE_TEXT)
+    elif status == "disputed":            # an unresolved contradiction (Stage 14 arbitration)
+        marks.append("disputed: an unresolved contradiction — check the conflicting claim")
+    elif status == "rejected":            # arbitration found this claim false
+        marks.append("rejected: arbitration found this claim false")
     if vcfg.get("enabled", True):
         vstatus = (node.get("verification") or {}).get("status")
         is_code = node.get("type") in CODE_TYPES
@@ -421,17 +430,53 @@ def personalized_pagerank(teleport: Dict[str, float],
 
 
 # --------------------------------------------------------------------------- #
+# Query intent (Stage 14): history/audit and conflict surfacing
+#
+# Intent is recognized by the MODEL — the retriever subagent reads the query in ANY
+# language and passes an explicit flag — and the code only APPLIES it (meaning is the
+# model's job, mechanics the code's; the same split as everywhere in AMG). A history or
+# conflict intent lifts the retired-status downrank (§1.12 exception); a conflict intent
+# also seeds the conflict subgraph (below). No language-specific keywords live here, so
+# this is language- and environment-universal.
+# --------------------------------------------------------------------------- #
+
+_CONFLICT_RELS = {"contradicts", "supersedes"}
+_RETIRED_STATUSES = {"superseded", "disputed", "rejected"}
+INTENT_FLAGS = {"history", "conflict"}
+
+
+def _conflict_nodes(nodes: Dict[str, Dict[str, Any]]) -> Set[str]:
+    """Ids in a contradiction: a retired status (superseded/disputed/rejected), a
+    contradicted verification, or an endpoint of a contradicts/supersedes edge. The
+    conflict-subgraph seed for a 'show contradictions' query."""
+    out: Set[str] = set()
+    for nid, n in nodes.items():
+        if (n.get("status") in _RETIRED_STATUSES
+                or (n.get("verification") or {}).get("status") == "contradicted"):
+            out.add(nid)
+        for e in n.get("edges", []):
+            if isinstance(e, dict) and e.get("rel") in _CONFLICT_RELS and e.get("to") in nodes:
+                out.add(nid)
+                out.add(e["to"])
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # Status prior (re-rank by node validity, after spreading)
 # --------------------------------------------------------------------------- #
 
 def _apply_status_prior(activation: Dict[str, float], nodes: Dict[str, Dict[str, Any]],
-                        cfg: Dict[str, Any]) -> Dict[str, float]:
+                        cfg: Dict[str, Any], lift: bool = False) -> Dict[str, float]:
     """Scale final activation by a per-status prior so a superseded claim never
     competes as an active fact. Applied AFTER PPR, so it re-ranks by node validity
     without gating multi-hop flow (which already happened). stale stays at 1.0 — it
-    is flagged in the pack (`_STALE_MARK`), not penalized."""
+    is flagged in the pack (`_STALE_MARK`), not penalized.
+
+    `lift` (set for a history/conflict-intent query) skips the downrank entirely: the
+    only sub-1.0 priors are the retired statuses (superseded/disputed/rejected), and the
+    user explicitly asked to see them, so they must not be buried (§1.12 exception)."""
     prior = cfg.get("status_prior") or {}
-    if not prior:
+    if not prior or lift:
         return activation
     return {nid: a * float(prior.get(nodes[nid].get("status") or "active", 1.0))
             for nid, a in activation.items()}
@@ -563,7 +608,8 @@ def _render_pack(tiers: Dict[str, List[str]], nodes: Dict[str, Dict[str, Any]],
 
 def retrieve(store_root: os.PathLike[str] | str, query: str,
              config: Optional[Dict[str, Any]] = None, write_pack: bool = True,
-             log_coactivation: bool = True, explain: int = 0) -> Dict[str, Any]:
+             log_coactivation: bool = True, explain: int = 0,
+             intent: Optional[List[str]] = None) -> Dict[str, Any]:
     store_root = Path(store_root)
     cfg = config or load_config(store_root)
     nodes = load_nodes(store_root)
@@ -594,9 +640,23 @@ def retrieve(store_root: os.PathLike[str] | str, query: str,
                 for nid in all_ids}
     teleport = {nid: seed.get(nid, 0.0) + floor for nid in all_ids}
 
+    # Query intent (Stage 14), supplied by the caller (the model recognized it — any
+    # language; the code only applies it). A conflict intent ("show contradictions") seeds
+    # the conflict subgraph: conflict nodes get teleport mass (so PPR flows through the
+    # conflict region), still on top of the query seed — a topical conflict query stays
+    # topical, a bare one surfaces conflicts broadly. A history/conflict intent lifts the
+    # retired-status downrank below (§1.12 exception).
+    flags = {f for f in (intent or []) if f in INTENT_FLAGS}
+    if "conflict" in flags:
+        cnodes = _conflict_nodes(nodes)
+        if cnodes:
+            per = (sum(teleport.values()) or 1.0) / len(cnodes)
+            for nid in cnodes:
+                teleport[nid] = teleport.get(nid, 0.0) + per
+
     adj = build_adjacency(nodes, cfg)
     ppr = personalized_pagerank(teleport, adj, all_ids, cfg)
-    activation = _apply_status_prior(ppr, nodes, cfg)
+    activation = _apply_status_prior(ppr, nodes, cfg, lift=bool(flags))
 
     pack, tiers = assemble_pack(activation, nodes, cfg)
     ranked = sorted(((nid, activation[nid]) for nid in all_ids),
@@ -610,8 +670,8 @@ def retrieve(store_root: os.PathLike[str] | str, query: str,
         _log_coactivation(store_root, query, tiers, adj)
         _log_pack(store_root, query, tiers, nodes)
 
-    result = {"ranked": ranked, "pack": pack, "tiers": tiers,
-              "seeds": seeds, "relevance": rel, "n_nodes": len(nodes)}
+    result = {"ranked": ranked, "pack": pack, "tiers": tiers, "seeds": seeds,
+              "relevance": rel, "n_nodes": len(nodes), "intent": sorted(flags)}
     if explain:                           # decompose inflow on the RAW ppr (pre-prior)
         result["explain"] = _explain_inflow(ppr, adj, nodes, cfg,
                                             [nid for nid, _ in ranked[:explain]])
@@ -686,6 +746,7 @@ def main(argv: List[str]) -> int:
     write_pack = True
     explain = False
     top = 15
+    intent: List[str] = []                # set by the caller (the model) per its query
     i = 2
     while i < len(argv):
         if argv[i] == "--store":
@@ -696,12 +757,14 @@ def main(argv: List[str]) -> int:
             write_pack = False; i += 1
         elif argv[i] == "--explain":
             explain = True; i += 1
+        elif argv[i] == "--intent":       # history|conflict (comma-separated); see header
+            intent = [f.strip() for f in argv[i + 1].split(",") if f.strip()]; i += 2
         else:
             i += 1
 
     n_explain = min(top, 10) if explain else 0
     res = retrieve(store, query, write_pack=write_pack,
-                   log_coactivation=write_pack, explain=n_explain)
+                   log_coactivation=write_pack, explain=n_explain, intent=intent)
     print(res["pack"])
     print("\n--- ranked (top {}) ---".format(top))
     for nid, a in res["ranked"][:top]:

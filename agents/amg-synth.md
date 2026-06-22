@@ -37,7 +37,9 @@ files. Work in your own context and return a concise report.
      {topic: reporting, w: 0.3}]`). The highest weight is its canonical home; the
      rest express multi-membership the folder tree cannot.
    - `supersedes` / `contradicts` — where newer material overrides or conflicts with
-     older claims.
+     older claims. Mark the relation wherever you genuinely see a supersession or a
+     conflict; do not pick a winner — these pairs become the candidates the consolidator
+     arbitrates (it weighs provenance/freshness and issues the verdict).
 
 3. **Gap report** (`gap-report.md`, in `working_language`), with three sections:
    - **Undocumented code** — code nodes with no inbound `documents` edge.
