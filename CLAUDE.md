@@ -94,6 +94,12 @@ Structure requirements:
 - every introduced term is explained in a couple of words right where it appears;
 - details come from the code, nothing omitted.
 
+Document layers — separation of concerns by the question each answers, not by file. A project's documentation serves three distinct purposes; each may be one file or many, named anything. The same fact placed in the wrong layer dates the timeless one, bloats the technical one, or buries the practical one — so keep the purposes distinct and never let one leak into another:
+
+- **The "why" layer — scientific, timeless.** The rationale, principle, trade-off, and evidence behind a mechanism. Independent of **both the implementation and the build timeline**: no code mechanics (modules, functions, data layout — that is the technical layer) and no stage/milestone references (they date it and duplicate the plan). State a measured result as a lasting principle, not as "what we did in stage N". Sole exception: a pointer to the plan for a still-*planned* mechanism (the forward-doc convention).
+- **The "how it is built" layer — technical reference plus the build plan.** Module and data mechanics, formulas, configuration keys, edge-case behavior, stage attribution, and measurement numbers, all drawn from the code. This layer *should* cite stages; it carries the implementation detail the "why" layer deliberately omits.
+- **The "how to use it" layer — practical, front-facing.** Plain language for a reader who will never open the theory: concrete situations and recommendations ("for cross-language or paraphrase queries with embeddings on → enable X; otherwise leave it off"), not a mechanism's internal rationale. Translate every deep "why" into an actionable "in situation X, do Y"; leave the science to the "why" layer and the mechanics to the technical layer.
+
 Error checklist — run EVERY file through it:
 
 1. **Insufficiency.** Are ALL capabilities of the described component/mechanism listed? If it has magic variables, constants, hooks, modes — is each at least briefly mentioned, with a link to the deep dive? A reader of the file must immediately see the full available functionality.
