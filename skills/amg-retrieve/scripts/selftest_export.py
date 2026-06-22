@@ -204,10 +204,12 @@ def test_stage14_statuses_and_conflict_edges(root: Path) -> None:
 
 
 def test_viewer_config_in_meta(root: Path) -> None:
-    v = E.build_graph_data(root)["meta"]["viewer"]
+    meta = E.build_graph_data(root)["meta"]
+    v = meta["viewer"]
     assert v["quality"] == "medium" and v["large_graph_nodes"] == 50, v
     assert v["options"]["linkOpacity"] == 0.7, "raw 3d-force-graph passthrough must survive verbatim"
-    print("PASS  viewer config: meta.viewer carries AMG keys + raw options passthrough")
+    assert meta["project"] == "myproj", "header project name comes from the path two levels up"
+    print("PASS  viewer config: meta.viewer passthrough + project name in header")
 
 
 def test_read_only(root: Path) -> None:
@@ -231,7 +233,7 @@ def test_html_self_contained(root: Path) -> None:
         assert mark not in html, f"marker {mark!r} not replaced"
     # the vendored library and the viewer glue are inlined (no external load)
     assert "ForceGraph3D" in html and "3d-force-graph" in html, "library must be inlined"
-    assert "AMG memory graph — viewer glue" in html, "viewer glue must be inlined"
+    assert "AMG graph — viewer glue" in html, "viewer glue must be inlined"
     assert len(html) > 1_000_000, "lib (~1.3MB) should be inlined, not linked"
     # self-contained: nothing is fetched at view time
     assert "<script src=" not in html.lower(), "no external <script src="
@@ -285,7 +287,7 @@ def main() -> int:
         pass
     tmp = Path(tempfile.mkdtemp(prefix="amg-export-test-"))
     try:
-        root = tmp / "g"
+        root = tmp / "myproj" / ".claude" / "amg"   # realistic layout: project name = myproj
         _build_fixture(root)
         test_shape_and_full_frontmatter(root)
         test_links_and_dangling(root)

@@ -119,6 +119,13 @@ def _viewer_cfg(store: Path) -> Dict[str, Any]:
     return {str(k): val for k, val in v.items()} if isinstance(v, dict) else {}
 
 
+def _project_name(store: Path) -> str:
+    """The project the graph belongs to — the dir two levels up from the store
+    (<project>/<agent_dir>/amg), shown in the viewer header. Falls back gracefully."""
+    p = store.resolve()
+    return p.parent.parent.name or p.parent.name or p.name
+
+
 def _tally(values: List[Any]) -> Dict[str, int]:
     """Sorted {value: count}, with None rendered as an em dash. Feeds the viewer's
     filter UI (what types / statuses / buckets / rels actually exist) and the summary."""
@@ -182,6 +189,7 @@ def build_graph_data(store: Path) -> Dict[str, Any]:
         "meta": {
             "generated": datetime.now().isoformat(timespec="seconds"),
             "store": str(store),
+            "project": _project_name(store),
             "node_count": len(nodes),
             "link_count": len(links),
             "types": _tally([n["type"] for n in nodes]),

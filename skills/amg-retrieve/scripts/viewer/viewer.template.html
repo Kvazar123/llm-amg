@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- AMG memory graph — self-contained 3D viewer (roadmap Stage 15).
+<!-- AMG graph — self-contained 3D viewer (roadmap Stage 15).
      export_graph.py replaces the three markers below with the graph JSON, the vendored
      3d-force-graph library, and the AMG viewer glue. The result is one offline file:
      no server, no network, read-only. -->
@@ -7,11 +7,30 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AMG memory graph</title>
+<title>AMG graph</title>
+<script>
+  /* Set the theme BEFORE first paint (no flash): a saved choice, else the OS preference.
+     viewer.js reads this same attribute, so detection lives in one place. */
+  (function () {
+    try {
+      var t = localStorage.getItem("amg-theme")
+        || ((window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark");
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {}
+  })();
+</script>
 <style>
   :root {
-    --bg: #0b0e14; --panel: #131826; --panel2: #1b2336; --line: #2a3450;
-    --fg: #e6eaf2; --muted: #9aa5b8; --accent: #4aa3ff;
+    /* GitHub-dark palette (default). The toggle sets data-theme="light" for the light set. */
+    --bg: #0d1117; --surface: #212830; --surface-hover: #262c36; --line: #30363d;
+    --fg: #f0f6fc; --muted: #9198a1; --faint: #656c76; --link: #4493f8; --accent: #2f81f7;
+    --bar: rgba(13,17,23,.82);
+  }
+  :root[data-theme="light"] {
+    /* GitHub-light palette. */
+    --bg: #ffffff; --surface: #f6f8fa; --surface-hover: #eaeef2; --line: #d1d9e0;
+    --fg: #1f2328; --muted: #59636e; --faint: #818b98; --link: #0969da; --accent: #0969da;
+    --bar: rgba(255,255,255,.82);
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
@@ -21,21 +40,27 @@
 
   /* top bar */
   #topbar { position: fixed; top: 0; left: 0; right: 0; z-index: 10; display: flex;
-    align-items: center; gap: 10px; padding: 8px 12px; background: rgba(11,14,20,.82);
+    align-items: center; gap: 10px; padding: 8px 12px; background: var(--bar);
     backdrop-filter: blur(6px); border-bottom: 1px solid var(--line); }
   #topbar .title { font-weight: 600; letter-spacing: .2px; }
   #topbar .meta { color: var(--muted); font-size: 12px; }
   #topbar .spacer { flex: 1; }
-  #search { background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
+  #search { background: var(--surface); border: 1px solid var(--line); color: var(--fg);
     border-radius: 8px; padding: 6px 10px; width: 230px; outline: none; font-size: 13px; }
   #search:focus { border-color: var(--accent); }
-  button.tb, select.tb { background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
+  button.tb, select.tb { background: var(--surface); border: 1px solid var(--line); color: var(--fg);
     border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 13px; }
-  button.tb:hover, select.tb:hover { border-color: var(--accent); }
-  button.tb.on { border-color: var(--accent); color: #fff; }
+  button.tb:hover, select.tb:hover { background: var(--surface-hover); }  /* lighten, no blue */
+  button.tb.on { border-color: var(--accent); }                          /* active = blue border */
+  button.tb.icon { padding: 5px 7px; line-height: 0; }                    /* sun/moon toggle */
+  .tb svg { width: 14px; height: 14px; display: block; }
+  /* node hover tooltip (injected by the graph lib); themed via the same vars */
+  .nl { max-width: 320px; padding: 6px 8px; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 8px; color: var(--fg); font-size: 12px; }
+  .nl .sub { color: var(--muted); }
 
   /* popovers (filters, legend) */
-  .pop { position: fixed; top: 52px; z-index: 11; background: var(--panel);
+  .pop { position: fixed; top: 52px; z-index: 11; background: var(--surface);
     border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; min-width: 220px;
     max-height: 75vh; overflow: auto; box-shadow: 0 10px 30px rgba(0,0,0,.5); display: none; }
   .pop h4 { margin: 6px 0 4px; font-size: 12px; text-transform: uppercase; color: var(--muted);
@@ -49,23 +74,23 @@
 
   /* side panel */
   #panel { position: fixed; top: 0; right: 0; bottom: 0; width: 420px; max-width: 92vw; z-index: 12;
-    background: var(--panel); border-left: 1px solid var(--line); transform: translateX(110%);
+    background: var(--surface); border-left: 1px solid var(--line); transform: translateX(110%);
     transition: transform .18s ease; overflow: auto; padding: 16px 18px 40px; }
   #panel.open { transform: translateX(0); }
   #panel .close { position: absolute; top: 10px; right: 12px; cursor: pointer; color: var(--muted);
     font-size: 20px; line-height: 1; background: none; border: none; }
-  #panel .pid { word-break: break-all; font-size: 13px; color: var(--accent); margin: 2px 40px 8px 0; }
+  #panel .pid { word-break: break-all; font-size: 13px; color: var(--link); margin: 2px 40px 8px 0; }
   #panel .badges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
   .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line);
-    color: var(--fg); background: var(--panel2); }
+    color: var(--fg); background: var(--surface); }
   #panel h3 { font-size: 12px; text-transform: uppercase; color: var(--muted); letter-spacing: .6px;
     margin: 16px 0 6px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
   #panel .summary { font-size: 14px; line-height: 1.5; }
   #panel .ptr { font-size: 12px; color: var(--muted); margin-top: 6px; }
-  #panel pre { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+  #panel pre { background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
     padding: 10px; font-size: 12px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
   #panel .edge { font-size: 12px; padding: 3px 0; border-bottom: 1px dashed var(--line); }
-  #panel .edge a { color: var(--accent); cursor: pointer; text-decoration: none; word-break: break-all; }
+  #panel .edge a { color: var(--link); cursor: pointer; text-decoration: none; word-break: break-all; }
   #panel .edge a:hover { text-decoration: underline; }
   #panel .rel { display: inline-block; min-width: 92px; color: var(--muted); }
 
@@ -80,7 +105,7 @@
 <div id="empty">No nodes to show — build the graph first (/amg sync), then re-export.</div>
 
 <div id="topbar">
-  <span class="title">AMG memory graph</span>
+  <span class="title">AMG</span>
   <span class="meta" id="meta"></span>
   <span class="spacer"></span>
   <input id="search" type="search" placeholder="search id / summary…" autocomplete="off">
@@ -95,6 +120,7 @@
     <option value="low">Quality: low</option>
   </select>
   <button class="tb" id="btn-reset" title="Reset camera">Reset view</button>
+  <button class="tb icon" id="btn-theme" title="Toggle light / dark"></button>
 </div>
 
 <div class="pop" id="filters"></div>
@@ -111,7 +137,7 @@
   <h3>Frontmatter</h3><pre class="mono" id="p-fm"></pre>
 </aside>
 
-<div id="hint">drag = rotate · scroll = zoom · right-drag = pan · click a node for details</div>
+<div id="hint">left-click: rotate · mouse-wheel/middle-click: zoom · right-click: pan</div>
 
 <script type="application/json" id="amg-data">__AMG_DATA__</script>
 <script>/*__AMG_LIB__*/</script>

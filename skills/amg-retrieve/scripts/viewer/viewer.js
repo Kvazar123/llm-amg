@@ -1,4 +1,4 @@
-/* AMG memory graph — viewer glue (roadmap Stage 15).
+/* AMG graph — viewer glue (roadmap Stage 15).
  *
  * Vanilla JS over the vendored 3d-force-graph (global `ForceGraph3D`). Reads the graph
  * from the inlined <script id="amg-data"> JSON that export_graph.py wrote — never fetches
@@ -62,6 +62,7 @@
   var minW = clamp01(num(VCFG.min_edge_weight, 0));
   var term = "";
   var clusterMode = false;                        // color by cluster (group) vs by bucket
+  var HILITE = "#ffffff";                          // search-match color; set per theme by applyTheme
   var largeMode = NODES.length > LARGE_THRESHOLD;
   var visible = {};                               // used only in large mode
 
@@ -89,7 +90,7 @@
     return "hsl(" + (h % 360) + ",62%,62%)";
   }
   function nodeColor(n) {
-    if (term) return matches(n) ? "#ffffff" : "rgba(120,130,145,0.18)";
+    if (term) return matches(n) ? HILITE : "rgba(120,130,145,0.18)";
     if (clusterMode) return groupColor(n.group);
     if (STATUS_COLOR[n.status]) return STATUS_COLOR[n.status];
     var c = BUCKET_COLOR[n.bucket] || DEFAULT_NODE;
@@ -100,12 +101,9 @@
     return 1 + (n.degree || 0) + boost + (term && matches(n) ? 12 : 0);
   }
   function nodeLabel(n) {
-    return '<div style="max-width:320px;padding:6px 8px;background:#0d1322;border:1px solid #2a3450;'
-      + 'border-radius:8px;color:#e6eaf2;font-size:12px">'
-      + '<b>' + esc(n.id) + "</b><br>"
-      + '<span style="color:#9aa5b8">' + esc(n.type) + " · " + esc(statusKey(n))
-      + " · " + esc(n.bucket || "") + "</span><br>"
-      + esc(trunc(n.summary || "", 160)) + "</div>";
+    return '<div class="nl"><b>' + esc(n.id) + "</b><br>"
+      + '<span class="sub">' + esc(n.type) + " · " + esc(statusKey(n)) + " · " + esc(n.bucket || "")
+      + "</span><br>" + esc(trunc(n.summary || "", 160)) + "</div>";
   }
   function linkColor(l) {
     if (CONFLICT_RELS[l.rel]) return "#ef4444";
@@ -148,7 +146,8 @@
 
   // ---- build the graph ---------------------------------------------------------
   var Graph = ForceGraph3D()(document.getElementById("graph"))
-    .backgroundColor("#0b0e14")
+    .backgroundColor("#0d1117")
+    .showNavInfo(false)                           // hide the lib's bottom-center nav text (we show our own, bottom-left)
     .nodeId("id")
     .nodeLabel(nodeLabel)
     .nodeColor(nodeColor)
@@ -268,9 +267,11 @@
   }
 
   // ---- controls ----------------------------------------------------------------
+  var PROJECT = META.project || "";
   function setMeta(nShown, lShown) {
-    document.getElementById("meta").textContent =
-      nShown + "/" + NODES.length + " nodes · " + lShown + "/" + LINKS_RAW.length + " links"
+    var head = PROJECT ? "[" + PROJECT + "] · " : "";
+    document.getElementById("meta").textContent = head
+      + nShown + "/" + NODES.length + " nodes · " + lShown + "/" + LINKS_RAW.length + " links"
       + (largeMode ? " · large mode" : "");
   }
   function buildFilters() {
@@ -353,6 +354,27 @@
       qualityMode = qualSel.value; lastQ = null; applyQuality(shownCount);
     });
   }
+
+  // light / dark theme. The <head> no-flash script already set data-theme from a saved
+  // choice or the OS preference; here we sync the JS-side bits (graph bg, search-match
+  // color, toggle icon) and handle flipping. Octicons sun/moon, recolored via currentColor.
+  var SUN = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0-1.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5ZM8 0a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V.75A.75.75 0 0 1 8 0Zm0 13a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0v-1.5A.75.75 0 0 1 8 13ZM2.343 2.343a.75.75 0 0 1 1.061 0l1.06 1.061a.75.75 0 0 1-1.06 1.06l-1.06-1.06a.75.75 0 0 1 0-1.06Zm9.193 9.193a.75.75 0 0 1 1.06 0l1.061 1.06a.75.75 0 0 1-1.06 1.061l-1.061-1.06a.75.75 0 0 1 0-1.061ZM16 8a.75.75 0 0 1-.75.75h-1.5a.75.75 0 0 1 0-1.5h1.5A.75.75 0 0 1 16 8ZM3 8a.75.75 0 0 1-.75.75H.75a.75.75 0 0 1 0-1.5h1.5A.75.75 0 0 1 3 8Zm10.657-5.657a.75.75 0 0 1 0 1.061l-1.061 1.06a.75.75 0 1 1-1.06-1.06l1.06-1.06a.75.75 0 0 1 1.06 0Zm-9.193 9.193a.75.75 0 0 1 0 1.06l-1.06 1.061a.75.75 0 0 1-1.061-1.06l1.06-1.061a.75.75 0 0 1 1.061 0Z"/></svg>';
+  var MOON = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.598 1.591a.749.749 0 0 1 .785-.175 7.001 7.001 0 1 1-8.967 8.967.75.75 0 0 1 .961-.96 5.5 5.5 0 0 0 7.046-7.046.75.75 0 0 1 .175-.786Zm1.616 1.945a7 7 0 0 1-7.678 7.678 5.499 5.499 0 1 0 7.678-7.678Z"/></svg>';
+  var themeBtn = document.getElementById("btn-theme");
+  function applyTheme(name) {
+    var light = name === "light";
+    document.documentElement.setAttribute("data-theme", light ? "light" : "dark");
+    HILITE = light ? "#0969da" : "#ffffff";
+    Graph.backgroundColor(light ? "#ffffff" : "#0d1117").nodeColor(nodeColor);  // recolor: highlight follows theme
+    if (themeBtn) themeBtn.innerHTML = light ? MOON : SUN;   // show the mode you'd switch TO
+  }
+  var theme = document.documentElement.getAttribute("data-theme") || "dark";
+  applyTheme(theme);
+  if (themeBtn) themeBtn.addEventListener("click", function () {
+    theme = theme === "light" ? "dark" : "light";
+    try { localStorage.setItem("amg-theme", theme); } catch (e) {}
+    applyTheme(theme);
+  });
 
   var largeBtn = document.getElementById("btn-large");
   function syncLargeBtn() { largeBtn.classList.toggle("on", largeMode); largeBtn.textContent = largeMode ? "Show all" : "Large mode"; }
