@@ -105,7 +105,7 @@ models:
 | `retrieval.token_budget.periphery_links` | 60 | предел числа ссылок-периферии |
 | `retrieval.relation_priors` | словарь | приоритет проводимости `β` по типу ребра: `documents`/`implements`/`specifies` 0.9, `calls`/`depends_on` 0.8, `defines`/`part_of` 0.7, `imports`/`refines`/`exemplifies` 0.6, `relates_to` 0.5, `follows` 0.4 (смежность ходов чата — слабее смысловых связей), `supersedes`/`contradicts` 0.3 |
 | `retrieval.relation_prior_default` | 0.5 | приоритет для типов, не перечисленных выше |
-| `retrieval.status_prior` | словарь | множитель итоговой активации по статусу узла: `active`/`stale` 1.0, `superseded` 0.2, `disputed` 0.5 (запланирован, Этап 14); `stale` не штрафуется, а помечается в пакете |
+| `retrieval.status_prior` | словарь | множитель итоговой активации по статусу узла: `active`/`stale` 1.0, `superseded` 0.2, `disputed` 0.5, `rejected` 0.1 (вердикты арбитража, Этап 14); `stale` не штрафуется, а помечается в пакете; запрос с `--intent history|conflict` снимает понижение снятых статусов (см. [Извлечение](./06-retrieval.md)) |
 | `retrieval.convergence_tol` | 1e-6 | порог сходимости степенного метода (по сумме модулей изменений) |
 | `retrieval.seed_floor` | 0.0 | базовая масса каждому узлу (0 = чистая релевантность) |
 | `retrieval.embeddings.enabled` | `auto` | `auto` (включить, если бэкенд установлен) / `on` / `off` |
