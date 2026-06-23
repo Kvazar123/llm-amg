@@ -96,6 +96,11 @@
     var c = BUCKET_COLOR[n.bucket] || DEFAULT_NODE;
     return n.status === "stale" ? "rgba(154,165,184,0.7)" : c;
   }
+  function statusSwatchColor(s) {                   // the color a node gets for this status, or
+    if (STATUS_COLOR[s]) return STATUS_COLOR[s];    // null = the status does NOT recolor the node
+    if (s === "stale") return "rgba(154,165,184,0.7)";
+    return null;                                    // active / captured / unknown -> keeps bucket color
+  }
   function nodeVal(n) {
     var boost = (n.type === "hub" || n.type === "overview") ? 8 : 0;
     return 1 + (n.degree || 0) + boost + (term && matches(n) ? 12 : 0);
@@ -279,7 +284,12 @@
     function section(title, dim, tally, colorOf) {
       var h = '<h4>' + title + "</h4>";
       keysOf(tally).sort().forEach(function (k) {
-        var sw = colorOf ? '<span class="swatch" style="background:' + (colorOf(k) || "#556") + '"></span>' : "";
+        var sw = "";
+        if (colorOf) {
+          var c = colorOf(k);
+          sw = c ? '<span class="swatch" style="background:' + c + '"></span>'
+                 : '<span class="swatch empty"></span>';   // a status that keeps the bucket color
+        }
         h += '<label><input type="checkbox" data-dim="' + dim + '" data-key="' + esc(k) + '" checked>'
           + sw + '<span>' + esc(k) + '</span><span class="count">' + tally[k] + "</span></label>";
       });
@@ -287,7 +297,7 @@
     }
     box.innerHTML =
       section("Bucket", "bucket", META.buckets, function (k) { return BUCKET_COLOR[k]; })
-      + section("Status", "status", META.statuses, function (k) { return STATUS_COLOR[k]; })
+      + section("Status", "status", META.statuses, statusSwatchColor)
       + section("Type", "type", META.types, null)
       + '<h4>Min edge weight</h4><div class="row"><input type="range" id="minw" min="0" max="1" '
       + 'step="0.05" value="' + minW + '"><span id="minw-val" class="count">' + minW.toFixed(2)
@@ -312,6 +322,7 @@
     b += "<h4>Nodes — arbitration status</h4>";
     Object.keys(STATUS_COLOR).forEach(function (k) { b += '<div class="row">' + dot(STATUS_COLOR[k]) + k + "</div>"; });
     b += '<div class="row">' + dot("rgba(154,165,184,0.7)") + "stale (dimmed)</div>";
+    b += '<div class="row"><span class="swatch empty"></span>active / captured (keeps bucket color)</div>';
     b += "<h4>Edges</h4>"
       + '<div class="row">' + dot("#ef4444") + "contradicts / supersedes</div>"
       + '<div class="row">' + dot("#3fae9e") + "semantic (documents, depends_on…)</div>"

@@ -22,15 +22,15 @@
 <style>
   :root {
     /* GitHub-dark palette (default). The toggle sets data-theme="light" for the light set. */
-    --bg: #0d1117; --surface: #1a2028; --surface-hover: #232a32; --line: #3d444db3;
-    --fg: #f0f6fc; --muted: #9198a1; --faint: #656c76; --link: #4493f8; --accent: #2f81f7;
-    --bar: rgba(13,17,23,.82);
+    --bg: #0d1117; --surface: #1c222aeb; --surface-hover: #232a32; --surface-second: #293038b8;
+    --line: #3d444db3; --fg: #f0f6fc; --muted: #9198a1; --faint: #656c76;
+    --link: #88baff; --accent: #2f81f7; --bar: rgba(13,17,23,.82); --scrollbar-thumb: #384047;
   }
   :root[data-theme="light"] {
     /* GitHub-light palette. */
-    --bg: #ffffff; --surface: #f6f8fa; --surface-hover: #eaeef2; --line: #d1d9e0;
-    --fg: #1f2328; --muted: #59636e; --faint: #818b98; --link: #0969da; --accent: #0969da;
-    --bar: rgba(255,255,255,.82);
+    --bg: #ffffff; --surface: #f4f6f8eb; --surface-hover: #eaeef2; --surface-second: #e6eaeeb8;
+    --line: #d1d9e0; --fg: #1f2328; --muted: #59636e; --faint: #818b98;
+    --link: #4285cb; --accent: #0969da; --bar: rgba(255,255,255,.82); --scrollbar-thumb: #c9d1d8;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
@@ -41,7 +41,7 @@
   /* top bar */
   #topbar { position: fixed; top: 0; left: 0; right: 0; z-index: 10; display: flex;
     align-items: center; gap: 10px; padding: 8px 12px; background: var(--bar);
-    backdrop-filter: blur(6px); border-bottom: 1px solid var(--line); }
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); border-bottom: 1px solid var(--line); }
   #topbar .title { font-weight: 600; letter-spacing: .2px; }
   #topbar .meta { color: var(--muted); font-size: 13px; }
   #topbar .spacer { flex: 1; }
@@ -66,7 +66,7 @@
   /* popovers (filters, legend) */
   .pop { position: fixed; top: 52px; z-index: 11; background: var(--surface);
     border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; min-width: 220px;
-    max-height: 75vh; overflow: auto; box-shadow: 0 10px 30px rgba(0,0,0,.5); display: none; }
+    max-height: 75vh; overflow: auto; box-shadow: 0 8px 22px rgba(0,0,0,.38); display: none; }
   .pop h4 { margin: 16px 0 6px; font-size: 12px; text-transform: uppercase; color: var(--muted);
     letter-spacing: .6px; }
   .pop h4:first-child { margin-top: 0; }                 /* first section flush to the top */
@@ -87,13 +87,13 @@
   #panel .pid { word-break: break-all; font-size: 16px; color: var(--link); margin: 2px 40px 16px 0; }
   #panel .badges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
   .badge { font-size: 11px; padding: 4px 8px; border-radius: 999px; border: 1px solid var(--line);
-    color: var(--fg); background: var(--surface-hover); }
+    color: var(--fg); background: var(--surface-second); }
   #panel h3 { font-size: 12px; text-transform: uppercase; color: var(--muted); letter-spacing: .6px;
     margin: 16px 0 6px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
   #panel h3.frontmatter { border-bottom: none; }       /* the <pre> below already draws many lines */
   #panel .summary { font-size: 14px; line-height: 1.5; }
   #panel .ptr { font-size: 12px; color: var(--muted); margin-top: 6px; }
-  #panel pre { background: var(--surface-hover); border: 1px solid var(--line); border-radius: 8px;
+  #panel pre { background: var(--surface-second); border: 1px solid var(--line); border-radius: 8px;
     padding: 10px; font-size: 12px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
   #panel .edge { font-size: 12px; padding: 4px 0; line-height: 18px; border-bottom: 1px dashed var(--line); }
   #panel .edge a { color: var(--link); cursor: pointer; text-decoration: none; word-break: break-all; }
@@ -104,6 +104,18 @@
     font-size: 11px; pointer-events: none; }
   #empty { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
     color: var(--muted); font-size: 15px; z-index: 8; }
+
+  /* frosted glass — translucent surfaces over the graph (Safari needs the -webkit- prefix) */
+  #panel, .nl, .pop { -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+  /* an empty swatch = "this status does not recolor the node — it keeps its bucket color" */
+  .swatch.empty { background: transparent; border: 2px solid var(--muted); }
+  #minw { height: 4px; }
+  input[type=checkbox] { cursor: pointer; }
+  /* thin custom scrollbars: WebKit/Blink + Firefox */
+  * { scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) var(--surface-second); }
+  *::-webkit-scrollbar { width: 6px; height: 6px; }
+  *::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 3px; }
+  *::-webkit-scrollbar-track { background-color: var(--surface-second); }
 </style>
 </head>
 <body>
