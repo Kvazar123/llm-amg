@@ -1,6 +1,6 @@
 ---
-description: AMG memory — one front door for every operation (status, on/off, repair, sync, retrieve, consolidate).
-argument-hint: status | on | off | repair | sync | retrieve <query> | consolidate
+description: AMG memory — one front door for every operation (status, on/off, repair, sync, retrieve, consolidate, view).
+argument-hint: status | on | off | repair | sync | retrieve <query> | consolidate | view
 disable-model-invocation: true
 allowed-tools: Bash(python *)
 ---
@@ -30,6 +30,16 @@ hook or a deterministic script cannot, because these need model judgment):
   `$ARGUMENTS` as the query, to assemble a context pack.
 - `consolidate` (maintain, compact, wrap up, save memory) — use the **amg-consolidate**
   skill to fold weights, file the session's conclusions, and compact over-budget branches.
+
+**View verb** — a deterministic read-only script (no subagent, no judgment), so run it
+directly:
+
+    python .claude/skills/amg-retrieve/scripts/export_graph.py --store .claude/amg --open
+
+- `view` (graph, show graph, visualize, open graph) — export the graph to ONE
+  self-contained, offline HTML and open it in the browser. Read-only; it writes only
+  `cache/graph.html`. Omit `--open` to just write the file; `--json` writes the raw
+  `{nodes, links, meta}` for external tooling. Also available via the **amg-retrieve** skill.
 
 Each work verb is also directly available as its own skill — `/amg-bootstrap`,
 `/amg-retrieve`, `/amg-consolidate`. `.claude` is the Claude Code default agent dir; the

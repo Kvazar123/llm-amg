@@ -9,7 +9,9 @@ description: >-
   X", "continue on the Y feature". Run it first, then work from the pack. It is
   read-only and safe. Also exposes an eval harness to measure retrieval recall and
   tune it. Triggers: any task naming a function/module/subsystem/feature; "pull
-  context for", "what's relevant to", "retrieve before we start".
+  context for", "what's relevant to", "retrieve before we start". Also renders a
+  read-only 3D graph viewer (export_graph.py) on request: "open / show / visualize the
+  graph", "открой граф".
 ---
 
 # AMG Retrieve
@@ -115,8 +117,30 @@ real tasks with the node ids that *should* surface, then tune these knobs in
 `damping` (reach), `activation_threshold` (pack tightness), `token_budget` per tier,
 and `relation_priors` (how strongly each edge type conducts).
 
+## Visualize the graph (3D viewer)
+
+To see the memory's *structure* — clusters, hubs, conflicts, what links to what — render
+it as a 3D viewer. It is **read-only and offline**: ONE self-contained HTML with the graph
+data and the library inlined, so it opens by double-click with no server and nothing
+fetched (the graph can hold sensitive project knowledge).
+
+```bash
+python .claude/skills/amg-retrieve/scripts/export_graph.py --store .claude/amg --open
+```
+
+`--open` writes `.claude/amg/cache/graph.html` and opens it; omit it to just write the
+file. `--json [path]` instead writes the raw `{nodes, links, meta}` for external graph
+tooling (it is not needed by the viewer). Click a node for its full frontmatter and edges;
+color is by bucket (Stage 14 `disputed`/`rejected` highlighted, `superseded`/`stale`
+dimmed), size by degree (hubs read large), with filters (type/status/bucket), search
+(id/summary), a light/dark toggle, and — on a large graph — a hubs-first mode that expands
+on click. Tunables (quality, `large_graph_mode`, `large_graph_nodes`, raw 3d-force-graph
+`options`) live in `config.yml → viewer`. Read-only w.r.t. the graph (writes only
+`cache/graph.html`). Triggers: "open / show / visualize the graph", "открой граф".
+
 ## Reference
 - `scripts/retrieve.py` — the retriever (importable `retrieve(...)` + CLI).
+- `scripts/export_graph.py` — read-only export to a self-contained 3D HTML viewer (or `--json`).
 - `scripts/embed.py` — OPTIONAL semantic seed enrichment (see below).
 - `scripts/eval_retrieval.py` — recall/precision/hop-recall vs lexical baseline.
 - `scripts/verify_claims.py` — verify a code claim against live source (file/symbol/hash);

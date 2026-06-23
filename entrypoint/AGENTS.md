@@ -96,7 +96,12 @@ The same operations also run on a plain-language request — match intent and sy
 the exact word: "index / sync the project" → step 1; "gather context on X" → step 2; "wrap
 up / tidy memory" → step 3; "memory status" → run `graph_store.py verify` and read the
 node / queue counts; "enable / disable AMG" → flip `active:` in `.claude/amg/config.yml`.
-(Slash commands like `/amg`, the auto `SessionStart`/`SessionEnd` hooks, and the digest
+"open / show / visualize the graph" → render the read-only, offline 3D viewer and open it:
+```
+python .claude/skills/amg-retrieve/scripts/export_graph.py --store .claude/amg --open
+```
+(writes only `.claude/amg/cache/graph.html`; `--json` writes the raw `{nodes, links, meta}`
+for external tooling instead). (Slash commands like `/amg`, the auto `SessionStart`/`SessionEnd` hooks, and the digest
 `@`-import are Claude Code conveniences and are absent here — this loop is the portable
 equivalent, and it works the same.)
 

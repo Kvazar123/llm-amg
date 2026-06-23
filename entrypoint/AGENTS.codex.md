@@ -43,6 +43,7 @@ Trigger by meaning and synonyms, not an exact command:
 | Consolidate memory | **amg-consolidate** | amg-consolidator |
 | Capture a note | `notes.py add` (direct) | — |
 | Repair the graph | `graph_store.py recover` + `verify --repair` (direct) | — |
+| Visualize the graph | `export_graph.py --store .claude/amg --open` (direct, read-only) | — |
 
 ### Operating loop (when AMG is ON)
 There are no SessionStart/SessionEnd hooks here, so **you** run each step at the right moment.
