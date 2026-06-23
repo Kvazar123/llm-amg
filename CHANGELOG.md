@@ -4,6 +4,23 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-06-24
+
+Stage 15 closed — a 3D graph viewer. The memory's structure can be opened as a self-contained, OFFLINE HTML page: rotate/zoom/pan, click a node for its full frontmatter and edges, color by bucket with arbitration verdicts highlighted, filters/search, and a large-graph mode that stays readable on big graphs. Additive — a new read-only export tool, vendored viewer assets, an optional config block — with no data-contract break (MINOR).
+
+### Added
+- `export_graph.py` (new, read-only, in `skills/amg-retrieve/scripts`): scans `nodes/*.md` and assembles a `{meta, nodes, links}` document, sharing one core (`build_graph_data`) between a JSON export (`--json`, for external graph tooling) and the HTML viewer (`--open` writes + opens `cache/graph.html`). It carries the FULL frontmatter of every node (not retrieve's BM25/PPR projection — the side panel shows it); links come from typed `edges` (rel/w/coact/origin) plus `part_of` memberships resolving to a real hub node; dangling edges are dropped, exactly as retrieval does. Read-only w.r.t. the graph (the only write is the disposable `cache/graph.html`). `selftest_export.py` (8 checks). Documented in 10-eval-tools / 01-overview / 02-data-model.
+- A self-contained, OFFLINE viewer: the graph data, the vendored `3d-force-graph` library (1.80.0, MIT — `viewer/3d-force-graph.min.js`), and the glue (`viewer/viewer.template.html` + `viewer.js`) are inlined into one HTML, so it opens by double-click with no server and nothing fetched (the data rides in a `<script type="application/json">` because a `file://` page cannot fetch a sibling `.json` under CORS). Node color by bucket with Stage 14 `disputed`/`rejected`/`superseded`/`stale` highlighted; size by degree (hubs large); edge width by `w` (the Hebbian-tuned strength), `contradicts`/`supersedes` flagged; click → side panel with the full frontmatter and edges; filters (type/status/bucket), search (id/summary), cluster coloring, a light/dark toggle (GitHub palette, OS default), and a large-graph mode (hubs-first + expand-on-click + hide-weak-edges) so a big graph is not a hairball and does not hang. The idle WebGL render loop pauses while the tab is hidden; cross-browser prefixes for backdrop-filter and scrollbars.
+- A `viewer` config block (a thin layer over the library): `quality` (auto|high|medium|low — node/edge smoothness, auto by on-screen count), `large_graph_mode` (auto|on|off — the startup large-graph view, baked into the export), `large_graph_nodes` (the auto threshold), `min_edge_weight` (the hide-weak-edges slider default), and `options` — a raw pass-through applied verbatim to 3d-force-graph, so config.yml need not enumerate the library's option surface. Documented in 09-config ("Просмотр графа").
+- Launch surfaces (task 6): a `/amg view` verb (a deterministic read-only script, run directly), the `amg-retrieve` skill, a verbal request, and the CLI — wired into the `/amg` command, the activation block, and the AGENTS.md / AGENTS.codex.md portable blocks.
+
+### Changed
+- Docs synced with the implemented viewer, by layer: GUIDE "3D-просмотр графа" (forward → implemented), architecture 10-eval-tools (the export/viewer section) + 01-overview + 02-data-model + 09-config, READMEs (the 3D viewer moved from "planned" to "implemented"). No new theory — the viewer is instrumental over the existing model. Roadmap checkpoint 2.12 (GUIDE "3D") closed; the Stage 15 body folded.
+
+### Found (deferred to Stage 18)
+- §1.34 — hardcoded non-English (Russian) verbal-intent examples in `entrypoint/CLAUDE.md`. The engine is English-base and matches intent in any language semantically, so hardcoded words violate that invariant; the Stage 15 additions were fixed, the pre-existing rest is scheduled for the Stage 18 prompt pass.
+- §1.35 — verbal memory commands are not anchored to an "AMG"/memory keyword, so a generic phrase ("show the graph", "wrap up") could false-fire an `/amg` operation; anchoring the triggers (across the activation blocks and the docs) is scheduled for Stage 18.
+
 ## [1.5.0] — 2026-06-22
 
 Stage 14 closed — epistemic contradiction arbitration and an improved Hebbian weight rule. Memory now keeps itself current under conflicting claims (resolved by provenance, freshness and source rank — not query frequency) and can learn edge weights from the real task outcome instead of blind co-activation. Additive — new statuses, new consolidator actions, a new audit file, a retrieval intent flag — with no data-contract break (MINOR); the `apply_hebbian` default stays `false`.
