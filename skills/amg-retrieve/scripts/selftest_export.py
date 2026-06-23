@@ -49,6 +49,7 @@ def _build_fixture(root: Path) -> None:
         "active: true\n"
         "viewer:\n"
         "  quality: medium\n"
+        "  large_graph_mode: on\n"            # YAML coerces bare on -> True; the viewer accepts both
         "  large_graph_nodes: 50\n"
         "  options:\n"
         "    linkOpacity: 0.7\n", encoding="utf-8")
@@ -207,6 +208,7 @@ def test_viewer_config_in_meta(root: Path) -> None:
     meta = E.build_graph_data(root)["meta"]
     v = meta["viewer"]
     assert v["quality"] == "medium" and v["large_graph_nodes"] == 50, v
+    assert v["large_graph_mode"] is True, "YAML coerces bare `on` to True; the viewer handles it"
     assert v["options"]["linkOpacity"] == 0.7, "raw 3d-force-graph passthrough must survive verbatim"
     assert meta["project"] == "myproj", "header project name comes from the path two levels up"
     print("PASS  viewer config: meta.viewer passthrough + project name in header")

@@ -285,9 +285,15 @@ viewer:
   quality: auto              # auto | high | medium | low — node/edge smoothness.
                              # auto raises quality when fewer nodes are on screen and
                              # lowers it on big graphs (controls node + link resolution).
-  large_graph_nodes: 1500    # above this many nodes, start in large-graph mode: show
-                             # hubs + their neighbors and expand a node's neighborhood
-                             # on click, so a big graph is explorable, not a hairball.
+  large_graph_mode: auto           # auto | on | off — the large-graph view AT STARTUP: render only
+                             # hubs + their neighbors and expand a node's neighborhood on click,
+                             # so a big graph is explorable, not a hairball (and does not hang).
+                             # auto = on when nodes exceed large_graph_nodes; on = always force
+                             # it (e.g. a graph that would otherwise stall on open); off = show
+                             # everything from the start (small graphs only). The toolbar toggle
+                             # still flips it live; this only sets the startup state. Baked into
+                             # the exported HTML, so changing it needs a re-export (/amg view).
+  large_graph_nodes: 1500    # the node count above which `large_graph_mode: auto` turns on
   min_edge_weight: 0.0       # default for the "hide weak edges" slider (0 = show all).
   options: {}                # raw 3d-force-graph pass-through (overrides AMG defaults), e.g.:
   #   nodeRelSize: 4

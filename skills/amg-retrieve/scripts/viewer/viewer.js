@@ -63,7 +63,12 @@
   var term = "";
   var clusterMode = false;                        // color by cluster (group) vs by bucket
   var HILITE = "#ffffff";                          // search-match color; set per theme by applyTheme
-  var largeMode = NODES.length > LARGE_THRESHOLD;
+  // startup large-graph mode: config `viewer.large_graph_mode` (auto|on|off). YAML coerces bare
+  // on/off to booleans, so accept those too; anything else ("auto"/unset) = by node count.
+  var lm = VCFG.large_graph_mode;
+  var largeMode = (lm === "on" || lm === true) ? true
+                : (lm === "off" || lm === false) ? false
+                : NODES.length > LARGE_THRESHOLD;
   var visible = {};                               // used only in large mode
 
   function setFromList(arr) { var s = {}; arr.forEach(function (k) { s[k] = true; }); return s; }
