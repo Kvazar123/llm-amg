@@ -11,7 +11,7 @@ description: >-
   tune it. Triggers: any task naming a function/module/subsystem/feature; "pull
   context for", "what's relevant to", "retrieve before we start". Also renders a
   read-only 3D graph viewer (export_graph.py) on request: "open / show / visualize the
-  graph", "открой граф".
+  graph".
 ---
 
 # AMG Retrieve
@@ -136,7 +136,8 @@ dimmed), size by degree (hubs read large), with filters (type/status/bucket), se
 (id/summary), a light/dark toggle, and — on a large graph — a hubs-first mode that expands
 on click. Tunables (quality, `large_graph_mode`, `large_graph_nodes`, raw 3d-force-graph
 `options`) live in `config.yml → viewer`. Read-only w.r.t. the graph (writes only
-`cache/graph.html`). Triggers: "open / show / visualize the graph", "открой граф".
+`cache/graph.html`). Triggers: "open / show / visualize the graph" (in any language —
+match the meaning, not the words).
 
 ## Reference
 - `scripts/retrieve.py` — the retriever (importable `retrieve(...)` + CLI).

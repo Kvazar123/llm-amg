@@ -43,7 +43,7 @@ plain-language intent. Match meaning and synonyms, not the exact word.
 | Build / sync the graph | `sync` (build, index, reconcile) | **amg-bootstrap** | "проиндексируй / синхронизируй проект" |
 | Retrieve context | `retrieve <q>` (recall, context) | **amg-retrieve** | "собери контекст по X" |
 | Consolidate memory | `consolidate` (maintain, compact) | **amg-consolidate** | "подведём итоги", "прибери память" |
-| Open the graph viewer | `view` (show graph, visualize) | `export_graph.py --open` | "открой граф", "покажи граф" |
+| Open the graph viewer | `view` (show graph, visualize) | `export_graph.py --open` | "open / show the graph", "visualize the memory" |
 | Capture a note | — | `notes.py add` | "запомни, что …" |
 
 `on` only sets the `active` flag; **building the graph is `sync`** (the amg-bootstrap
