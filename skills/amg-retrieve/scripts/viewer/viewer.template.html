@@ -75,7 +75,7 @@
   .pop .row { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 0; }
   .swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
   .count { color: var(--muted); margin-left: auto; font-size: 12px; }
-  input[type=range] { width: 150px; accent-color: var(--accent); }
+  input[type=range] { width: 150px; accent-color: #4084ca; }
 
   /* side panel */
   #panel { position: fixed; top: 0; right: 0; bottom: 0; width: 440px; max-width: 92vw; z-index: 12;
@@ -110,7 +110,7 @@
   /* an empty swatch = "this status does not recolor the node — it keeps its bucket color" */
   .swatch.empty { background: transparent; border: 2px solid var(--muted); }
   #minw { height: 4px; }
-  input[type=checkbox] { cursor: pointer; }
+  input[type=checkbox] { cursor: pointer; accent-color: #4084ca; }
   /* thin custom scrollbars: WebKit/Blink + Firefox */
   * { scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) var(--surface-second); }
   *::-webkit-scrollbar { width: 6px; height: 6px; }
