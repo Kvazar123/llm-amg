@@ -15,7 +15,7 @@ Stage 15 closed — a 3D graph viewer. The memory's structure can be opened as a
 - Launch surfaces (task 6): a `/amg view` verb (a deterministic read-only script, run directly), the `amg-retrieve` skill, a verbal request, and the CLI — wired into the `/amg` command, the activation block, and the AGENTS.md / AGENTS.codex.md portable blocks.
 
 ### Changed
-- Docs synced with the implemented viewer, by layer: GUIDE "3D-просмотр графа" (forward → implemented), architecture 10-eval-tools (the export/viewer section) + 01-overview + 02-data-model + 09-config, READMEs (the 3D viewer moved from "planned" to "implemented"). No new theory — the viewer is instrumental over the existing model. Roadmap checkpoint 2.12 (GUIDE "3D") closed; the Stage 15 body folded.
+- Docs synced with the implemented viewer, by layer: GUIDE "3D-просмотр графа" (forward → implemented, with what cluster coloring shows), architecture 10-eval-tools (the export/viewer section) + 01-overview + 02-data-model + 09-config, and a dedicated "3D graph viewer" section in both READMEs (moved from "planned" to "implemented"). No new theory — the viewer is instrumental over the existing model. Roadmap checkpoint 2.12 (GUIDE "3D") closed; the Stage 15 body folded.
 
 ### Found (deferred to Stage 18)
 - §1.34 — hardcoded non-English (Russian) verbal-intent examples in `entrypoint/CLAUDE.md`. The engine is English-base and matches intent in any language semantically, so hardcoded words violate that invariant; the Stage 15 additions were fixed, the pre-existing rest is scheduled for the Stage 18 prompt pass.
