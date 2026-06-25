@@ -203,7 +203,9 @@ class GraphStore:
     @contextlib.contextmanager
     def lock(self, stale_seconds: int = 3600,
              wait_seconds: float = 0.0) -> Iterator["GraphStore"]:
-        """Acquire the single-writer lock. Steals a stale lock (dead pid or too old)."""
+        """Acquire the single-writer lock. Reclaims a STALE lock — a dead pid on THIS
+        host, or any lock older than stale_seconds. A live lock held by ANOTHER host (a
+        shared folder, stage 16) is reclaimed only by age, never by a local pid probe."""
         self.root.mkdir(parents=True, exist_ok=True)
         deadline = time.time() + wait_seconds
         acquired = False
@@ -243,11 +245,18 @@ class GraphStore:
         except Exception:
             # Unreadable/garbage lock: treat as stale.
             return True
+        same_host = info.get("host") == socket.gethostname()
         # Our own lock, held on purpose (e.g. verify --repair runs under it): never
         # stale. Without this, verify --repair flags the lock it just took.
-        if info.get("pid") == os.getpid() and info.get("host") == socket.gethostname():
+        if same_host and info.get("pid") == os.getpid():
             return False
-        if not self._pid_alive(int(info.get("pid", -1))):
+        # A pid liveness probe is only meaningful on the SAME host: pid 1234 on another
+        # machine is unrelated to pid 1234 here. On a SHARED FOLDER across hosts, probing
+        # a foreign pid locally would FALSELY steal a teammate's live lock (it almost
+        # never exists in this machine's process table). So only the same host may reclaim
+        # a dead-pid lock; a foreign host's lock is reclaimed solely by the age threshold
+        # (a genuinely abandoned lock still frees itself after stale_seconds).
+        if same_host and not self._pid_alive(int(info.get("pid", -1))):
             return True
         age = time.time() - float(info.get("ts", 0))
         return age > stale_seconds
@@ -487,16 +496,24 @@ def main(argv: List[str]) -> int:
         return 0
 
     if cmd == "recover":
-        with store.lock():
-            handled = store.recover()
+        try:
+            with store.lock():
+                handled = store.recover()
+        except StoreLockError as exc:        # shared folder: a live writer holds it
+            print(json.dumps({"error": "locked", "detail": str(exc)}, indent=2))
+            return 1
         print(json.dumps({"recovered": handled}, indent=2))
         return 0
 
     if cmd == "verify":
         repair = "--repair" in argv
-        ctx = store.lock() if repair else contextlib.nullcontext(store)
-        with ctx:
-            problems = store.verify(repair=repair)
+        try:
+            ctx = store.lock() if repair else contextlib.nullcontext(store)
+            with ctx:
+                problems = store.verify(repair=repair)
+        except StoreLockError as exc:        # --repair under a live foreign lock: skip cleanly
+            print(json.dumps({"error": "locked", "detail": str(exc)}, indent=2))
+            return 1
         clean = all(not v for k, v in problems.items() if not k.endswith("_resolved"))
         print(json.dumps({"clean": clean, "problems": problems}, indent=2))
         return 0 if clean else 1

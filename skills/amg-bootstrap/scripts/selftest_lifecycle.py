@@ -155,8 +155,9 @@ def case_unclean_shutdown() -> None:
         amg = amg_root(proj)
         store = gs.GraphStore(amg)
         store.init()
-        # plant a stale lock as if a prior session died holding it: a dead pid + an old
-        # ts, so it reads stale on POSIX (pid probe) and on Windows (age check).
+        # plant a stale lock as if a prior session died holding it: a foreign host + an
+        # old ts, so it reads stale by the AGE threshold (the cross-host-safe path; a
+        # same-host dead pid is the other stale path, covered in selftest_graph_store).
         gs.atomic_write_text(store.lock_path, json.dumps(
             {"pid": 999999, "host": "dead-host", "ts": time.time() - 7200}))
         res = LC.session_start(proj, amg)
@@ -167,6 +168,32 @@ def case_unclean_shutdown() -> None:
         res2 = LC.session_start(proj, amg)
         assert "note" not in res2 and res2.get("stale_lock_cleared") is False, res2
         print("PASS  unclean: session-start reports a healed stale lock, then stays silent")
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+
+def case_shared_folder_contention() -> None:
+    """Stage 16: on a SHARED FOLDER a live writer (possibly another machine) holds the
+    lock; the host-aware rule no longer steals it. The automatic maintenance entry points
+    must DEGRADE (skip), not crash. This holds in EVERY environment — they are plain
+    function/script calls, so a hook-less or Codex env (no SessionStart/End hook) runs the
+    same code via the model-driven loop, not a hook."""
+    proj = setup_project()
+    try:
+        amg = amg_root(proj)
+        store = gs.GraphStore(amg); store.init()
+        foreign = gs.socket.gethostname() + "-foreign"           # guaranteed != this host
+        gs.atomic_write_text(store.lock_path, json.dumps(
+            {"pid": 1, "host": foreign, "ts": time.time()}))     # a LIVE foreign lock
+        start = LC.session_start(proj, amg)
+        assert start.get("skipped") == "another writer holds the lock", start
+        assert (amg / "digest.md").exists(), "the digest still refreshes (it is lock-free)"
+        rep = LC.repair(proj, amg)
+        assert rep.get("skipped") and rep.get("note") and "another writer" in rep["note"].lower(), rep
+        end = LC.session_end(proj, amg)
+        assert end["weights"].get("skipped") == "another writer holds the lock", end
+        assert store.lock_path.exists(), "the live foreign lock was never stolen"
+        print("PASS  shared-folder: hooks + repair degrade on a live foreign lock, no crash")
     finally:
         shutil.rmtree(proj, ignore_errors=True)
 
@@ -183,6 +210,7 @@ if __name__ == "__main__":
         case_on_off(proj)
         case_heal_note()
         case_unclean_shutdown()
+        case_shared_folder_contention()
         print("\nALL LIFECYCLE CHECKS PASSED")
     finally:
         shutil.rmtree(proj, ignore_errors=True)

@@ -117,13 +117,22 @@ def _heal(amg: Path) -> Dict[str, Any]:
     A read-only probe runs FIRST, before the lock: lock() steals a stale lock on
     acquisition and recover() empties the journal, so by the time we hold the lock the
     evidence of an unclean shutdown is already gone. The probe is what lets
-    session-start / repair report that they healed one (Stage 9, task 9)."""
+    session-start / repair report that they healed one (Stage 9, task 9).
+
+    On a SHARED FOLDER a live writer (possibly on another machine) may legitimately hold
+    the lock; the host-aware staleness rule (graph_store, stage 16) no longer steals it.
+    Rather than crash the session, skip this heal cycle — healing is idempotent and runs
+    on the next start/repair once the lock frees."""
     store = gs.GraphStore(amg)
     store.init()
     pre = store.verify(repair=False)
-    with store.lock():
-        recovered = store.recover()
-        problems = store.verify(repair=True)
+    try:
+        with store.lock():
+            recovered = store.recover()
+            problems = store.verify(repair=True)
+    except gs.StoreLockError as exc:
+        return {"recovered": [], "verify": pre, "stale_lock_cleared": False,
+                "skipped": "another writer holds the lock", "lock_note": str(exc)}
     return {"recovered": recovered, "verify": problems,
             "stale_lock_cleared": bool(pre.get("stale_lock"))}
 
@@ -417,7 +426,12 @@ def session_end(project_root: Path, amg: Path, transcript_path: Optional[str] = 
     # long list does not bloat the return) crossed with the packs retrieve logged.
     edited = session.pop("edited", []) if isinstance(session, dict) else []
     usage = _record_usage(project_root, amg, edited, reason)
-    weights = co.fold_weights(project_root, amg)
+    try:
+        weights = co.fold_weights(project_root, amg)
+    except gs.StoreLockError as exc:         # shared folder: another writer holds the lock
+        # Weight folding is idempotent and only accrues coact — skip this cycle rather
+        # than crash session-end; the next end/consolidate folds it (stage 16).
+        weights = {"skipped": "another writer holds the lock", "lock_note": str(exc)}
     digest = co.write_digest(project_root, amg)
     return {"action": "session-end", "weights": weights, "digest": digest,
             "session": session, "usage": usage}
@@ -431,6 +445,10 @@ def repair(project_root: Path, amg: Path) -> Dict[str, Any]:
     healed = _heal(amg)
     out = {"action": "repair", **healed}
     note = format_heal_note(healed)
+    if healed.get("skipped"):                # shared folder: a live writer holds the lock
+        note = ("Another writer currently holds the AMG lock — skipped repair. Retry "
+                "shortly; an abandoned lock frees itself once stale, and nothing is lost "
+                "(healing is idempotent).")
     if note:
         out["note"] = note
     return out

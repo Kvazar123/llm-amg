@@ -124,6 +124,31 @@ def case_lock_reentry():
     print("PASS  write lock acquired and released")
 
 
+def case_lock_cross_host():
+    """A LIVE lock held by ANOTHER host must NOT be stolen by a local pid probe — on a
+    shared folder pid N on another machine is unrelated to pid N here. It is reclaimed
+    only by the age threshold, never by liveness (stage 16). The single-host path is
+    unchanged (case_lock_reentry / case_unclean_shutdown cover it)."""
+    store = fresh_store()
+    foreign = gs.socket.gethostname() + "-foreign"          # guaranteed != this host
+    fresh = gs.json.dumps({"pid": gs.os.getpid(), "host": foreign, "ts": gs.time.time()})
+    gs.atomic_write_text(store.lock_path, fresh)
+    try:
+        with store.lock(wait_seconds=0.0):                  # fail-fast: must NOT steal it
+            raise AssertionError("a live foreign-host lock must not be stolen")
+    except gs.StoreLockError:
+        pass
+    assert store.lock_path.exists(), "the live foreign lock must remain"
+
+    old = gs.json.dumps({"pid": gs.os.getpid(), "host": foreign,
+                         "ts": gs.time.time() - 7200})       # abandoned (older than 1h)
+    gs.atomic_write_text(store.lock_path, old)
+    with store.lock():                                       # stale by age -> reclaimable
+        assert store.lock_path.exists(), "an abandoned foreign lock is reclaimed by age"
+    shutil.rmtree(store.root, ignore_errors=True)
+    print("PASS  cross-host: live foreign-host lock honored; abandoned one reclaimed by age")
+
+
 def case_documented_layout():
     """The on-disk layout documented in 02-data-model.md and consistency-model.md
     must match exactly what graph_store.init() creates: the five node buckets plus
@@ -194,6 +219,7 @@ if __name__ == "__main__":
     case_end_crash()
     case_delete_and_idempotent_rerun()
     case_lock_reentry()
+    case_lock_cross_host()
     case_documented_layout()
     case_action_log()
     print("\nALL CRASH-SAFETY CHECKS PASSED")
