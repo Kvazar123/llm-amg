@@ -544,6 +544,8 @@ def status(project_root: Path, amg: Path) -> Dict[str, Any]:
         "active": _is_active(cfg),
         "automation": _automation_on(cfg),
         "graph_root": str(amg),
+        "branch": rc._git_branch(project_root),   # git awareness (stage 16); None without git
+        "commit": rc._git_commit(project_root),
         "nodes": len(nodes),
         "stale": by_status.get("stale", 0),
         "by_status": dict(by_status),
@@ -564,6 +566,7 @@ def format_status(d: Dict[str, Any]) -> str:
         f"  active:               {d['active']}",
         f"  automation:           {d['automation']}",
         f"  graph root:           {d['graph_root']}",
+        f"  git branch / commit:  {d.get('branch') or '-'} / {d.get('commit') or '-'}",
         f"  nodes:                {d['nodes']}  (stale: {d['stale']})",
         f"  pending transactions: {len(d['pending_transactions'])}",
         f"  stale lock:           {'yes' if d['stale_lock'] else 'no'}",

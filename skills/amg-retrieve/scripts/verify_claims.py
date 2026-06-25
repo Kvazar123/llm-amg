@@ -28,11 +28,13 @@ large graph — no full scan); a scope sweep (--all/--code with no ids) enumerat
 
 CLI:
   python verify_claims.py [<id> ...] [--store <amg>] [--project <root>]
-                          [--all | --code] [--write] [--json]
+                          [--all | --code] [--write] [--json] [--by-commit]
 
   default scope (no ids): --code (every source-derived CODE node). --all adds doc/data.
   --store is the graph root (default: resolve_amg_root); --project is the source root
   (default: cwd, where source_path is relative to).
+  --by-commit: a cheap git-history triage instead of a content re-chunk — lists nodes
+  whose source changed between their ingest provenance.commit and HEAD (stage 16).
 """
 from __future__ import annotations
 
@@ -187,6 +189,42 @@ def verify(store_root: Path, project_root: Path, ids: Optional[List[str]] = None
     return {"results": results, "summary": dict(summary), "written": written}
 
 
+def verify_by_commit(store_root: Path, project_root: Path) -> Dict[str, Any]:
+    """Cheap staleness triage by git history (source-freshness-by-commit, stage 16): for
+    each source-derived node carrying a provenance.commit, did its source file change
+    between that commit and HEAD? One `git diff --name-only` per DISTINCT ingest commit
+    (not per node, not a content re-chunk), so it scales. It COMPLEMENTS the authoritative
+    content-hash check (verify): run it after a pull to scope which nodes to re-verify or
+    bootstrap. Best-effort: with no git, or a commit that no longer resolves, the affected
+    nodes are reported as `unresolved` rather than flagged; a node without provenance.commit
+    is counted in `no_commit`."""
+    store = gs.GraphStore(store_root)
+    nodes = rc.load_nodes(store)
+    by_commit: Dict[str, List[str]] = defaultdict(list)
+    no_commit = 0
+    for nid, n in nodes.items():
+        if n.get("source_kind") != "derived_from_file" or not n.get("source_path"):
+            continue
+        c = (n.get("provenance") or {}).get("commit")
+        if c:
+            by_commit[str(c)].append(nid)
+        else:
+            no_commit += 1
+    stale: List[str] = []
+    unresolved = 0
+    for commit, ids in by_commit.items():
+        changed = rc._git_changed_since(project_root, commit)
+        if changed is None:                       # git absent / commit no longer resolves
+            unresolved += len(ids)
+            continue
+        for nid in ids:
+            if str(nodes[nid].get("source_path")) in changed:
+                stale.append(nid)
+    return {"head": rc._git_commit(project_root), "commit_stale": sorted(stale),
+            "checked_commits": len(by_commit), "no_commit": no_commit,
+            "unresolved": unresolved}
+
+
 # --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
@@ -195,8 +233,9 @@ def main(argv: List[str]) -> int:
     args = list(argv[1:])
     write = "--write" in args
     as_json = "--json" in args
+    by_commit = "--by-commit" in args
     scope = "all" if "--all" in args else "code"
-    for flag in ("--write", "--json", "--all", "--code"):
+    for flag in ("--write", "--json", "--all", "--code", "--by-commit"):
         while flag in args:
             args.remove(flag)
     store_cli: Optional[str] = None
@@ -207,6 +246,18 @@ def main(argv: List[str]) -> int:
         i = args.index("--project"); proj = Path(args[i + 1]).resolve(); del args[i:i + 2]
     ids = [a for a in args if not a.startswith("--")]
     store_root = Path(store_cli).resolve() if store_cli else gs.resolve_amg_root(start=proj)
+
+    if by_commit:                       # cheap git-history triage (stage 16), no re-chunk
+        bc = verify_by_commit(store_root, proj)
+        if as_json:
+            print(json.dumps(bc, ensure_ascii=False, indent=2))
+        else:
+            print(f"head={bc['head'] or '-'}  checked_commits={bc['checked_commits']}  "
+                  f"no_commit={bc['no_commit']}  unresolved={bc['unresolved']}")
+            for nid in bc["commit_stale"]:
+                print(f"  commit-stale  {nid}")
+            print(f"\nsummary: {len(bc['commit_stale'])} node(s) changed since their ingest commit")
+        return 0
 
     res = verify(store_root, proj, ids or None, scope, write)
     if as_json:

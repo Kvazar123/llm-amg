@@ -580,6 +580,41 @@ def _git_commit(project_root: Path) -> Optional[str]:
     return out.stdout.strip() or None
 
 
+def _git_branch(project_root: Path) -> Optional[str]:
+    """Best-effort current git branch at the source root (branch awareness, stage 16).
+    Returns None when git is absent, the dir is not a repo, HEAD is detached (rev-parse
+    yields 'HEAD'), or anything fails — OPTIONAL, like _git_commit (no hard git dependency)."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, timeout=5)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    branch = out.stdout.strip()
+    return branch if branch and branch != "HEAD" else None     # 'HEAD' = detached -> None
+
+
+def _git_changed_since(project_root: Path, commit: str) -> Optional[set[str]]:
+    """Best-effort: the set of source paths changed between `commit` and HEAD, via
+    `git diff --name-only --relative` (source-freshness-by-commit, stage 16). `--relative`
+    makes the paths relative to project_root, so they line up with a node's source_path
+    even when project_root is a subdirectory of the repo. Returns None when git is absent,
+    the commit no longer resolves, or anything fails — the signal is OPTIONAL and only
+    COMPLEMENTS the authoritative content-hash check (verify), never replaces it."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(project_root), "diff", "--name-only", "--relative",
+             commit, "HEAD"],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return {ln.strip() for ln in out.stdout.splitlines() if ln.strip()}
+
+
 def _provenance(kind: str, commit: Optional[str]) -> Dict[str, Any]:
     """Origin block for a node. It carries ONLY the dimensions not already in the flat
     operational fields — source_path/source_hash/lineno/line_end ARE the file-projected

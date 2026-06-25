@@ -115,8 +115,8 @@ def case_session_end(proj: Path) -> None:
 def case_status(proj: Path) -> None:
     rc.plan(proj, amg_root(proj))            # populate nodes + the work queue
     d = LC.status(proj, amg_root(proj))
-    for k in ("active", "automation", "graph_root", "nodes", "stale",
-              "pending_transactions", "stale_lock", "queue_size",
+    for k in ("active", "automation", "graph_root", "branch", "commit", "nodes", "stale",
+              "pending_transactions", "stale_lock", "conflicts", "queue_size",
               "last_consolidation", "eval_summary"):
         assert k in d, f"status missing field {k}"
     assert d["active"] is True and d["automation"] is True, d
@@ -124,6 +124,7 @@ def case_status(proj: Path) -> None:
     assert d["queue_size"] is not None, "bootstrap wrote a queue -> size is known"
     text = LC.format_status(d)
     assert "AMG status" in text and "automation:" in text, text
+    assert "git branch" in text and "conflicts:" in text, text
     print("PASS  status: every field present; renders a one-screen report")
 
 

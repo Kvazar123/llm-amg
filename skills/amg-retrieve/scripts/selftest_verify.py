@@ -125,6 +125,54 @@ def case_write_persists() -> None:
         shutil.rmtree(proj, ignore_errors=True)
 
 
+def case_freshness_by_commit() -> None:
+    """Stage 16 source-freshness-by-commit: verify_by_commit flags nodes whose source
+    changed between their ingest provenance.commit and HEAD — one git diff per distinct
+    commit, no re-chunk. Best-effort: without git (or no provenance.commit) nothing is
+    flagged. The structural/no-git path is hermetic; the positive path needs git on PATH."""
+    proj = setup()
+    try:                                             # structure is stable with or without git
+        bc = VC.verify_by_commit(amg_of(proj), proj)
+        assert set(bc) == {"head", "commit_stale", "checked_commits", "no_commit",
+                           "unresolved"}, bc
+        assert isinstance(bc["commit_stale"], list), bc
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+    if shutil.which("git") is None:
+        print("PASS  freshness-by-commit: structure stable; git absent -> positive path skipped")
+        return
+
+    import subprocess
+    proj = Path(tempfile.mkdtemp(prefix="amg-bycommit-"))
+    try:
+        amg = amg_of(proj)
+        amg.mkdir(parents=True)
+        (amg / "config.yml").write_text(
+            "active: true\nworking_language: en\nmirror_path: src\n", encoding="utf-8")
+        (proj / "src").mkdir()
+        (proj / "src" / "a.py").write_text("def fa():\n    return 1\n", encoding="utf-8")
+        (proj / "src" / "b.py").write_text("def fb():\n    return 2\n", encoding="utf-8")
+
+        def git(*a: str) -> None:
+            subprocess.run(["git", "-C", str(proj), *a], capture_output=True,
+                           text=True, check=True)
+        git("init"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
+        git("add", "-A"); git("commit", "-m", "A")
+        rc.plan(proj, amg)                           # stamps provenance.commit = A
+        (proj / "src" / "a.py").write_text("def fa():\n    return 111\n", encoding="utf-8")
+        git("add", "-A"); git("commit", "-m", "B")   # only a.py changed since A
+
+        bc = VC.verify_by_commit(amg, proj)
+        assert bc["head"], "HEAD resolves inside a git repo"
+        assert any("src/a.py" in nid for nid in bc["commit_stale"]), bc
+        assert not any("src/b.py" in nid for nid in bc["commit_stale"]), bc
+        print("PASS  freshness-by-commit: a node whose source changed since its ingest "
+              "commit is flagged; an unchanged sibling is not")
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+
 def main() -> int:
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
@@ -140,6 +188,7 @@ def main() -> int:
     finally:
         shutil.rmtree(proj, ignore_errors=True)
     case_write_persists()
+    case_freshness_by_commit()
     print("\nALL VERIFY CHECKS PASSED")
     return 0
 
