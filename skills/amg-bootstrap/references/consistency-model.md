@@ -180,12 +180,27 @@ keeps re-runs free.
 
 ## 9. Locking and concurrency
 
-Two Claude Code sessions, or a subagent and the main agent, must not write at once.
-Every write operation takes an exclusive `LOCK` (created with `O_CREAT|O_EXCL`),
-holding pid/host/timestamp. A lock is *stolen* only if its owning pid is dead or it
-is older than the staleness threshold. **Reads are lock-free** and always safe,
-because each write is atomic per file (§5): a reader sees a coherent old or new
-node, never a mixture.
+Two sessions, or a subagent and the main agent, must not write at once. Every write
+operation takes an exclusive `LOCK` (created with `O_CREAT|O_EXCL`), holding
+pid/host/timestamp. **Reads are lock-free** and always safe, because each write is atomic
+per file (§5): a reader sees a coherent old or new node, never a mixture.
+
+A lock is *reclaimed* only when it is **stale**, and staleness is **host-aware** so the
+model also holds on a SHARED FOLDER (stage 16). A pid-liveness probe is only meaningful on
+the SAME host — pid 1234 on another machine is unrelated to pid 1234 here — so only the
+same host may reclaim a dead-pid lock, while a lock held by ANOTHER host is reclaimed
+solely by the age threshold, never by a local pid probe. Without this rule a teammate's
+live lock on a shared disk would be falsely stolen.
+
+This keeps the store at **one writer at a time** under low concurrency (a shared or synced
+folder, turn-taking), without a distributed lock. When a live foreign writer holds the
+lock, automatic upkeep (the session-start/end heal, weight folding) **degrades gracefully**
+— it skips the cycle and retries next run (healing is idempotent) — and the operator
+commands (`graph_store.py recover` / `verify --repair`, `/amg repair`) report "locked"
+cleanly instead of crashing; an explicit writer (reconcile, consolidate, notes) fails with
+an owner-identifying message. True simultaneous multi-writer across machines is deliberately
+out of scope (no complex multi-write until a real need); git (§12) is the cross-machine
+channel.
 
 ## 10. Crash-point analysis
 
@@ -228,6 +243,19 @@ rule (§8), and periodic snapshots (the whole store is a git repo, so a tagged
 commit after each consolidation is a restore point). If the graph is ever lost,
 structural nodes and edges are rebuilt by `reconcile bootstrap`; the earned
 summaries and semantic edges are restored from the latest snapshot or re-derived.
+
+**A git merge conflict** (stage 16, when the store is tracked in git) is the other
+not-auto-recoverable state, handled the same way — detect, isolate, repair. A
+markdown-level merge of two branches leaves ordinary git conflict markers in any node
+edited on both sides. That node's frontmatter no longer parses, so every `load_nodes`
+**skips** it (one bad node never takes down retrieval — the rest of the graph keeps
+working), and `reconcile.find_conflict_markers` scans for the unambiguous `<<<<<<<` /
+`|||||||` / `>>>>>>>` markers and surfaces the files through `/amg status`, `/amg repair`,
+and `bootstrap`. The fix is manual by nature (git cannot choose the right side
+semantically): resolve the markers, then `reconcile bootstrap` re-establishes equality with
+source. Different nodes are different files, so they merge without conflict; the markdown
+canon makes git the team-sharing substrate, and the engine adds only detection and rebuild,
+never a merge of its own.
 
 ## 13. Operator commands
 
