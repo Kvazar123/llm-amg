@@ -407,6 +407,12 @@ def session_start(project_root: Path, amg: Path) -> Dict[str, Any]:
     digest = co.write_digest(project_root, amg)
     out = {"action": "session-start", **healed, "digest": digest}
     note = format_heal_note(healed)
+    conflicts = rc.find_conflict_markers(gs.GraphStore(amg))
+    if conflicts:                            # post-merge: warn until the user resolves them
+        out["conflicts"] = conflicts
+        cnote = (f"{len(conflicts)} node file(s) carry unresolved git merge markers — the "
+                 "graph skips them; resolve the conflicts and re-run the bootstrap.")
+        note = f"{note} {cnote}" if note else cnote
     if note:
         out["note"] = note
     return out
@@ -449,6 +455,13 @@ def repair(project_root: Path, amg: Path) -> Dict[str, Any]:
         note = ("Another writer currently holds the AMG lock — skipped repair. Retry "
                 "shortly; an abandoned lock frees itself once stale, and nothing is lost "
                 "(healing is idempotent).")
+    conflicts = rc.find_conflict_markers(gs.GraphStore(amg))
+    if conflicts:                            # git merge left markers in node files
+        out["conflicts"] = conflicts
+        cnote = (f"{len(conflicts)} node file(s) carry unresolved git merge markers "
+                 f"(e.g. {conflicts[0]}); the graph skips them. Resolve the conflicts, "
+                 "then run reconcile.py bootstrap . to rebuild.")
+        note = f"{note} {cnote}" if note else cnote
     if note:
         out["note"] = note
     return out
@@ -536,6 +549,7 @@ def status(project_root: Path, amg: Path) -> Dict[str, Any]:
         "by_status": dict(by_status),
         "pending_transactions": problems.get("pending_transactions", []),
         "stale_lock": problems.get("stale_lock", []),
+        "conflicts": rc.find_conflict_markers(store),   # git merge markers in nodes (stage 16)
         "queue_size": _queue_size(amg),
         "last_pack": _mtime(amg / "cache" / "pack.md"),
         "last_consolidation": _last_consolidation(amg),
@@ -553,6 +567,7 @@ def format_status(d: Dict[str, Any]) -> str:
         f"  nodes:                {d['nodes']}  (stale: {d['stale']})",
         f"  pending transactions: {len(d['pending_transactions'])}",
         f"  stale lock:           {'yes' if d['stale_lock'] else 'no'}",
+        f"  conflicts:            {len(d.get('conflicts') or [])}",
         f"  queue size:           {d['queue_size'] if d['queue_size'] is not None else '-'}",
         f"  last pack:            {d['last_pack'] or '-'}",
         f"  last consolidation:   {d['last_consolidation'] or '-'}",

@@ -62,6 +62,14 @@ except ImportError:                       # pragma: no cover
 
 FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n?(.*)$", re.DOTALL)
 
+# Git merge-conflict markers (default + diff3 base) at line start. A conflicted node file
+# carries these literal lines after a markdown-level git merge (stage 16); its YAML no
+# longer parses, so load_nodes skips it (the graph keeps working) and find_conflict_markers
+# reports it so the user resolves it and re-bootstraps. The `=======` middle marker is
+# deliberately NOT matched — it collides with a setext heading underline; the open/base/
+# close markers are unambiguous.
+CONFLICT_MARKER_RE = re.compile(r"^(?:<{7}|>{7}|\|{7})(?:\s|$)", re.M)
+
 
 # --------------------------------------------------------------------------- #
 # Node (de)serialization
@@ -84,7 +92,12 @@ def parse_node(text: str) -> Optional[Dict[str, Any]]:
     m = FRONTMATTER_RE.match(text)
     if not m:
         return None
-    meta = yaml.safe_load(m.group(1)) or {}
+    try:
+        meta = yaml.safe_load(m.group(1)) or {}
+    except yaml.YAMLError:
+        return None          # malformed frontmatter (e.g. a git merge-conflict node) -> skip
+    if not isinstance(meta, dict):
+        return None          # a torn merge can yield non-mapping YAML; treat as no node
     meta["_body"] = m.group(2)
     return meta
 
@@ -97,6 +110,25 @@ def load_nodes(store: gs.GraphStore) -> Dict[str, Dict[str, Any]]:
         if meta and meta.get("id"):
             meta["_path"] = p.relative_to(store.root).as_posix()
             out[meta["id"]] = meta
+    return out
+
+
+def find_conflict_markers(store: gs.GraphStore) -> List[str]:
+    """Scan nodes/*.md for git merge-conflict markers and return the conflicted files'
+    relpaths, sorted. Read-only (lock-free). After a markdown-level git merge (stage 16)
+    a same-node conflict leaves these markers; load_nodes already skips such a file (its
+    frontmatter no longer parses), so the graph keeps working — this is how status /
+    repair / bootstrap SURFACE the conflict so the user resolves it and re-bootstraps."""
+    out: List[str] = []
+    if not store.nodes_dir.exists():
+        return out
+    for p in sorted(store.nodes_dir.rglob("*.md")):
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if CONFLICT_MARKER_RE.search(text):
+            out.append(p.relative_to(store.root).as_posix())
     return out
 
 
@@ -334,6 +366,9 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
     missing = [p for p, _ in resolve_sources(config) if not (project_root / p).exists()]
     if missing:                                           # 1.30: a typo'd path is visible in plan
         summary["missing_sources"] = missing
+    merge_conflicts = find_conflict_markers(store)        # stage 16: leftover git markers
+    if merge_conflicts:
+        summary["conflict_markers"] = merge_conflicts[:20]
     summary["queued_for_semantic"] = len(queue)
     return summary
 

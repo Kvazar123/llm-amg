@@ -594,6 +594,39 @@ def case_provenance_and_confidence() -> None:
         shutil.rmtree(proj, ignore_errors=True)
 
 
+def case_merge_conflict_resilience() -> None:
+    """Stage 16: a node file left with git merge-conflict markers must NOT crash the read
+    paths (its YAML no longer parses) — every load_nodes skips it — and find_conflict_markers
+    surfaces it so status/repair/bootstrap can flag it for the user."""
+    sys.path.insert(0, str(HERE.parents[1] / "amg-retrieve" / "scripts"))
+    import retrieve as RT
+    proj = Path(tempfile.mkdtemp(prefix="amg-conflict-"))
+    try:
+        store = gs.GraphStore(proj / ".claude" / "amg")
+        store.init()
+        good = ("---\nid: code:src/a.py::f\ntype: function\n"
+                "source_kind: derived_from_file\nstatus: active\nsummary: ok\n---\n")
+        store.transaction().write("nodes/code/good-1.md", good).commit()
+        # a same-node git conflict leaves literal markers inside the frontmatter, so the
+        # YAML no longer parses.
+        bad = ("---\nid: code:src/b.py::g\n<<<<<<< HEAD\nsummary: mine\n=======\n"
+               "summary: theirs\n>>>>>>> feature\ntype: function\n---\n")
+        gs.atomic_write_text(store.root / "nodes" / "code" / "bad-2.md", bad)
+
+        rc_nodes = RC.load_nodes(store)
+        assert list(rc_nodes) == ["code:src/a.py::f"], \
+            f"reconcile.load_nodes must skip the conflicted node, got {list(rc_nodes)}"
+        rt_nodes = RT.load_nodes(store.root)
+        assert "code:src/a.py::f" in rt_nodes and "code:src/b.py::g" not in rt_nodes, \
+            "retrieve.load_nodes must skip the conflicted node too (no crash)"
+        assert RC.find_conflict_markers(store) == ["nodes/code/bad-2.md"], \
+            RC.find_conflict_markers(store)
+        print("PASS  conflict: a merge-conflicted node is skipped by every load_nodes and "
+              "reported by find_conflict_markers")
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+
 if __name__ == "__main__":
     proj = setup_project()
     try:
@@ -616,6 +649,7 @@ if __name__ == "__main__":
         case_absorb_once()
         case_resume_freshness()
         case_provenance_and_confidence()
+        case_merge_conflict_resilience()
         print("\nALL RECONCILE CHECKS PASSED")
     finally:
         shutil.rmtree(proj, ignore_errors=True)

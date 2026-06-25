@@ -644,6 +644,26 @@ def test_hebbian_demo():
           "good weights keep recall")
 
 
+def test_conflict_skip() -> None:
+    """Stage 16: a node file left with git merge-conflict markers must not crash
+    consolidate.load_nodes — its YAML no longer parses, so it is skipped (the conflict is
+    surfaced separately by reconcile.find_conflict_markers in status/repair/bootstrap)."""
+    proj = Path(tempfile.mkdtemp(prefix="amg-cons-conflict-"))
+    try:
+        store = gs.GraphStore(proj / ".claude" / "amg")
+        store.init()
+        write_node(store, "note:keep", "notes", {"type": "note", "summary": "ok"})
+        bad = ("---\nid: note:torn\n<<<<<<< HEAD\nsummary: mine\n=======\n"
+               "summary: theirs\n>>>>>>> feature\ntype: note\n---\n")
+        gs.atomic_write_text(store.root / "nodes" / "notes" / "torn-deadbeef.md", bad)
+        nodes = C.load_nodes(store)
+        assert list(nodes) == ["note:keep"], \
+            f"consolidate.load_nodes must skip the conflicted node, got {list(nodes)}"
+        print("PASS  conflict: consolidate.load_nodes skips a merge-conflicted node (no crash)")
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+
 if __name__ == "__main__":
     proj = setup_project()
     try:
@@ -665,6 +685,7 @@ if __name__ == "__main__":
         test_eval_gate()
         test_gate_robust()
         test_hebbian_demo()
+        test_conflict_skip()
         print("\nALL CONSOLIDATION CHECKS PASSED")
     finally:
         shutil.rmtree(proj, ignore_errors=True)

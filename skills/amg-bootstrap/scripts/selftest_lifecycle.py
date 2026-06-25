@@ -198,6 +198,27 @@ def case_shared_folder_contention() -> None:
         shutil.rmtree(proj, ignore_errors=True)
 
 
+def case_merge_conflict_surfaced() -> None:
+    """Stage 16: a node carrying git merge markers is SURFACED by status (a conflicts list)
+    and by repair (a note), so the user knows to resolve it — even though load_nodes skips
+    it and the rest of the graph keeps working."""
+    proj = setup_project()
+    try:
+        amg = amg_root(proj)
+        store = gs.GraphStore(amg); store.init()
+        bad = ("---\nid: code:src/x.py::h\n<<<<<<< HEAD\nsummary: a\n=======\n"
+               "summary: b\n>>>>>>> feat\ntype: function\n---\n")
+        gs.atomic_write_text(store.root / "nodes" / "code" / "torn-cafef00d.md", bad)
+        st = LC.status(proj, amg)
+        assert st.get("conflicts") == ["nodes/code/torn-cafef00d.md"], st.get("conflicts")
+        assert "conflicts:" in LC.format_status(st), "status report must show a conflicts line"
+        rep = LC.repair(proj, amg)
+        assert rep.get("note") and "merge markers" in rep["note"], rep
+        print("PASS  conflict: status lists the conflicted node; repair notes it for the user")
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+
 if __name__ == "__main__":
     proj = setup_project()
     try:
@@ -211,6 +232,7 @@ if __name__ == "__main__":
         case_heal_note()
         case_unclean_shutdown()
         case_shared_folder_contention()
+        case_merge_conflict_surfaced()
         print("\nALL LIFECYCLE CHECKS PASSED")
     finally:
         shutil.rmtree(proj, ignore_errors=True)

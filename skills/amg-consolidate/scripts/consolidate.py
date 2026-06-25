@@ -198,7 +198,13 @@ def _parse(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
     m = FRONTMATTER_RE.match(text)
     if not m:
         return None
-    return (yaml.safe_load(m.group(1)) or {}), m.group(2)
+    try:
+        meta = yaml.safe_load(m.group(1)) or {}
+    except yaml.YAMLError:
+        return None          # malformed frontmatter (e.g. a git merge-conflict node) -> skip
+    if not isinstance(meta, dict):
+        return None
+    return meta, m.group(2)
 
 
 def serialize(meta: Dict[str, Any], body: str) -> str:
