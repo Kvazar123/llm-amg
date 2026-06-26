@@ -66,6 +66,24 @@ summary.
    and re-run, or follow a *Related* link. (If misses are systematic, measure and
    tune — see below.)
 
+## Lazy derivation: first touch is synchronous (only if `derivation: lazy`)
+
+When `config.yml → derivation: lazy`, the graph may hold nodes that are not yet summarized
+(a structural skeleton awaiting first use). `retrieve.py` reports these as `stale_in_pack`
+(printed under `--- stale in pack ---`): the nodes a query just activated that are still
+`stale`. Before working from the pack, **derive them**, so the activated node answers with a
+real summary instead of an empty one — the lazy mechanism's first-touch guarantee:
+
+1. take the `stale_in_pack` ids from the retriever's output;
+2. spawn an `amg-builder` on just those units (their `work/queue.json` / `queue-deferred.json`
+   entries) → a `derived-*.json`, and apply it (`reconcile.py apply ...`) — the same steps 3–4
+   as bootstrap (see the `amg-bootstrap` skill);
+3. re-read the pack (or re-run retrieve) and proceed.
+
+Under the default `eager`, `stale_in_pack` is normally empty, so this is a no-op. This is
+the read-side half of lazy derivation; the build-side (priority map + background fill) is in
+the `amg-bootstrap` skill.
+
 ## Verify a code claim before you answer (cheap, mandatory)
 
 The pack is **memory, not ground truth**: a summary can lag the source it points to

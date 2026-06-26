@@ -84,6 +84,39 @@ def test_inspect(tmp: Path) -> None:
     print("PASS  inspect: counts by category/kind, with_text, missing-queue -> None")
 
 
+def test_priority(tmp: Path) -> None:
+    """Lazy derivation (Stage 17): the priority split derives the structural MAP first
+    (module/class/package/file) and defers leaf detail; a used node (usage.log) is
+    promoted into the priority batch on the background pass."""
+    amg = tmp / "amg3"
+    (amg / "work").mkdir(parents=True)
+    units = [
+        {"id": "code:src/m.py", "kind": "module", "source_path": "src/m.py", "category": "code"},
+        {"id": "code:src/m.py::C", "kind": "class", "source_path": "src/m.py", "category": "code"},
+        {"id": "code:src/m.py::f", "kind": "function", "source_path": "src/m.py", "category": "code"},
+        {"id": "doc:doc/g.md::s", "kind": "section", "source_path": "doc/g.md", "category": "doc"},
+    ]
+    (amg / "work" / "queue.json").write_text(
+        json.dumps({"generated": "t", "units": units}), encoding="utf-8")
+
+    # no usage: structural map (module/class) is priority, leaf detail (function/section) deferred
+    counts = PQ.priority_split(amg, use_usage=False)
+    assert counts == {"priority": 2, "deferred": 2}, counts
+    pri = json.loads((amg / "work" / "queue-priority.json").read_text(encoding="utf-8"))
+    dfr = json.loads((amg / "work" / "queue-deferred.json").read_text(encoding="utf-8"))
+    assert {u["id"] for u in pri["units"]} == {"code:src/m.py", "code:src/m.py::C"}, pri
+    assert {u["id"] for u in dfr["units"]} == {"code:src/m.py::f", "doc:doc/g.md::s"}, dfr
+
+    # phase C: a USED leaf (usage.log) is promoted into the priority batch
+    (amg / "work" / "usage.log").write_text(
+        json.dumps({"used": ["code:src/m.py::f"], "outcome": "completed"}) + "\n", encoding="utf-8")
+    counts2 = PQ.priority_split(amg, use_usage=True)
+    assert counts2 == {"priority": 3, "deferred": 1}, counts2
+    pri2 = json.loads((amg / "work" / "queue-priority.json").read_text(encoding="utf-8"))
+    assert "code:src/m.py::f" in {u["id"] for u in pri2["units"]}, "used leaf must be promoted"
+    print("PASS  priority_split: map first, leaf deferred; usage.log promotes a used node")
+
+
 def main() -> int:
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
@@ -94,6 +127,7 @@ def main() -> int:
         test_subtree_key()
         test_partition(tmp)
         test_inspect(tmp)
+        test_priority(tmp)
         print("\nALL QUEUE-HELPER CHECKS PASSED")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

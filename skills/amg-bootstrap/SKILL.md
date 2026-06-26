@@ -117,6 +117,35 @@ delegating per-unit reading to subagents.
 6. **Log.** The scripts append a txid-stamped line to `.claude/amg/log.md`. Confirm
    to the user with the counts and the gap-report highlights.
 
+## Derivation strategy: eager vs lazy
+
+`config.yml → derivation` controls how much of the semantic layer you build up front:
+
+- **`eager`** (default) — derive every queued unit (steps 3–4 over the whole `queue.json`),
+  then synthesize (step 5). This is the workflow above.
+- **`lazy`** — build the structural map now, defer leaf detail until a query needs it. Use
+  it only on a graph far larger than it is queried (THEORY §4.10); the default stays `eager`.
+
+In **`lazy`** mode, after step 2 split the queue into a priority batch and a deferred
+remainder, and derive only the priority batch:
+```bash
+python .claude/skills/amg-bootstrap/scripts/partition_queue.py --priority .
+#  -> work/queue-priority.json  (the map: module/class/package/file units)
+#  -> work/queue-deferred.json  (leaf detail: functions, doc sections, records — deferred)
+```
+Run steps 3–4 over `work/queue-priority.json` **only**, and **always** run synthesis
+(step 5). The structural skeleton (step 2) and the strategic synthesis are **never**
+deferred — that is the safeguard: the map is always present, only fine detail waits.
+
+**Background fill (over sessions, used-first).** A deferred unit is derived on first touch
+by the retrieve skill (when a query activates it — phase B), and an idle or later bootstrap
+pass derives the next batch by usage priority:
+```bash
+python .claude/skills/amg-bootstrap/scripts/partition_queue.py --priority --usage .
+```
+`--usage` also promotes units whose node appears in `work/usage.log` (actually used), so the
+graph converges to fully derived — most-used first — without a bootstrap spike.
+
 ## Scale and safety notes
 - For very large repos, run step 3 as several scoped subagents rather than one; each
   works in its own isolated context so nothing overflows.

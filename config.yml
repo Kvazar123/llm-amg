@@ -139,6 +139,24 @@ models:
   synthesis:      {model: opus,   reasoning_effort: high}  # architecture, gaps, consolidation judgment
 
 # -----------------------------------------------------------------------------
+# Derivation strategy (Stage 17). How much of the semantic layer bootstrap builds
+# up front:
+#   eager (default) : derive a summary + edges for EVERY queued unit at bootstrap.
+#   lazy            : derive only the structural MAP eagerly (module/class/package/file
+#                     units + the synthesis hubs) and defer leaf detail (functions, doc
+#                     sections, records) until a query activates it — then it is derived
+#                     synchronously BEFORE the answer (first touch is never empty). A
+#                     background pass fills the rest over sessions, prioritized by usage.
+# Lazy trades up-front cost for a quality dip on not-yet-derived nodes (THEORY §4.10); it
+# pays off only on a graph far larger than it is queried. The default stays `eager` until
+# a measured uplift on a large graph (the off/on protocol) — an explicit opt-in, not an
+# automatic mode. Safeguards: the structural skeleton and the strategic synthesis are
+# NEVER deferred; the first touch of an activated node is synchronous; deferral loses
+# nothing (the source file and the structural node remain).
+# -----------------------------------------------------------------------------
+derivation: eager        # eager | lazy
+
+# -----------------------------------------------------------------------------
 # Spreading-activation retrieval (amg-retrieve). Query-biased Personalized PageRank.
 # -----------------------------------------------------------------------------
 retrieval:

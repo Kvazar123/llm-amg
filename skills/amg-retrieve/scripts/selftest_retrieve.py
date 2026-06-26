@@ -91,7 +91,10 @@ def test_stale_is_flagged(tmp: Path) -> None:
     res = R.retrieve(store, "background sync reconcile state",
                      write_pack=False, log_coactivation=False)
     assert R._STALE_TEXT in res["pack"], "stale node must be flagged in the pack"
-    print("PASS  stale node flagged in pack")
+    # lazy derivation (Stage 17 phase B): the activated stale node is EXPOSED so the
+    # amg-retrieve skill can derive it synchronously before the answer
+    assert res["stale_in_pack"] == ["doc:guide.md::sync"], res.get("stale_in_pack")
+    print("PASS  stale node flagged in pack + exposed in stale_in_pack")
 
 
 def test_trust_marks(tmp: Path) -> None:

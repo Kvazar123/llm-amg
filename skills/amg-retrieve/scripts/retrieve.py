@@ -683,8 +683,15 @@ def retrieve(store_root: os.PathLike[str] | str, query: str,
         _log_coactivation(store_root, query, tiers, adj)
         _log_pack(store_root, query, tiers, nodes)
 
+    # Lazy derivation (Stage 17 phase B): activated nodes still awaiting a summary
+    # (status stale) so the amg-retrieve skill can derive them synchronously BEFORE the
+    # answer (first touch is never empty). Harmless under eager — normally empty. Pack
+    # order strategic..periphery, so the most prominent stale node comes first.
+    stale_in_pack = [nid for tier in ("strategic", "tactical", "operational", "periphery")
+                     for nid in tiers.get(tier, []) if nodes[nid].get("status") == "stale"]
     result = {"ranked": ranked, "pack": pack, "tiers": tiers, "seeds": seeds,
-              "relevance": rel, "n_nodes": len(nodes), "intent": sorted(flags)}
+              "relevance": rel, "n_nodes": len(nodes), "intent": sorted(flags),
+              "stale_in_pack": stale_in_pack}
     if explain:                           # decompose inflow on the RAW ppr (pre-prior)
         result["explain"] = _explain_inflow(ppr, adj, nodes, cfg,
                                             [nid for nid, _ in ranked[:explain]])
@@ -782,6 +789,10 @@ def main(argv: List[str]) -> int:
     print("\n--- ranked (top {}) ---".format(top))
     for nid, a in res["ranked"][:top]:
         print(f"{a:8.4f}  {nid}")
+    if res.get("stale_in_pack"):           # lazy derivation (Stage 17 phase B): derive these first
+        print("\n--- stale in pack (lazy: derive before relying) ---")
+        for nid in res["stale_in_pack"]:
+            print(f"  {nid}")
     if n_explain:
         print("\n--- explain: top edges that drove each node "
               "(share = % of its activation) ---")
