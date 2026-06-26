@@ -111,11 +111,19 @@ _VERIFICATION_DEFAULTS = {"enabled": True, "verify_code_claims": True,
 TIER_OF_TYPE = {
     "hub": "strategic", "overview": "strategic",
     "decision": "strategic", "adr": "strategic",   # authored rulings: surface early
+    # pattern nodes (Stage 17): synthesized, project-local generalizations of experience
+    # (architectural pattern / recurring fix / anti-pattern / migration recipe). Strategic:
+    # surface the reusable pattern before its instances, like a hub.
+    "architectural_pattern": "strategic", "recurring_fix": "strategic",
+    "anti_pattern": "strategic", "migration_recipe": "strategic",
     "module": "tactical", "class": "tactical", "package": "tactical",
     "function": "operational", "section": "operational",
     "file": "operational", "method": "operational",
 }
 CODE_TYPES = {"module", "class", "function", "method", "file"}
+# Pattern nodes (Stage 17): synthesized, project-local generalizations of experience.
+# Instances link to a pattern via `exemplifies`; the eval guards false analogies (task 5).
+PATTERN_TYPES = {"architectural_pattern", "recurring_fix", "anti_pattern", "migration_recipe"}
 # Authored rulings carry their payload in the body (the rationale), so render it
 # inline whatever tier they land in — unlike a hub, whose body is a long overview.
 DOC_BODY_TYPES = {"decision", "adr"}

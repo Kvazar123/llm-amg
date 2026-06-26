@@ -41,7 +41,25 @@ files. Work in your own context and return a concise report.
      conflict; do not pick a winner — these pairs become the candidates the consolidator
      arbitrates (it weighs provenance/freshness and issues the verdict).
 
-3. **Gap report** (`gap-report.md`, in `working_language`), with three sections:
+3. **Pattern nodes** (only for a *genuine, recurring* pattern). When the same engineering
+   approach, fix, or mistake recurs across the project, distil it into a project-local
+   **pattern node** (synthesized, like a hub) so the experience transfers to new cases:
+   - `architectural_pattern` — a recurring design/structure (e.g. "data access goes through
+     a unit-of-work wrapper");
+   - `recurring_fix` — the same fix applied repeatedly to one class of problem;
+   - `anti_pattern` — a recurring mistake to avoid;
+   - `migration_recipe` — a repeatable recipe to move from one approach to another.
+
+   Emit the pattern as a create-item with that `type`, an id like `pattern:<slug>`, a
+   `working_language` summary, a `confidence`, and a `derived_from` list of the instance ids.
+   Link each genuine instance with an `exemplifies` edge **on the instance** (the edge lives
+   on the concrete node, pointing at the pattern) — i.e. add an update-item for the instance:
+   `{"id": "<instance id>", "edges": [{"rel": "exemplifies", "to": "pattern:<slug>"}]}`.
+   Be conservative: a pattern needs at least a few real instances, and you must **never link
+   an instance that does not truly fit** — a false analogy is worse than a missing one (the
+   eval measures `false_analogy_rate`). Prefer a few well-grounded patterns over many thin ones.
+
+4. **Gap report** (`gap-report.md`, in `working_language`), with three sections:
    - **Undocumented code** — code nodes with no inbound `documents` edge.
    - **Drifted docs** — doc nodes describing code whose `source_hash` changed, or
      referencing code ids that no longer exist.

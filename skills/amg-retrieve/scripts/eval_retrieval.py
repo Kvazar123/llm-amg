@@ -32,7 +32,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import yaml
 
@@ -375,6 +375,144 @@ def build_hebbian_demo(root: Path) -> List[Dict[str, Any]]:
 
 
 # --------------------------------------------------------------------------- #
+# Pattern nodes (Stage 17, task 5): labeled demo + the three guard metrics
+# --------------------------------------------------------------------------- #
+
+def build_pattern_demo(root: Path) -> Dict[str, Any]:
+    """A labeled graph for the pattern-node metrics. Two synthesized pattern nodes:
+
+      * anti_pattern `pattern:broad-except` — 3 CORRECT instances (exemplifies) plus one
+        FALSE-analogy instance wrongly linked (validate catches a SPECIFIC exception, not
+        the anti-pattern) -> exercises transfer_recall + false_analogy_rate;
+      * migration_recipe `pattern:legacy-auth-mig` — both instances superseded -> exercises
+        stale_pattern_rate (the pattern no longer holds).
+
+    Writes pattern-labels.json (the CORRECT exemplifies links) so false_analogy_rate can
+    flag the planted wrong link. Lexical only (embeddings off): deterministic and offline."""
+    nd = root / "nodes"
+    for sub in ("code", "_hubs"):
+        (nd / sub).mkdir(parents=True, exist_ok=True)
+    (root / "config.yml").write_text(
+        "active: true\nworking_language: en\nretrieval:\n  embeddings:\n    enabled: off\n")
+
+    def w(rel_dir: str, fname: str, text: str) -> None:
+        (nd / rel_dir / fname).write_text(text, encoding="utf-8")
+
+    def exemplifies(pat: str) -> List[Dict[str, Any]]:
+        return [{"rel": "exemplifies", "to": pat, "w": 0.6}]
+
+    correct: List[List[str]] = []
+
+    # anti_pattern + 3 correct instances (active)
+    w("_hubs", "broad_except.md", _node(
+        "pattern:broad-except", "anti_pattern",
+        "Anti-pattern: a broad except Exception hides the real failure and swallows bugs."))
+    for i, (fn, sp) in enumerate([("load_config", "src/cfg.py"), ("save_state", "src/store.py"),
+                                  ("sync_remote", "src/net.py")], 1):
+        nid = f"code:{sp}::{fn}"
+        w("code", f"inst{i}.md", _node(
+            nid, "function",
+            f"{fn}: wraps the body in a broad except Exception and swallows the error.",
+            source_path=sp, lineno=10, edges=exemplifies("pattern:broad-except")))
+        correct.append([nid, "pattern:broad-except"])
+    # FALSE analogy: a specific-exception handler wrongly linked (NOT in labels)
+    w("code", "false.md", _node(
+        "code:src/valid.py::validate", "function",
+        "validate: catches only ValueError and re-raises everything else, which is correct.",
+        source_path="src/valid.py", lineno=5, edges=exemplifies("pattern:broad-except")))
+
+    # migration_recipe whose instances are all superseded -> stale pattern
+    w("_hubs", "legacy_mig.md", _node(
+        "pattern:legacy-auth-mig", "migration_recipe",
+        "Recipe: migrate the old token auth to the new session auth."))
+    for i, (fn, sp) in enumerate([("old_login", "src/legacy_a.py"),
+                                  ("old_token", "src/legacy_b.py")], 1):
+        nid = f"code:{sp}::{fn}"
+        w("code", f"legacy{i}.md", _node(
+            nid, "function", f"{fn}: deprecated token-auth path, kept for reference.",
+            source_path=sp, lineno=3, status="superseded",
+            edges=exemplifies("pattern:legacy-auth-mig")))
+        correct.append([nid, "pattern:legacy-auth-mig"])
+
+    labels = {"correct_exemplifies": correct}
+    (root / "pattern-labels.json").write_text(json.dumps(labels, indent=2))
+    return labels
+
+
+def pattern_metrics(store_root: Path, labels: Dict[str, Any],
+                    cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The three pattern-node guard metrics (Stage 17 task 5), over the graph + labels:
+
+      transfer_recall    : for each labeled instance, query its context and measure recall
+                           of {its pattern + the sibling instances} in the assembled pack —
+                           does activating one case surface the pattern and its analogues?
+      false_analogy_rate : fraction of exemplifies->pattern links in the graph NOT in the
+                           labeled-correct set — a wrong analogy the synthesis introduced
+                           (the DoD guard: false analogies must not pass unchecked). Lower
+                           is better. On a real graph the correct set comes from review;
+                           without labels the rate is unknowable, which is exactly the point.
+      stale_pattern_rate : fraction of pattern nodes whose instances are mostly NOT active
+                           (stale/superseded/gone) — the pattern no longer holds.
+    """
+    store_root = Path(store_root)
+    cfg = cfg or R.load_config(store_root)
+    nodes = R.load_nodes(store_root)
+    pattern_ids = {nid for nid, n in nodes.items() if n.get("type") in R.PATTERN_TYPES}
+
+    links: List[Tuple[str, str]] = []
+    by_pattern: Dict[str, List[str]] = {p: [] for p in pattern_ids}
+    for nid, n in nodes.items():
+        for e in n.get("edges", []):
+            if isinstance(e, dict) and e.get("rel") == "exemplifies" and e.get("to") in pattern_ids:
+                links.append((nid, e["to"]))
+                by_pattern[e["to"]].append(nid)
+
+    correct = {(p[0], p[1]) for p in labels.get("correct_exemplifies", []) if len(p) == 2}
+    false_links = [list(l) for l in links if l not in correct]
+    false_analogy_rate = round(len(false_links) / len(links), 3) if links else None
+
+    stale = counted = 0
+    for insts in by_pattern.values():
+        if not insts:
+            continue
+        counted += 1
+        non_active = sum(1 for i in insts if (nodes[i].get("status") or "active") != "active")
+        if non_active > len(insts) / 2:
+            stale += 1
+    stale_pattern_rate = round(stale / counted, 3) if counted else None
+
+    recalls: List[float] = []
+    for inst, pat in sorted(correct):
+        if inst not in nodes or pat not in nodes:
+            continue
+        gold = {pat} | {i for (i, p) in correct if p == pat and i != inst}
+        res = R.retrieve(store_root, nodes[inst].get("summary") or inst, config=cfg,
+                         write_pack=False, log_coactivation=False)
+        t = res["tiers"]
+        pack = set(t.get("strategic", []) + t.get("tactical", []) +
+                   t.get("operational", []) + t.get("periphery", []))
+        recalls.append(len(pack & gold) / len(gold))
+    transfer_recall = round(sum(recalls) / len(recalls), 3) if recalls else None
+
+    return {"patterns": len(pattern_ids), "exemplifies_links": len(links),
+            "transfer_recall": transfer_recall, "false_analogy_rate": false_analogy_rate,
+            "stale_pattern_rate": stale_pattern_rate, "false_links": false_links}
+
+
+def print_pattern_report(m: Dict[str, Any]) -> None:
+    def f(x: Optional[float]) -> str: return "n/a" if x is None else f"{x:.3f}"
+    print(f"pattern nodes: {m['patterns']}   exemplifies->pattern links: {m['exemplifies_links']}")
+    print(f"  transfer_recall    = {f(m['transfer_recall'])}   "
+          "(pattern + analogues surfaced when querying one instance — higher better)")
+    print(f"  false_analogy_rate = {f(m['false_analogy_rate'])}   "
+          "(wrong exemplifies links — the guard; lower better)")
+    print(f"  stale_pattern_rate = {f(m['stale_pattern_rate'])}   "
+          "(patterns whose instances are mostly retired)")
+    for inst, pat in m.get("false_links", []):
+        print(f"    flagged false analogy:  {inst}  -/->  {pat}")
+
+
+# --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
 
@@ -387,6 +525,14 @@ def main(argv: List[str]) -> int:
         print(f"built demo graph at {root}  ({len(cases)} cases)\n")
         report = run(root, cases)
         print_report(report)
+        return 0
+
+    if "--pattern-demo" in args:
+        root = Path(args[args.index("--pattern-demo") + 1]).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        labels = build_pattern_demo(root)
+        print(f"built pattern demo graph at {root}\n")
+        print_pattern_report(pattern_metrics(root, labels))
         return 0
 
     if "--compare-embeddings" in args:
