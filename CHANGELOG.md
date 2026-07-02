@@ -4,6 +4,22 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [1.8.0] — 2026-07-02
+
+Stage 17 closed — the single-project semantic layer matured without risk to base retrieval: project-local pattern nodes, optional lazy/on-demand derivation, and three deferred decisions taken by measurement. Additive (MINOR); defaults unchanged (`derivation: eager`, `apply_hebbian: false`). A real-project dogfood also surfaced systemic build-reliability defects, recorded as new roadmap stages 18–20 (translation / env-testing renumbered → 21 / 22).
+
+### Added
+- **Pattern nodes** — project-local generalization of recurring experience: types `architectural_pattern` / `recurring_fix` / `anti_pattern` / `migration_recipe` (synthesized, strategic tier, `retrieve.PATTERN_TYPES`); `amg-synth` emits them as a create-item plus `exemplifies` edges on the instances (via the type-agnostic `apply_derivation` path — no new engine code); eval guard `eval_retrieval.pattern_metrics` / `build_pattern_demo` / `--pattern-demo` (transfer_recall / false_analogy_rate / stale_pattern_rate); `selftest_pattern`. Theory — THEORY §13 (within-project analogy transfer, the neocortical-generalization analog).
+- **Lazy / on-demand derivation** (opt-in, off by default): `config.yml derivation: eager|lazy`; `partition_queue.priority_split` + `PRIORITY_KINDS` + CLI `--priority` / `--usage` (derive the structural map first, defer leaf detail); `retrieve.stale_in_pack` (first touch is synchronous); SKILL orchestration in `amg-bootstrap` / `amg-retrieve`. The engine does not branch on the flag.
+- **Hypervector / VSA research note** (THEORY §16): a distributed substrate would only ever be a derived index over the symbolic canon, not a replacement — not warranted at AMG's scale; no code.
+
+### Changed
+- Three deferred decisions taken by MEASUREMENT on `../amg-bigtest`: (1) **lazy off/on** (`_measure_lazy.py`) — bare deferral severs multi-hop reach (hop → 0), the synchronous first touch recovers it (hop 0.18 BM25 / 0.42 model2vec) while touching only ~16–23 of 140 deferred nodes per query → default stays `eager`, the §4.10 first-touch safeguard is numerically confirmed; (2) **Hebbian** re-measured (`_measure_big.py`, a regression matching Stage 14: recall 0.60→0.85, hop 0.25→0.72 over folds) → default `apply_hebbian` stays `false` (no real usage.log yet; GUIDE/READMEs now carry the numbers + an enable recipe); (3) **semantic-drift segmenter** measured NOT needed — structural chunkers keep units bounded (~60–3200 tokens); the only bloat is break-less prose, better served by a deterministic size split (04-ingest / roadmap §4.6).
+- Docs synced with the implemented layer: THEORY §13/§16, `02-data-model` (pattern types), `06-retrieval` (pattern tier + lazy first touch), `10-eval-tools` (pattern metrics + `--pattern-demo`), `08-agents-skills` (pattern emission + lazy orchestration), `09-config` (`derivation` moved from planned to implemented), `04-ingest` (semantic-drift decision), GUIDE (pattern nodes, lazy derivation, Hebbian when-to-enable numbers), both READMEs.
+- Roadmap: dogfood build-reliability audit §1.39–1.49 and new stages **18** (deployment & store resolution), **19** (correct & connected build — deterministic ref-resolution pass, backbone, global semantic linker, connectivity gate, derivation cache), **20** (economical build, ×20–30 without quality loss) — a real ~1 MB project built a fragmented graph (322 components, 1838 dangling edges) over ~30 h / ~70 M tokens; the mechanical layer is sound, the defects are in the semantic pipeline, the half-done §4.2 (calls/backbone/inheritance), and missing quality/reproducibility/cost controls. Translation → stage 21, env-testing → stage 22; §1.37/§1.38 folded into stage 18.
+
+Commits `a5767d5` / `6947063` / `cd49eb0` (groups A–C) plus the close.
+
 ## [1.7.0] — 2026-06-26
 
 Stage 16 closed — team work over a shared folder and an optional graph-in-git, without complicating the single-user mode. The graph is plain markdown, so a team shares it two ways and AMG only READS the project's existing git (it keeps no version control of its own). Additive and mostly hardening — a host-aware lock, resilience to a merge-conflicted node, best-effort git awareness — with no data-contract break (MINOR); single-user behavior is unchanged.
