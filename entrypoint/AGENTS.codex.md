@@ -6,7 +6,8 @@
      the model drives the loop via skills + subagents, and lifecycle (heal at start,
      consolidate at end) is loop discipline, not hooks. The installer writes this for
      `--env codex` and renders the paths to the configured agent dir. NOTE: this mode is
-     not yet verified on a live Codex — Stage 19; stability is not guaranteed. -->
+     not yet verified on a live Codex (a later roadmap stage); stability is not
+     guaranteed. -->
 
 ## AMG — Associative Memory Graph
 

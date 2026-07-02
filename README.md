@@ -4,7 +4,7 @@
 
 > Documentation: [Theory](docs/en/THEORY.md) · [Architecture](docs/en/architecture/README.md) · [Guide](docs/en/GUIDE.md) · [Install](INSTALL.md) · [Roadmap](docs/en/architecture/11-roadmap.md) · Русский: [README_RU.md](README_RU.md)
 
-> ⚠️ **TESTED ON CLAUDE CODE ONLY.** The installer can also set the memory up in other agent environments: **Codex** — with skills and TOML subagents (`--env codex`, the `.agents`/`.codex` directories); other AGENTS.md agents (Qwen Coder, etc.) — via a portable skill-less block (`--env generic`). But **functionality and stability on any non-Claude-Code environment are NOT yet tested or guaranteed** — all testing so far was on Claude Code. Verification of these environments is roadmap Stage 19.
+> ⚠️ **TESTED ON CLAUDE CODE ONLY.** The installer can also set the memory up in other agent environments: **Codex** — with skills and TOML subagents (`--env codex`, the `.agents`/`.codex` directories); other AGENTS.md agents (Qwen Coder, etc.) — via a portable skill-less block (`--env generic`). But **functionality and stability on any non-Claude-Code environment are NOT yet tested or guaranteed** — all testing so far was on Claude Code. Verifying these environments is a separate roadmap stage still ahead.
 
 ## What it is
 
@@ -47,7 +47,7 @@ Memory is tuned cautiously, in a "quality first" spirit:
 
 ## Installation
 
-The engine (`agents/` + `skills/` + the activation block) installs **locally** (into a single project's `<project>/.claude/`) or **globally** (one engine for all projects, in `~/.claude/`); the **graph is always local** — it lives in `<project>/.claude/amg/`, because memory belongs to a specific project. The entry point is the root `CLAUDE.md`: the AMG block is appended to its end between the markers `<!-- AMG:BEGIN -->` and `<!-- AMG:END -->`, your instructions stay above it, and a reinstall replaces only the block. Memory is turned on by the presence of `.claude/amg/config.yml` with `active: true`. The names `.claude`/`CLAUDE.md` are the Claude Code defaults; other environments substitute their own (for Codex — `.agents`/`AGENTS.md`, see "Other environments" below).
+The engine (`agents/` + `skills/` + the activation block) installs **locally** (into a single project's `<project>/.claude/`) or **globally** (one engine for all projects, in `~/.claude/`); the **graph is always local** — it lives in `<project>/.claude/amg/`, because memory belongs to a specific project. You install **from the unpacked AMG folder, kept outside the project** (the engine is copied into the agent directory, so the source folder is not needed afterwards); a global install additionally sets up a global config of personal defaults (`~/.claude/amg/config.yml` — model tiering, embeddings) that each project's local config inherits per key. The entry point is the root `CLAUDE.md`: the AMG block is appended to its end between the markers `<!-- AMG:BEGIN -->` and `<!-- AMG:END -->`, your instructions stay above it, and a reinstall replaces only the block. Memory is turned on by the presence of `.claude/amg/config.yml` with `active: true`. The names `.claude`/`CLAUDE.md` are the Claude Code defaults; other environments substitute their own (for Codex — `.agents`/`AGENTS.md`, see "Other environments" below).
 
 **1. Dependencies.** You need Python 3. The one mandatory dependency is `pyyaml`; everything else is optional (embeddings, PDF/DOCX/XLSX extraction, tree-sitter) and installed as needed:
 ```bash
@@ -55,17 +55,17 @@ python3 -m pip install pyyaml                  # mandatory
 python3 -m pip install -r requirements.txt     # everything optional at once (if you like)
 ```
 
-**2. Installation — two ways.** Both do the same thing; pick whichever suits you.
+**2. Installation — two ways.** Both do the same thing; pick whichever suits you. Unpack AMG into any folder **outside the project** — the engine is copied during the install, and the source folder is not needed afterwards.
 
-*Via the model (simpler).* Tell the model in Claude Code:
+*Via the model (simpler).* In a session inside your project, say:
 
-> **install AMG per INSTALL.md**
+> **install AMG per `<path-to-AMG>/INSTALL.md`**
 
-The model asks a few questions (local/global; agent directory and entry point; mirror and absorb paths; working language; embeddings; automation; what to ignore; whether to activate memory) and calls the installer for you.
+The model reads the instructions, asks a few questions (local/global; agent directory and entry point; mirror and absorb paths; working language; embeddings; automation; what to ignore; whether to activate memory), shows the existing settings on a reinstall — and calls the installer for you.
 
-*By command.* If you'd rather set everything yourself:
+*By command.* If you'd rather set everything yourself (run from the AMG folder):
 ```bash
-python install.py --target . --scope local \
+python install.py --target /path/to/project --scope local \
     --mirror src,doc --absorb data \
     --set working_language=ru --set active=true
 ```
@@ -93,7 +93,7 @@ The full reference for every key — [09-config](docs/en/architecture/09-config.
 - **Codex** (`--env codex`) — with skills and **TOML subagents** in `.codex/agents` (with a per-role `model` and reasoning effort from the `models` block), a skill-aware `AGENTS.md` block, and no Claude hooks or command;
 - **other AGENTS.md environments** (`--env generic`, e.g. Qwen Coder) — a portable block **with no skills**, the same loop via direct script calls (the model reads `agents/*.md` as guidance).
 
-Baseline functionality does not depend on the environment; the set of conveniences does. **These modes are untested** on any non-Claude-Code environment so far — all testing was on Claude Code (verification: roadmap Stage 19).
+Baseline functionality does not depend on the environment; the set of conveniences does. **These modes are untested** on any non-Claude-Code environment so far — all testing was on Claude Code (verifying them is a separate roadmap stage still ahead).
 
 ## First run
 
