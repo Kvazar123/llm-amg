@@ -220,11 +220,34 @@ def _deep_merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _global_defaults_raw(local_raw: Dict[str, Any]) -> Dict[str, Any]:
+    """The machine-wide defaults config (~/<agent_dir>/amg/config.yml, written by a
+    global install — Stage 18, audit 1.37) as a raw dict, or {}. Read ONLY when the
+    local config carries the installer-written `agent_dir` key: it names the
+    environment's home layer and marks the config as installer-made, so a minimal
+    hand-made config (e.g. a test fixture) stays hermetic unless it opts in by adding
+    the key. Mirrors extract_structure._global_defaults_raw (kept dependency-free)."""
+    adir = str(local_raw.get("agent_dir") or "").strip()
+    if not adir:
+        return {}
+    g = Path.home() / adir / "amg" / "config.yml"
+    try:
+        if not g.exists():
+            return {}
+        raw = yaml.safe_load(g.read_text(encoding="utf-8")) or {}
+        return raw if isinstance(raw, dict) else {}
+    except (OSError, yaml.YAMLError):
+        return {}
+
+
 def load_config(store_root: Path) -> Dict[str, Any]:
     f = store_root / "config.yml"
     raw: Dict[str, Any] = {}
     if f.exists():
         raw = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+    # Config layering (Stage 18): global machine-wide defaults under the local config,
+    # local overrides per key.
+    raw = _deep_merge(_global_defaults_raw(raw), raw)
     cfg = _deep_merge(DEFAULTS, (raw.get("retrieval") or {}))
     # Surface top-level working_language into the retrieval cfg so embedding backend
     # selection can default to a multilingual model for non-English projects.

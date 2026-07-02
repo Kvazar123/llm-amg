@@ -112,14 +112,47 @@ def _sha(text: str) -> str:
 # Config + source resolution (mirror_path / absorb_path, str or list)
 # --------------------------------------------------------------------------- #
 
+def _deep_merge_cfg(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
+    """Per-key overlay: nested dicts merge key-by-key, scalars/lists replace whole —
+    the config-layering rule (global defaults under the local config; local wins)."""
+    out = dict(base)
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge_cfg(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def _global_defaults_raw(local_raw: Dict[str, Any]) -> Dict[str, Any]:
+    """The machine-wide defaults config (~/<agent_dir>/amg/config.yml, written by a
+    global install — Stage 18, audit 1.37) as a raw dict, or {}. Read ONLY when the
+    local config carries the installer-written `agent_dir` key: it both names the
+    environment's home layer (.claude / .agents / custom) and marks the config as
+    installer-made — a minimal hand-made config (e.g. a test fixture) stays hermetic
+    unless it opts in by adding the key. retrieve/consolidate mirror this helper."""
+    adir = str(local_raw.get("agent_dir") or "").strip()
+    if not adir:
+        return {}
+    g = Path.home() / adir / "amg" / "config.yml"
+    try:
+        if not g.exists():
+            return {}
+        raw = yaml.safe_load(g.read_text(encoding="utf-8")) or {}
+        return raw if isinstance(raw, dict) else {}
+    except (OSError, yaml.YAMLError):
+        return {}
+
+
 def load_config(amg_root: Path) -> Dict[str, Any]:
-    """The store's config.yml as a raw dict. A MISSING config means AMG is not
-    installed for the resolved root — exit with a diagnostic that NAMES that root
-    (the first symptom of a store-resolution miss, audit 1.50) instead of an
-    unhandled FileNotFoundError. Unlike the tolerant loaders (retrieve/consolidate/
-    lifecycle read tunables and can fall back to defaults), extraction without a
-    config would silently ingest nothing ("added: 0") — the masked failure this
-    stage removes."""
+    """The store's config as a raw dict: the machine-wide global defaults (if any)
+    deep-merged under the local config.yml — local overrides per key (Stage 18,
+    audit 1.37). A MISSING local config means AMG is not installed for the resolved
+    root — exit with a diagnostic that NAMES that root (the first symptom of a
+    store-resolution miss, audit 1.50) instead of an unhandled FileNotFoundError.
+    Unlike the tolerant loaders (retrieve/consolidate/lifecycle read tunables and can
+    fall back to defaults), extraction without a config would silently ingest nothing
+    ("added: 0") — the masked failure this stage removes."""
     f = amg_root / "config.yml"
     if not f.exists():
         raise SystemExit(
@@ -128,7 +161,8 @@ def load_config(amg_root: Path) -> Dict[str, Any]:
             "The store resolves as <agent_dir>/amg (e.g. .claude/amg). If AMG is "
             "installed elsewhere, pass --root <agent_dir> or set AMG_AGENT_DIR; "
             "otherwise install it first: python <amg-checkout>/install.py --target <project>.")
-    return yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+    raw = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+    return _deep_merge_cfg(_global_defaults_raw(raw), raw)
 
 
 def _as_list(val: Any) -> List[str]:

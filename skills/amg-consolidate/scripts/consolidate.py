@@ -168,6 +168,37 @@ _SOURCE_RANK = {"code": 6, "doc": 5, "data": 5, "user": 5, "chat": 3, "model_inf
 # Node IO
 # --------------------------------------------------------------------------- #
 
+def _deep_merge_cfg(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
+    """Per-key overlay (nested dicts merge key-by-key, scalars/lists replace whole) —
+    the config-layering rule. Mirrors retrieve._deep_merge (kept dependency-free)."""
+    out = dict(base)
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge_cfg(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def _global_defaults_raw(local_raw: Dict[str, Any]) -> Dict[str, Any]:
+    """The machine-wide defaults config (~/<agent_dir>/amg/config.yml, written by a
+    global install — Stage 18, audit 1.37) as a raw dict, or {}. Read ONLY when the
+    local config carries the installer-written `agent_dir` key (names the home layer
+    AND marks the config installer-made; hand-made fixtures stay hermetic). Mirrors
+    extract_structure._global_defaults_raw (kept dependency-free)."""
+    adir = str(local_raw.get("agent_dir") or "").strip()
+    if not adir:
+        return {}
+    g = Path.home() / adir / "amg" / "config.yml"
+    try:
+        if not g.exists():
+            return {}
+        raw = yaml.safe_load(g.read_text(encoding="utf-8")) or {}
+        return raw if isinstance(raw, dict) else {}
+    except (OSError, yaml.YAMLError):
+        return {}
+
+
 def load_config(amg_root: Path) -> Dict[str, Any]:
     cfg: Dict[str, Any] = json.loads(json.dumps(DEFAULTS))   # deep copy
     cfg["working_language"] = "en"          # summaries' language for created nodes
@@ -176,8 +207,13 @@ def load_config(amg_root: Path) -> Dict[str, Any]:
     # config that omits it, with no hard-coded `.claude`.
     cfg["eval_gate"]["cases"] = str(amg_root.parent / "skills" / "amg-retrieve" / "evals" / "cases.json")
     f = amg_root / "config.yml"
+    raw: Dict[str, Any] = {}
     if f.exists():
         raw = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+    # Config layering (Stage 18): global machine-wide defaults under the local config,
+    # local overrides per key.
+    raw = _deep_merge_cfg(_global_defaults_raw(raw), raw)
+    if raw:
         for key in ("hebbian_rate", "decay_rate", "prune_below", "part_of_renormalize",
                     "default_edge_weight", "apply_hebbian"):
             if key in (raw.get("weights") or {}):

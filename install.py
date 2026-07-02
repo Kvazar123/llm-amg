@@ -22,22 +22,38 @@ Control-plane mechanics (hooks, the /amg slash command, the @digest import) are 
 Code features. In another environment the portable substrate is the activation loop plus
 verbal triggers plus direct script calls; the block carries that loop regardless.
 
+Run the installer FROM the AMG checkout, which may live ANYWHERE — outside the target
+project (recommended: no clutter, and an amg/-named checkout inside a project is what
+store resolution must veto) or as a global unpack; the engine is COPIED into
+<agent_dir>/, so the checkout is not needed after the install.
+
 CLI (the model fills these from the user's answers):
   python install.py --target <proj> [--scope local|global]
       [--agent-dir .claude] [--entrypoint CLAUDE.md]
-      [--env claude-code|generic]   # generic = any other agent env (Codex, Qwen Coder, ...):
-                                    # the portable skill-less AGENTS.md block, no hooks/command
-      [--mirror a,b] [--absorb c,d] [--exclude "*.x,*.y"]
+      [--env claude-code|codex|generic]  # codex = skills + TOML subagents (.codex/agents);
+                                    # generic = any other AGENTS.md env (Qwen Coder, ...):
+                                    # the portable skill-less block, no hooks/command
+      [--mirror a,b] [--absorb c,d] [--absorb-once e,f] [--exclude "*.x,*.y"]
       [--set active=false] [--set working_language=ru] [--set automation=true] ...
+      [--set retrieval.embeddings.enabled=auto]   # dotted path = nested key
+      [--set-global retrieval.embeddings.enabled=auto]  # into the GLOBAL defaults config
       [--deps base,embeddings,text,treesitter] [--no-verify]
       [--build]          # also build the structural graph now (ready this session)
       [--project-only]   # add a project to an existing (global) install: local config only
   python install.py --target <proj> --uninstall [--scope global] [--purge-graph]
 
+Config layers (Stage 18, audit 1.37): a GLOBAL install also writes the machine-wide
+personal defaults to ~/<agent_dir>/amg/config.yml — the `models` tiering and the
+`retrieval.embeddings` block — and the project's LOCAL config then omits those blocks,
+inheriting them per key (the loaders deep-merge global -> local; the local file wins).
+Project keys (active, sources, working_language, budgets) always stay local: that file
+is part of the project's git canon, the global one never leaves the machine.
+
 Reinstall is safe and idempotent: only the AMG skills/agents are replaced (other skills
 in a shared ~/.claude are kept), the block is refreshed between its markers, and an
-existing project config.yml is never clobbered. Project graphs are always local, so a
-global reinstall never touches them.
+existing project config.yml is never clobbered (its current values are printed so the
+flow can confirm them). Project graphs are always local, so a global reinstall never
+touches them.
 """
 from __future__ import annotations
 
@@ -228,21 +244,221 @@ def _set_list(text: str, key: str, items: List[str]) -> str:
     return "\n".join(out)
 
 
+def _set_nested(text: str, dotted: str, value: str) -> str:
+    """Set a NESTED scalar key given as a dotted path (e.g.
+    retrieval.embeddings.enabled) in the template text, preserving comments. Each
+    segment is located inside its parent's block by indentation (2 spaces per level);
+    the leaf keeps its inline comment. Missing segments are created at the end of the
+    deepest existing parent's block. Top-level keys go through _set_scalar."""
+    keys = dotted.split(".")
+    lines = text.split("\n")
+    lo, hi, indent = 0, len(lines), 0            # search window = parent's block
+    for depth, key in enumerate(keys):
+        leaf = depth == len(keys) - 1
+        pat = re.compile((rf"^{' ' * indent}(# ?)?{re.escape(key)}:" if leaf
+                          else rf"^{' ' * indent}{re.escape(key)}:"))
+        found = next((i for i in range(lo, hi) if pat.match(lines[i])), None)
+        if found is None:                        # create the remaining chain
+            chain = []
+            for k in keys[depth:-1]:
+                chain.append(f"{' ' * indent}{k}:")
+                indent += 2
+            chain.append(f"{' ' * indent}{keys[-1]}: {value}")
+            lines[hi:hi] = chain
+            return "\n".join(lines)
+        if leaf:                                 # replace the value, keep the comment
+            rest = lines[found].split(":", 1)[1]
+            cpos = rest.find("#")
+            comment = ("        " + rest[cpos:]) if cpos != -1 else ""
+            lines[found] = f"{' ' * indent}{key}: {value}{comment}"
+            return "\n".join(lines)
+        lo = found + 1                           # narrow to this key's block
+        j = lo
+        while j < hi:
+            if not lines[j].strip():
+                j += 1
+                continue
+            if len(lines[j]) - len(lines[j].lstrip(" ")) <= indent:
+                break
+            j += 1
+        hi = j
+        indent += 2
+    return "\n".join(lines)
+
+
+def _strip_top_block(text: str, key: str) -> str:
+    """Remove a top-level key's line, its indented block, and the contiguous run of
+    column-0 comment lines right above it (the template's banner). Used to keep a
+    PERSONAL key out of a written local config so it inherits from the global
+    defaults layer instead (Stage 18, audit 1.37)."""
+    lines = text.split("\n")
+    out: List[str] = []
+    i = 0
+    keyline = re.compile(rf"^{re.escape(key)}:")
+    while i < len(lines):
+        if keyline.match(lines[i]):
+            while out and out[-1].startswith("#"):        # the banner above
+                out.pop()
+            if out and not out[-1].strip():               # one separating blank
+                out.pop()
+            i += 1
+            while i < len(lines):                         # the indented block
+                if not lines[i].strip():                  # blank: block may end here
+                    j = i
+                    while j < len(lines) and not lines[j].strip():
+                        j += 1
+                    if j >= len(lines) or not lines[j].startswith((" ", "\t")):
+                        break
+                elif not lines[i].startswith((" ", "\t")):
+                    break
+                i += 1
+            continue
+        out.append(lines[i])
+        i += 1
+    return "\n".join(out)
+
+
+def _strip_sub_block(text: str, parent: str, key: str) -> str:
+    """Remove a nested `key:` block (its line + deeper-indented lines + the
+    same-indent comment run right above it) inside a top-level `parent:` block.
+    Same purpose as _strip_top_block, one level down."""
+    lines = text.split("\n")
+    p = next((i for i, ln in enumerate(lines)
+              if re.match(rf"^{re.escape(parent)}:", ln)), None)
+    if p is None:
+        return text
+    end = p + 1
+    while end < len(lines) and (lines[end].startswith((" ", "\t")) or not lines[end].strip()):
+        end += 1
+    sub = re.compile(rf"^(\s+){re.escape(key)}:")
+    for i in range(p + 1, end):
+        m = sub.match(lines[i])
+        if not m:
+            continue
+        indent = m.group(1)
+        j = i + 1
+        while j < end and (lines[j].startswith(indent + " ")
+                           or (not lines[j].strip() and j + 1 < end
+                               and lines[j + 1].startswith(indent + " "))):
+            j += 1
+        k = i
+        while k > p + 1 and lines[k - 1].startswith(indent + "#"):
+            k -= 1
+        return "\n".join(lines[:k] + lines[j:])
+    return text
+
+
+def _deep_merge(base: Dict[str, object], over: Dict[str, object]) -> Dict[str, object]:
+    """Per-key overlay (nested dicts merge key-by-key, scalars/lists replace whole) —
+    the same rule the loaders use to overlay the local config on the global one."""
+    out = dict(base)
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)      # type: ignore[arg-type]
+        else:
+            out[k] = v
+    return out
+
+
+def _set_in(data: Dict[str, object], dotted: str, value: str) -> None:
+    """Set a dotted-path scalar in a nested dict; the value is parsed like YAML
+    (true/off/0.5 become their typed forms, matching a hand-edited config)."""
+    keys = dotted.split(".")
+    cur: Dict[str, object] = data
+    for k in keys[:-1]:
+        nxt = cur.get(k)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            cur[k] = nxt
+        cur = nxt
+    cur[keys[-1]] = yaml.safe_load(value) if yaml is not None else value
+
+
+GLOBAL_CONFIG_HEADER = """\
+# =============================================================================
+# AMG - machine-wide personal defaults (the GLOBAL config layer).
+#
+# Every project's local <agent_dir>/amg/config.yml INHERITS these keys and
+# overrides them per key (deep merge; the local file wins). Keep PERSONAL,
+# machine-level preferences here - the `models` tiering, the embeddings
+# backend; PROJECT keys (active, sources, working_language, budgets) belong in
+# each project's local config, which is part of that project's git canon. This
+# file never leaves this machine and is NOT a store: the graph always lives in
+# the project (<project>/<agent_dir>/amg).
+# =============================================================================
+"""
+
+
+def write_global_config(engine_agent_dir: Path, overrides: Dict[str, str]) -> bool:
+    """Create ~/<agent_dir>/amg/config.yml — the machine-wide PERSONAL defaults every
+    installed project's local config inherits per key (Stage 18, audit 1.37): the
+    `models` tiering and the `retrieval.embeddings` block, with values from the
+    shipped template plus any --set-global answers (dotted keys). Never clobbers an
+    existing global config. Needs PyYAML (like the models render); returns True when
+    written."""
+    dest = engine_agent_dir / "amg" / "config.yml"
+    if dest.exists():
+        return False
+    if yaml is None:
+        print("  global  defaults skipped (PyYAML not importable; the local config stays full)")
+        return False
+    tpl = yaml.safe_load((REPO / "config.yml").read_text(encoding="utf-8")) or {}
+    data: Dict[str, object] = {
+        "models": tpl.get("models") or {},
+        "retrieval": {"embeddings": (tpl.get("retrieval") or {}).get("embeddings") or {}},
+    }
+    for dotted, value in overrides.items():
+        _set_in(data, dotted, value)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(GLOBAL_CONFIG_HEADER
+                    + yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
+                    encoding="utf-8")
+    return True
+
+
+def _existing_config_summary(cfg_path: Path) -> str:
+    """The key values of an existing config, one line — printed when a reinstall
+    keeps it, so the install flow can show and confirm what is in force instead of
+    silently keeping unknown state (audit 1.49)."""
+    if yaml is None or not cfg_path.exists():
+        return ""
+    try:
+        cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError):
+        return ""
+    emb = ((cfg.get("retrieval") or {}).get("embeddings") or {}).get("enabled")
+    shown = [("active", cfg.get("active")), ("working_language", cfg.get("working_language")),
+             ("mirror_path", cfg.get("mirror_path")), ("absorb_path", cfg.get("absorb_path")),
+             ("absorb_once_path", cfg.get("absorb_once_path")), ("exclude", cfg.get("exclude")),
+             ("automation", cfg.get("automation")), ("session_policy", cfg.get("session_policy")),
+             ("embeddings.enabled", emb)]
+    return "; ".join(f"{k}={v!r}" for k, v in shown if v is not None)
+
+
 def write_config(dest_amg: Path, agent_dir: str, entrypoint: str,
-                 mirror: List[str], absorb: List[str], exclude: List[str],
-                 scalars: Dict[str, str]) -> bool:
+                 mirror: List[str], absorb: List[str], absorb_once: List[str],
+                 exclude: List[str], scalars: Dict[str, str],
+                 strip_personal: bool = False) -> bool:
     """Create <agent_dir>/amg/config.yml from the shipped template, filling the answered
     keys. An EXISTING config is preserved (reinstall never clobbers a project's config).
     Returns True if written, False if left intact. agent_dir/entrypoint are always recorded
-    so resolution and the docs agree with the install."""
+    so resolution and the docs agree with the install. With strip_personal (a global-scope
+    install that wrote the global defaults config), the PERSONAL blocks — `models` and
+    `retrieval.embeddings` — are omitted so they inherit from the global layer instead of
+    shadowing it (Stage 18, audit 1.37). A dotted --set key (retrieval.embeddings.enabled)
+    lands on the nested key."""
     dest = dest_amg / "config.yml"
     if dest.exists():
         return False
     text = (REPO / "config.yml").read_text(encoding="utf-8")
+    if strip_personal:
+        text = _strip_top_block(text, "models")
+        text = _strip_sub_block(text, "retrieval", "embeddings")
     for key, value in scalars.items():
-        text = _set_scalar(text, key, value)
+        text = _set_nested(text, key, value) if "." in key else _set_scalar(text, key, value)
     text = _set_list(text, "mirror_path", mirror)
     text = _set_list(text, "absorb_path", absorb)
+    text = _set_list(text, "absorb_once_path", absorb_once)
     if exclude:
         text = _set_list(text, "exclude", exclude)
     text = _set_scalar(text, "agent_dir", agent_dir)
@@ -352,16 +568,26 @@ def render_agent_models(agents_dir: Path, models_cfg: dict, env: str) -> None:
         print(f"  models  rendered model/effort into {len(touched)} agent(s) from config.yml models")
 
 
-def _read_models(config_path: Path) -> dict:
-    """The `models` block from a config.yml (empty dict if absent/unreadable or
-    PyYAML is missing)."""
-    if yaml is None or not config_path.exists():
+def _read_models(config_path: Path, agent_dir: str) -> dict:
+    """The `models` block as the LOADERS see it: the machine-wide global config
+    (~/<agent_dir>/amg/config.yml, if any) deep-merged under the project's local one
+    (Stage 18, audit 1.37). Empty dict if nothing is readable or PyYAML is missing."""
+    if yaml is None:
         return {}
-    try:
-        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    except (OSError, ValueError):
-        return {}
-    return cfg.get("models") or {}
+
+    def _load(p: Path) -> dict:
+        if not p.exists():
+            return {}
+        try:
+            cfg = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+            return cfg if isinstance(cfg, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    merged = _deep_merge(_load(Path.home() / agent_dir / "amg" / "config.yml"),
+                         _load(config_path))
+    models = merged.get("models")
+    return models if isinstance(models, dict) else {}
 
 
 # Claude family aliases. For a CODEX install these in config.yml mean the unchanged
@@ -435,8 +661,8 @@ def place_engine(dest_agent_dir: Path, agent_dir: str, entrypoint: str, scope: s
     as the Claude Code default and are RENDERED to the configured agent dir on copy, exactly
     like the entry templates (audit 1.32). Copying them verbatim would leave `.claude/...`
     command paths that are wrong under any other agent dir, and relative script paths that
-    are wrong for a global install. (References/*.md stay verbatim — they are docs, neutralized
-    at Stage 18.)"""
+    are wrong for a global install. (References/*.md stay verbatim — they are docs; the
+    docs-neutralization pass is the translation stage.)"""
     skills_dest = dest_agent_dir / "skills"
     skills_dest.mkdir(parents=True, exist_ok=True)
     for sk in SKILL_NAMES:
@@ -510,8 +736,9 @@ def build_graph(engine_agent_dir: Path, project_root: Path, graph_agent_dir: Pat
 # --------------------------------------------------------------------------- #
 
 def install(target: Path, scope: str, agent_dir: str, entrypoint: str,
-            mirror: List[str], absorb: List[str], exclude: List[str],
-            scalars: Dict[str, str], deps: List[str], verify: bool,
+            mirror: List[str], absorb: List[str], absorb_once: List[str],
+            exclude: List[str], scalars: Dict[str, str],
+            set_global: Dict[str, str], deps: List[str], verify: bool,
             build: bool = False, project_only: bool = False,
             env: str = "claude-code") -> None:
     target = target.resolve()
@@ -570,24 +797,52 @@ def install(target: Path, scope: str, agent_dir: str, entrypoint: str,
                   "command are Claude-Code-only and were NOT written; the block drives the "
                   "loop with direct script calls (the digest is read, not @import-ed).")
 
+    # Config layers (Stage 18, audit 1.37). A GLOBAL install (and --project-only, which
+    # belongs to one) also maintains the machine-wide defaults config
+    # ~/<agent_dir>/amg/config.yml — the PERSONAL layer (models tiering, embeddings)
+    # every project's local config inherits per key. The local config then OMITS those
+    # blocks so the inheritance actually shows through (a full local template would
+    # shadow the global layer on every key). A local-scope install stays self-contained:
+    # full local template, no global file.
+    global_layer = scope == "global" or project_only
+    if global_layer:
+        wrote_global = write_global_config(Path.home() / agent_dir, set_global)
+        gpath = Path.home() / agent_dir / "amg" / "config.yml"
+        print(f"  global  {gpath} "
+              f"({'written (machine-wide defaults)' if wrote_global else 'kept existing'})")
+    elif set_global:
+        print("  global  --set-global ignored for a local-scope install "
+              "(the global layer exists for --scope global / --project-only; use --set)")
+    strip = global_layer and (Path.home() / agent_dir / "amg" / "config.yml").exists()
+
+    cfg_path = graph_agent_dir / "amg" / "config.yml"
     wrote = write_config(graph_agent_dir / "amg", agent_dir, entrypoint,
-                         mirror, absorb, exclude, scalars)
-    print(f"  config  {graph_agent_dir / 'amg' / 'config.yml'} "
-          f"({'written' if wrote else 'kept existing — not clobbered'})")
+                         mirror, absorb, absorb_once, exclude, scalars,
+                         strip_personal=strip)
+    print(f"  config  {cfg_path} ({'written' if wrote else 'kept existing — not clobbered'})")
+    if not wrote:
+        summary = _existing_config_summary(cfg_path)
+        if summary:
+            # Show what stays in force, so the flow confirms instead of silently
+            # keeping unknown state (audit 1.49). To change: edit config.yml, or
+            # delete it and reinstall.
+            print(f"          in force: {summary}")
+            print("          (to change: edit config.yml directly, or delete it and reinstall)")
     seed_digest(graph_agent_dir / "amg")
 
     # Render the models block (audit 1.14): Claude Code -> per-role model/effort into the
     # .md agent frontmatter; Codex -> TOML subagents (model + model_reasoning_effort); a
-    # skill-less generic env runs one model, so tiering is inert there.
+    # skill-less generic env runs one model, so tiering is inert there. The models are
+    # read as the loaders see them: global defaults under the local config (Stage 18).
     if not project_only and _env_kind(env) != "generic":
         if yaml is None:
             print("  models  skipped (PyYAML not importable; reinstall after pip install pyyaml)")
         elif _env_kind(env) == "codex":
             render_codex_agents(REPO / "agents", engine_root / ".codex" / "agents",
-                                _read_models(graph_agent_dir / "amg" / "config.yml"), env)
+                                _read_models(cfg_path, agent_dir), env)
         else:
             render_agent_models(engine_agent_dir / "agents",
-                                _read_models(graph_agent_dir / "amg" / "config.yml"), env)
+                                _read_models(cfg_path, agent_dir), env)
 
     if deps:
         install_deps(deps)
@@ -652,6 +907,11 @@ def uninstall(target: Path, agent_dir: str, entrypoint: str,
         print(f"  graph   purged {graph}")
     else:
         print(f"  graph   kept {graph} (pass --purge-graph to remove)")
+    # 5. the machine-wide defaults config (global layer, Stage 18) is the user's
+    # preference data, like the graph: kept, never auto-removed.
+    gcfg = Path.home() / agent_dir / "amg" / "config.yml"
+    if scope == "global" and gcfg.exists():
+        print(f"  global  kept {gcfg} (machine-wide defaults; delete by hand if unwanted)")
     print("done (uninstall).")
 
 
@@ -661,7 +921,8 @@ def uninstall(target: Path, agent_dir: str, entrypoint: str,
 
 def _parse(argv: List[str]) -> dict:
     args = {"target": None, "scope": "local", "agent_dir": None, "entrypoint": None,
-            "env": "claude-code", "mirror": [], "absorb": [], "exclude": [], "scalars": {},
+            "env": "claude-code", "mirror": [], "absorb": [], "absorb_once": [],
+            "exclude": [], "scalars": {}, "set_global": {},
             "deps": [], "verify": True, "build": False, "project_only": False,
             "uninstall": False, "purge_graph": False}
     i = 0
@@ -679,9 +940,14 @@ def _parse(argv: List[str]) -> dict:
             args["env"] = argv[i + 1]; i += 2
         elif a in ("--mirror", "--absorb", "--exclude"):
             args[a[2:]] = [s for s in argv[i + 1].split(",") if s.strip()]; i += 2
-        elif a == "--set":                       # repeatable: --set key=value
+        elif a == "--absorb-once":               # one-shot frozen sources (absorb_once_path)
+            args["absorb_once"] = [s for s in argv[i + 1].split(",") if s.strip()]; i += 2
+        elif a == "--set":                       # repeatable: --set key=value (dots = nested)
             k, _, v = argv[i + 1].partition("=")
             args["scalars"][k.strip()] = v.strip(); i += 2
+        elif a == "--set-global":                # repeatable: into the GLOBAL defaults config
+            k, _, v = argv[i + 1].partition("=")
+            args["set_global"][k.strip()] = v.strip(); i += 2
         elif a == "--deps":
             args["deps"] = [s for s in argv[i + 1].split(",") if s.strip()]; i += 2
         elif a == "--no-verify":
@@ -717,7 +983,8 @@ def main(argv: List[str]) -> int:
         uninstall(target, agent_dir, entrypoint, a["scope"], a["purge_graph"])
         return 0
     install(target, a["scope"], agent_dir, entrypoint,
-            a["mirror"], a["absorb"], a["exclude"], a["scalars"], a["deps"], a["verify"],
+            a["mirror"], a["absorb"], a["absorb_once"], a["exclude"], a["scalars"],
+            a["set_global"], a["deps"], a["verify"],
             build=a["build"], project_only=a["project_only"], env=a["env"])
     return 0
 

@@ -11,9 +11,15 @@ Checks:
   3. agents_env : --agent-dir .agents --entrypoint AGENTS.md renders every path to
                   .agents/AGENTS.md (no leftover .claude) — portability without code edits.
   4. global     : engine in a fake HOME, block carries ABSOLUTE engine paths, the graph
-                  + config stay LOCAL to the project, digest seeded locally.
+                  + config stay LOCAL to the project, digest seeded locally; the
+                  machine-wide DEFAULTS config (~/<agent_dir>/amg/config.yml, Stage 18)
+                  is written and is NOT a store (no nodes/journal); the local config
+                  omits the personal blocks (models, retrieval.embeddings) so they
+                  inherit, and the loaders see the merged view (local wins per key).
   5. uninstall  : the block is stripped (user content kept), amg-* engine + AMG hooks
                   removed, the graph kept unless --purge-graph.
+  6. answers    : --set with a dotted path lands on the nested key (comments kept);
+                  --absorb-once fills absorb_once_path (audit 1.49).
 
 Run:  python selftest_install.py
 """
@@ -135,15 +141,44 @@ def test_global():
         os.environ["HOME"] = str(home)
         os.environ["USERPROFILE"] = str(home)
         assert Path.home() == home, "fake HOME in effect"
-        I.main(["--target", str(t), "--scope", "global", "--mirror", "src", "--no-verify"])
+        I.main(["--target", str(t), "--scope", "global", "--mirror", "src",
+                "--set-global", "retrieval.embeddings.enabled=auto", "--no-verify"])
         assert (home / ".claude/skills/amg-bootstrap/scripts/graph_store.py").exists(), "engine in HOME"
         entry = (home / "CLAUDE.md").read_text(encoding="utf-8")
         assert (home / ".claude").as_posix() + "/skills" in entry, "absolute engine path in block"
         assert "@.claude/amg/digest.md" not in entry, "global @digest import replaced with a note"
-        # the graph + config stay LOCAL to the project, never in HOME
-        assert (t / ".claude/amg/config.yml").exists() and not (home / ".claude/amg/config.yml").exists()
+        # the GRAPH stays local; HOME now carries the machine-wide DEFAULTS config
+        # (Stage 18, audit 1.37), which is a config layer, NOT a store
+        assert (t / ".claude/amg/config.yml").exists(), "local project config written"
         assert (t / ".claude/amg/digest.md").exists(), "digest seeded locally"
-        print("PASS  install: global engine in HOME with absolute paths; graph + config stay local")
+        g = yaml.safe_load((home / ".claude/amg/config.yml").read_text(encoding="utf-8"))
+        assert g["models"]["module_summary"] == "sonnet", g
+        assert g["retrieval"]["embeddings"]["enabled"] == "auto", "--set-global landed"
+        assert not (home / ".claude/amg/nodes").exists(), "the defaults layer is not a store"
+        # the local config OMITS the personal blocks so they inherit from the global layer
+        lcfg = yaml.safe_load((t / ".claude/amg/config.yml").read_text(encoding="utf-8"))
+        assert "models" not in lcfg, "models stripped from the local config (inherited)"
+        assert "embeddings" not in (lcfg.get("retrieval") or {}), "embeddings stripped (inherited)"
+        assert lcfg["retrieval"]["damping"] == 0.85, "the rest of the retrieval block kept"
+        assert lcfg["mirror_path"] == ["src"] and lcfg["agent_dir"] == ".claude", lcfg
+        # the loaders see the merged view: global under local, local wins per key
+        sys.path.insert(0, str(HERE / "skills" / "amg-retrieve" / "scripts"))
+        import retrieve as R
+        cfg = R.load_config(t / ".claude/amg")
+        assert cfg["embeddings"]["enabled"] == "auto", "global default inherited by retrieve"
+        with open(t / ".claude/amg/config.yml", "a", encoding="utf-8") as f:
+            f.write("\nretrieval:\n  embeddings:\n    blend: 0.9\n")   # local override (dup key: last wins)
+        cfg2 = R.load_config(t / ".claude/amg")
+        assert cfg2["embeddings"]["blend"] == 0.9, "local key overrides the global layer"
+        assert cfg2["embeddings"]["enabled"] == "auto", "unset keys still inherit"
+        # extract_structure merges the same way (models visible to the raw-config reader)
+        sys.path.insert(0, str(HERE / "skills" / "amg-bootstrap" / "scripts"))
+        import extract_structure as ES
+        raw = ES.load_config(t / ".claude/amg")
+        assert raw["models"]["synthesis"]["model"] == "opus", "global models inherited"
+        assert raw["mirror_path"] == ["src"], "local project keys intact"
+        print("PASS  install: global engine + defaults layer in HOME; local config inherits "
+              "models/embeddings per key (local wins)")
     finally:
         for k, v in saved.items():
             if v is None:
@@ -196,6 +231,8 @@ def test_project_only_global():
         I.main(["--target", str(p2), "--project-only", "--mirror", "lib", "--no-verify"])
         assert (p2 / ".claude/amg/config.yml").exists(), "project config written"
         assert _cfg(p2)["mirror_path"] == ["lib"], _cfg(p2)
+        assert "models" not in _cfg(p2), "project-only config inherits models from the global layer"
+        assert (home / ".claude/amg/config.yml").exists(), "global defaults layer in place"
         assert not (p2 / ".claude/skills").exists(), "project-only does not copy the engine"
         assert not (p2 / "CLAUDE.md").exists(), "project-only does not write a block (it is global)"
         assert (home / ".claude/skills/amg-bootstrap").exists(), "global engine intact"
@@ -298,6 +335,27 @@ def test_models_render():
         shutil.rmtree(t, ignore_errors=True)
 
 
+def test_nested_set_and_absorb_once():
+    t = Path(tempfile.mkdtemp(prefix="amg-inst-nested-"))
+    try:
+        # a LOCAL install: full self-contained config; a dotted --set lands on the
+        # nested key (the flow's auto-embeddings answer, audit 1.49) and --absorb-once
+        # fills absorb_once_path
+        I.main(["--target", str(t), "--mirror", "src", "--absorb", "logs",
+                "--absorb-once", "snapshots,report.pdf",
+                "--set", "retrieval.embeddings.enabled=auto", "--no-verify"])
+        cfg = _cfg(t)
+        assert cfg["retrieval"]["embeddings"]["enabled"] == "auto", cfg["retrieval"]["embeddings"]
+        assert cfg["retrieval"]["embeddings"]["blend"] == 0.5, "sibling keys kept"
+        assert cfg["absorb_once_path"] == ["snapshots", "report.pdf"], cfg
+        assert cfg["models"]["module_summary"] == "sonnet", "local install keeps the full template"
+        text = (t / ".claude/amg/config.yml").read_text(encoding="utf-8")
+        assert "# auto = use if a backend is installed | on | off" in text, "inline comment kept"
+        print("PASS  install: dotted --set hits the nested key (comments kept); --absorb-once fills absorb_once_path")
+    finally:
+        shutil.rmtree(t, ignore_errors=True)
+
+
 def test_uninstall():
     t = Path(tempfile.mkdtemp(prefix="amg-inst5-"))
     try:
@@ -330,5 +388,6 @@ if __name__ == "__main__":
     test_generic_env()
     test_codex_env()
     test_models_render()
+    test_nested_set_and_absorb_once()
     test_uninstall()
     print("\nALL INSTALL CHECKS PASSED")
