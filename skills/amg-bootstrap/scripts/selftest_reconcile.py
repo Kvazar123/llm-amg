@@ -38,6 +38,13 @@ Checks:
                 path:lineno, never path:None.
  14. root     : the store root resolves per the 4.9 chain — explicit root,
                 AMG_AGENT_DIR, config search upward, the default .claude.
+ 15. vetoes   : an amg/-named engine checkout never resolves as the store (even
+                after a stray run created nodes/+journal/ in it); the installed
+                preset store next to it wins; the home agent dir (the global
+                defaults config layer) is not a store; retrieve._default_store
+                mirrors the same rules (Stage 18, audits 1.39/1.37).
+ 16. missing  : a missing config.yml exits with an "AMG is not installed"
+                diagnostic naming the resolved root (audit 1.50), no traceback.
 
 Run:  python selftest_reconcile.py
 """
@@ -419,18 +426,124 @@ def case_root_resolution(proj: Path) -> None:
     finally:
         shutil.rmtree(ag, ignore_errors=True)
     # 4/5. with no config anywhere up from a bare dir: the engine's own amg/
-    # wins IF it exists (dev layout), else the default <start>/.claude —
-    # assert whichever state this environment is in (assumes no global AMG
-    # config in the temp dir's ancestors).
+    # wins IF it is an initialized store (dev layout; Stage 18 tightened the mere
+    # is_dir test), else the default <start>/.claude — assert whichever state this
+    # environment is in (assumes no AMG config in the temp dir's ancestors).
     bare = Path(tempfile.mkdtemp(prefix="amg-bare-"))
     try:
         engine_amg = Path(gs.__file__).resolve().parents[3] / "amg"
-        expected = engine_amg if engine_amg.is_dir() else (bare / ".claude" / "amg").resolve()
+        expected = (engine_amg if gs._initialized_store(engine_amg)
+                    and not gs._looks_like_engine_checkout(engine_amg)
+                    else (bare / ".claude" / "amg").resolve())
         assert gs.resolve_amg_root(start=bare) == expected, \
             (gs.resolve_amg_root(start=bare), expected)
     finally:
         shutil.rmtree(bare, ignore_errors=True)
     print("PASS  root: cli > env > config-upward (.claude/.agents) > engine dir > default .claude")
+
+
+def case_store_resolution_vetoes() -> None:
+    """Stage 18 (audit 1.39): an amg/-named ENGINE CHECKOUT never resolves as the
+    store — neither alone (falls through to the default) nor when a stray run already
+    'initialized' it (nodes/+journal/ inside a checkout), and a real installed store
+    next to it wins via the preset probe. The home agent dir (the machine-wide
+    defaults config layer, audit 1.37) is not a store either."""
+    proj = Path(tempfile.mkdtemp(prefix="amg-veto-"))
+    engine_amg = Path(gs.__file__).resolve().parents[3] / "amg"
+    fallback_ok = (gs._initialized_store(engine_amg)
+                   and not gs._looks_like_engine_checkout(engine_amg))
+    default = engine_amg if fallback_ok else (proj / ".claude" / "amg").resolve()
+    try:
+        # an unpacked checkout: <proj>/amg carrying the template config + engine files
+        co = proj / "amg"
+        (co / "skills").mkdir(parents=True)
+        (co / "config.yml").write_text("mirror_path: [src, doc]\n", encoding="utf-8")
+        (co / "install.py").write_text("# installer\n", encoding="utf-8")
+        # 1. checkout alone: vetoed -> the chain falls through past it
+        assert gs.resolve_amg_root(start=proj) == default, gs.resolve_amg_root(start=proj)
+        # 2. a stray run 'initialized' the checkout: nodes/+journal/ alone must not qualify
+        (co / "nodes").mkdir()
+        (co / "journal").mkdir()
+        assert gs.resolve_amg_root(start=proj) == default, gs.resolve_amg_root(start=proj)
+        # 3. checkout next to the real installed store: the preset wins
+        real = proj / ".claude" / "amg"
+        real.mkdir(parents=True)
+        (real / "config.yml").write_text("active: true\n", encoding="utf-8")
+        assert gs.resolve_amg_root(start=proj) == real.resolve()
+        # 4. a bare legit store (initialized, no signature) still resolves — the cwd
+        # sits inside the agent dir
+        bare = Path(tempfile.mkdtemp(prefix="amg-barestore-"))
+        try:
+            st = bare / "amg"
+            (st / "nodes").mkdir(parents=True)
+            (st / "journal").mkdir()
+            (st / "config.yml").write_text("active: true\n", encoding="utf-8")
+            assert gs.resolve_amg_root(start=bare) == st.resolve()
+        finally:
+            shutil.rmtree(bare, ignore_errors=True)
+        # 5. the home level is skipped: a global defaults config (~/.claude/amg/config.yml)
+        # must not resolve as the store of an uninstalled project under home
+        fake_home = Path(tempfile.mkdtemp(prefix="amg-home-"))
+        saved = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
+        try:
+            os.environ["HOME"] = str(fake_home)
+            os.environ["USERPROFILE"] = str(fake_home)
+            gcfg = fake_home / ".claude" / "amg"
+            gcfg.mkdir(parents=True)
+            (gcfg / "config.yml").write_text("models:\n  synthesis: opus\n", encoding="utf-8")
+            inner = fake_home / "projects" / "fresh"
+            inner.mkdir(parents=True)
+            got = gs.resolve_amg_root(start=inner)
+            assert got != gcfg.resolve(), got
+            assert got == (engine_amg if fallback_ok
+                           else (inner / ".claude" / "amg").resolve()), got
+        finally:
+            for k, v in saved.items():
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+            shutil.rmtree(fake_home, ignore_errors=True)
+        print("PASS  root: engine checkout (even 'initialized') never hijacks the store; "
+              "presets win; home defaults layer is not a store")
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+
+def case_default_store_mirror() -> None:
+    """retrieve._default_store mirrors the Stage 18 resolver rules: the checkout is
+    vetoed and the installed preset store is found from the project cwd."""
+    sys.path.insert(0, str(HERE.parents[1] / "amg-retrieve" / "scripts"))
+    import retrieve as RT
+    proj = Path(tempfile.mkdtemp(prefix="amg-dsv-"))
+    cwd = Path.cwd()
+    try:
+        co = proj / "amg"
+        (co / "skills").mkdir(parents=True)
+        (co / "config.yml").write_text("mirror_path: [src]\n", encoding="utf-8")
+        real = proj / ".claude" / "amg"
+        real.mkdir(parents=True)
+        (real / "config.yml").write_text("active: true\n", encoding="utf-8")
+        os.chdir(proj)
+        assert Path(RT._default_store()).resolve() == real.resolve(), RT._default_store()
+        print("PASS  root: retrieve._default_store skips the checkout, finds the preset store")
+    finally:
+        os.chdir(cwd)
+        shutil.rmtree(proj, ignore_errors=True)
+
+
+def case_uninstalled_diagnostic() -> None:
+    """audit 1.50: extract_structure.load_config on a MISSING config.yml exits with a
+    diagnostic naming the resolved root, instead of a FileNotFoundError traceback."""
+    empty = Path(tempfile.mkdtemp(prefix="amg-nocfg-"))
+    try:
+        root = empty / ".claude" / "amg"
+        try:
+            ES.load_config(root)
+            raise AssertionError("load_config must exit on a missing config.yml")
+        except SystemExit as e:
+            msg = str(e)
+            assert "not installed" in msg and str(root) in msg, msg
+        print("PASS  diagnostics: missing config.yml -> 'AMG is not installed' naming the root")
+    finally:
+        shutil.rmtree(empty, ignore_errors=True)
 
 
 def case_absorb_once() -> None:
@@ -646,6 +759,9 @@ if __name__ == "__main__":
         case_markdown_fences()
         case_lineno_in_pack(proj)
         case_root_resolution(proj)
+        case_store_resolution_vetoes()
+        case_default_store_mirror()
+        case_uninstalled_diagnostic()
         case_absorb_once()
         case_resume_freshness()
         case_provenance_and_confidence()

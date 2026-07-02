@@ -117,21 +117,47 @@ def atomic_delete(path: Path) -> None:
 # Store-root resolution (roadmap 4.9: agent dir is a parameter, not `.claude`)
 # --------------------------------------------------------------------------- #
 
+# Entries that mark an amg/-named directory as the AMG SOURCE CHECKOUT (the engine
+# repo, or the engine unpacked into/next to a project), never a store (audit 1.39).
+_ENGINE_MARKERS = ("skills", "agents", "install.py")
+
+
+def _looks_like_engine_checkout(amg_dir: Path) -> bool:
+    """True when an amg/ candidate is the AMG source checkout / shipped template
+    rather than a store: its config.yml sits next to skills/, agents/ or install.py.
+    Deliberately independent of nodes/+journal/: plan() calls init() unconditionally,
+    so a single mis-resolved run "initializes" a checkout — an initialized-store test
+    alone would then pass and keep hijacking every later run (audit 1.39)."""
+    return any((amg_dir / m).exists() for m in _ENGINE_MARKERS)
+
+
+def _initialized_store(amg_dir: Path) -> bool:
+    """A store that has actually been initialized (GraphStore.init / any write)."""
+    return (amg_dir / "nodes").is_dir() and (amg_dir / "journal").is_dir()
+
+
 def resolve_amg_root(cli_root: os.PathLike[str] | str | None = None,
                      start: os.PathLike[str] | str | None = None) -> Path:
     """Resolve the AMG store root (<agent_dir>/amg). Chain, first hit wins:
 
       1. explicit --root (the agent dir, e.g. `.claude` or `.agents`);
       2. the AMG_AGENT_DIR environment variable (same meaning);
-      3. the first ancestor of `start` (default: cwd) holding amg/config.yml —
-         that directory IS the agent dir. The known agent-dir presets are also
-         probed one level down (<ancestor>/{.claude,.agents}/amg/config.yml): this
-         is what lets a globally-installed engine find a project's graph from the
-         project's cwd, under any environment (a fully custom dir uses AMG_AGENT_DIR);
+      3. walk up from `start` (default: cwd). At each level the known agent-dir
+         presets are probed FIRST (<ancestor>/{.claude,.agents}/amg/config.yml — an
+         unambiguous installed layout; this is what lets a globally-installed engine
+         find a project's graph; a fully custom dir uses AMG_AGENT_DIR), then the
+         bare <ancestor>/amg/config.yml, accepted only when it is an INITIALIZED
+         store (nodes/ + journal/ — e.g. the cwd sits inside the agent dir). Any
+         candidate carrying the engine signature (skills/, agents/ or install.py
+         inside) is the AMG source checkout, not a store, and is skipped — even
+         when a stray run already created nodes/+journal/ in it (audit 1.39). The
+         HOME level itself is skipped: ~/<agent_dir>/amg holds the machine-wide
+         DEFAULTS config layer (Stage 18, audit 1.37), not a project store;
       4. the engine's own location (scripts live at
-         <agent_dir>/skills/amg-bootstrap/scripts -> <agent_dir>/amg), only if
-         that amg/ already exists — covers the dev layout and a local install
-         without letting a global engine hijack a fresh project's default;
+         <agent_dir>/skills/amg-bootstrap/scripts -> <agent_dir>/amg), only if that
+         amg/ is an initialized store — covers the dev layout and a local install
+         without letting a GLOBAL engine (whose ~/<agent_dir>/amg may exist as the
+         defaults layer) hijack a fresh project's default;
       5. the default: <start>/.claude/amg.
     """
     if cli_root:
@@ -140,14 +166,20 @@ def resolve_amg_root(cli_root: os.PathLike[str] | str | None = None,
     if env:
         return Path(env).resolve() / "amg"
     base = Path(start).resolve() if start else Path.cwd()
+    home = Path.home().resolve()
     for d in (base, *base.parents):
-        if (d / "amg" / "config.yml").exists():
-            return d / "amg"
-        for adir in (".claude", ".agents"):      # known agent-dir presets (1.32)
-            if (d / adir / "amg" / "config.yml").exists():
-                return d / adir / "amg"
+        if d == home:               # the home agent dir is the config-defaults layer
+            continue
+        for adir in (".claude", ".agents"):      # presets first (1.32)
+            cand = d / adir / "amg"
+            if (cand / "config.yml").exists() and not _looks_like_engine_checkout(cand):
+                return cand
+        cand = d / "amg"
+        if ((cand / "config.yml").exists() and not _looks_like_engine_checkout(cand)
+                and _initialized_store(cand)):
+            return cand
     engine_root = Path(__file__).resolve().parents[3] / "amg"
-    if engine_root.is_dir():
+    if _initialized_store(engine_root) and not _looks_like_engine_checkout(engine_root):
         return engine_root
     return base / ".claude" / "amg"
 

@@ -113,7 +113,22 @@ def _sha(text: str) -> str:
 # --------------------------------------------------------------------------- #
 
 def load_config(amg_root: Path) -> Dict[str, Any]:
-    return yaml.safe_load((amg_root / "config.yml").read_text(encoding="utf-8")) or {}
+    """The store's config.yml as a raw dict. A MISSING config means AMG is not
+    installed for the resolved root — exit with a diagnostic that NAMES that root
+    (the first symptom of a store-resolution miss, audit 1.50) instead of an
+    unhandled FileNotFoundError. Unlike the tolerant loaders (retrieve/consolidate/
+    lifecycle read tunables and can fall back to defaults), extraction without a
+    config would silently ingest nothing ("added: 0") — the masked failure this
+    stage removes."""
+    f = amg_root / "config.yml"
+    if not f.exists():
+        raise SystemExit(
+            "AMG is not installed here: no config.yml under the resolved store root\n"
+            f"  {amg_root}\n"
+            "The store resolves as <agent_dir>/amg (e.g. .claude/amg). If AMG is "
+            "installed elsewhere, pass --root <agent_dir> or set AMG_AGENT_DIR; "
+            "otherwise install it first: python <amg-checkout>/install.py --target <project>.")
+    return yaml.safe_load(f.read_text(encoding="utf-8")) or {}
 
 
 def _as_list(val: Any) -> List[str]:

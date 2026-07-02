@@ -170,19 +170,37 @@ def _trust_marks(node: Dict[str, Any], vcfg: Dict[str, Any]) -> str:
 
 def _default_store() -> Path:
     """Resolve the graph store when --store is not given. Mirrors graph_store.
-    resolve_amg_root (kept dependency-free here): config search upward from cwd — so a
-    global engine finds the project's LOCAL graph — then the engine's own location, then
-    the .claude default. Probes both agent-dir presets (.claude / .agents) so a non-Claude
-    environment resolves too (1.32). The retriever subagent passes --store explicitly; this
-    only backs a bare manual run."""
-    for d in (Path.cwd(), *Path.cwd().parents):
-        if (d / "amg" / "config.yml").exists():
-            return d / "amg"
+    resolve_amg_root (kept dependency-free here): walk upward from cwd, probing the
+    agent-dir presets (.claude / .agents) FIRST — so a global engine finds the
+    project's LOCAL graph under any preset environment (1.32) — then a bare amg/,
+    accepted only when it is an INITIALIZED store (nodes/ + journal/). A candidate
+    carrying the engine signature (skills/, agents/ or install.py inside) is the AMG
+    source checkout, never a store (audit 1.39); the HOME level is skipped —
+    ~/<agent_dir>/amg holds the machine-wide defaults config, not a project store
+    (Stage 18). Then the engine's own location (initialized stores only), then the
+    .claude default. The retriever subagent passes --store explicitly; this only
+    backs a bare manual run."""
+    def _checkout(c: Path) -> bool:
+        return any((c / m).exists() for m in ("skills", "agents", "install.py"))
+
+    def _initialized(c: Path) -> bool:
+        return (c / "nodes").is_dir() and (c / "journal").is_dir()
+
+    home = Path.home().resolve()
+    for d in (Path.cwd().resolve(), *Path.cwd().resolve().parents):
+        if d == home:               # the home agent dir is the config-defaults layer
+            continue
         for adir in (".claude", ".agents"):
-            if (d / adir / "amg" / "config.yml").exists():
-                return d / adir / "amg"
+            cand = d / adir / "amg"
+            if (cand / "config.yml").exists() and not _checkout(cand):
+                return cand
+        cand = d / "amg"
+        if (cand / "config.yml").exists() and not _checkout(cand) and _initialized(cand):
+            return cand
     here = Path(__file__).resolve().parents[3] / "amg"   # engine location (dev / local)
-    return here if here.is_dir() else Path.cwd() / ".claude" / "amg"
+    if _initialized(here) and not _checkout(here):
+        return here
+    return Path.cwd() / ".claude" / "amg"
 
 
 def _deep_merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
