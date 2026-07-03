@@ -36,10 +36,17 @@ emits the `defines` containment backbone (module -> symbol, class -> method), an
 canonicalizes judgment-layer edge targets by unique path suffix — both on apply and
 in a whole-graph sweep, so a graph built before this pass heals on one bootstrap.
 
+Reproducibility (stage 19, audit 1.46): applied per-unit derivations are stored in
+a persistent cache under cache/derivations/, keyed by content_sha + the derivation
+contract version + working_language. A wipe-and-rebuild restores them verbatim —
+same content, same derivation, near-zero cost — instead of re-deriving differently
+every time. bootstrap/plan restore cache hits automatically (derivation_cache: true).
+
 Commands:
   python reconcile.py bootstrap [<project_root>] [--root <agent_dir>]
   python reconcile.py plan      [<project_root>] [--root <agent_dir>]
   python reconcile.py apply <derivation.json> [<project_root>] [--root <agent_dir>]
+  python reconcile.py apply-cached [<project_root>] [--root <agent_dir>]  # restore from cache
   python reconcile.py metrics   [<project_root>] [--root <agent_dir>]   # connectivity report
 
 The graph root is <agent_dir>/amg, resolved by graph_store.resolve_amg_root:
@@ -887,6 +894,104 @@ def _synth_provenance(item: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
+# Persistent derivation cache (stage 19, audit 1.46)
+# --------------------------------------------------------------------------- #
+
+# Version of the derivation contract (the item schema + the semantics the builder
+# prompts promise). Bump it when either changes materially: every cached entry keyed
+# under an older contract silently misses, forcing a fresh derivation.
+DERIVATION_CONTRACT = 1
+
+
+def _derivation_cache_path(amg_root: Path, sha: str) -> Path:
+    """cache/derivations/<sha[:2]>/<sha>.json — one file per unit content hash (the
+    two-hex fan-out keeps a big graph's cache directory listable)."""
+    return amg_root / "cache" / "derivations" / sha[:2] / f"{sha}.json"
+
+
+def _cache_store(amg_root: Path, lang: str, per_sha: Dict[str, List[Dict[str, Any]]]) -> int:
+    """Persist applied per-unit derivation items keyed by their content_sha. The
+    entry records the derivation contract version and the working language — a
+    changed contract or summary language must miss, never silently return foreign
+    derivations (audit 1.46). Best-effort: the cache is an economy, not correctness."""
+    stored = 0
+    for sha, its in per_sha.items():
+        try:
+            gs.atomic_write_text(
+                _derivation_cache_path(amg_root, sha),
+                json.dumps({"contract": DERIVATION_CONTRACT, "lang": lang,
+                            "items": its}, ensure_ascii=False))
+            stored += 1
+        except OSError:
+            pass
+    return stored
+
+
+def _cache_lookup(amg_root: Path, lang: str, sha: str) -> Optional[List[Dict[str, Any]]]:
+    """The cached derivation items for a content hash, or None on a miss / a stale
+    contract / another working language / an unreadable entry."""
+    p = _derivation_cache_path(amg_root, sha)
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if (not isinstance(data, dict) or data.get("contract") != DERIVATION_CONTRACT
+            or data.get("lang") != lang or not isinstance(data.get("items"), list)):
+        return None
+    return [it for it in data["items"] if isinstance(it, dict)]
+
+
+def apply_cached(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
+    """Restore derivations for queued units from the persistent cache (audit 1.46).
+
+    Reads work/queue.json, gathers the cached items of every unit whose content_sha
+    hits (same derivation contract and working language), applies them through the
+    STANDARD apply path — validation, target normalization, and the content_sha
+    freshness check all included — and rewrites the queue to the remainder. The
+    result: a wipe-and-rebuild re-derives only genuinely new content; everything
+    already derived once restores verbatim at near-zero cost (practical determinism,
+    stronger than temperature=0). bootstrap/plan run this automatically when
+    `derivation_cache` is enabled; the CLI command exists for manual/partial runs.
+    """
+    amg_root = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
+    config = load_config(amg_root) or {}
+    if not bool(config.get("derivation_cache", True)):
+        return {"enabled": False, "restored_units": 0}
+    qpath = amg_root / "work" / "queue.json"
+    if not qpath.exists():
+        return {"restored_units": 0, "remaining": 0}
+    data = json.loads(qpath.read_text(encoding="utf-8"))
+    units: List[Dict[str, Any]] = data.get("units", []) if isinstance(data, dict) else []
+    lang = str(config.get("working_language", "en"))
+    items: List[Dict[str, Any]] = []
+    hit_ids: Set[str] = set()
+    for u in units:
+        sha = u.get("content_sha")
+        cached = _cache_lookup(amg_root, lang, str(sha)) if sha else None
+        if cached:
+            items.extend(cached)
+            hit_ids.add(str(u.get("id")))
+    if not items:
+        return {"restored_units": 0, "remaining": len(units)}
+    tmp = amg_root / "work" / "cached-derivation.json"
+    gs.atomic_write_text(tmp, json.dumps(items, ensure_ascii=False))
+    result = apply_derivation(project_root, tmp, amg_root)
+    # Drop restored units from the queue; keep any hit whose node stayed stale (a
+    # source changed between plan and restore — the freshness check skipped it).
+    nodes = load_nodes(gs.GraphStore(amg_root))
+    remaining = [u for u in units
+                 if str(u.get("id")) not in hit_ids
+                 or (nodes.get(str(u.get("id"))) or {}).get("status") == "stale"]
+    gs.atomic_write_text(qpath, json.dumps(
+        {"generated": data.get("generated"), "units": remaining},
+        ensure_ascii=False, indent=2))
+    return {"restored_units": len(units) - len(remaining),
+            "remaining": len(remaining), **result}
+
+
+# --------------------------------------------------------------------------- #
 # Apply semantic derivation from the builder subagent
 # --------------------------------------------------------------------------- #
 
@@ -997,6 +1102,8 @@ def apply_derivation(project_root: Path, derivation_path: Path,
     # still honored for back-compat, then the constant.
     default_conf = _clamp01((config.get("verification") or {}).get(
         "default_confidence", config.get("default_confidence", DEFAULT_CONFIDENCE)))
+    cache_enabled = bool(config.get("derivation_cache", True))
+    cache_items: Dict[str, List[Dict[str, Any]]] = {}
     applied, created, skipped, skipped_stale = 0, 0, 0, 0
     skipped_invalid = 0
     invalid: List[str] = []
@@ -1018,6 +1125,11 @@ def apply_derivation(project_root: Path, derivation_path: Path,
             if item is None:
                 _note_invalid(reason or "invalid item")
                 continue
+            # Cache the sanitized item BEFORE normalization (audit 1.46): targets are
+            # re-bound against whatever graph state a future restore sees, so the
+            # cache stays a faithful record of what the model said (cleaned).
+            cache_copy = (json.loads(json.dumps(item))
+                          if cache_enabled and item.get("content_sha") else None)
             if item.get("edges"):            # bind targets to canonical ids (1.42)
                 item["edges"] = _normalize_edges(item["edges"], known, sfx)
             try:
@@ -1085,6 +1197,8 @@ def apply_derivation(project_root: Path, derivation_path: Path,
                 meta = {k: v for k, v in node.items() if not k.startswith("_")}
                 tx.write(node["_path"], serialize_node(meta, node.get("_body", "")))
                 applied += 1
+                if cache_copy is not None:     # applied update item -> persist (1.46)
+                    cache_items.setdefault(cache_copy["content_sha"], []).append(cache_copy)
             except Exception as exc:         # one bad item must not sink the batch (1.43)
                 _note_invalid(f"{item.get('id')}: {type(exc).__name__}: {exc}")
         txid = tx.commit()
@@ -1094,6 +1208,8 @@ def apply_derivation(project_root: Path, derivation_path: Path,
                 "reconcile",
                 f"apply: applied={applied} created={created} skipped={skipped} "
                 f"invalid={skipped_invalid}", txid)
+        if cache_items:                        # under the lock; atomic per-file writes
+            _cache_store(store.root, default_lang, cache_items)
 
     result: Dict[str, Any] = {"applied": applied, "created": created,
                               "skipped_missing": skipped, "skipped_stale": skipped_stale,
@@ -1277,7 +1393,23 @@ def main(argv: List[str]) -> int:
     if cmd in ("plan", "bootstrap"):
         project_root = Path(args[1]).resolve() if len(args) > 1 else Path.cwd()
         amg_root = gs.resolve_amg_root(cli_root, project_root)
-        print(json.dumps(plan(project_root, amg_root), indent=2))
+        summary = plan(project_root, amg_root)
+        # Restore cache hits automatically (audit 1.46): after this, the printed
+        # queued_for_semantic is the REAL model work left — a rebuild over unchanged
+        # content derives nothing.
+        if summary.get("queued_for_semantic"):
+            cached = apply_cached(project_root, amg_root)
+            if cached.get("restored_units"):
+                summary["restored_from_cache"] = cached["restored_units"]
+                summary["queued_for_semantic"] = cached.get(
+                    "remaining", summary["queued_for_semantic"])
+        print(json.dumps(summary, indent=2))
+        return 0
+
+    if cmd == "apply-cached":
+        project_root = Path(args[1]).resolve() if len(args) > 1 else Path.cwd()
+        amg_root = gs.resolve_amg_root(cli_root, project_root)
+        print(json.dumps(apply_cached(project_root, amg_root), indent=2))
         return 0
 
     if cmd == "apply":

@@ -19,6 +19,10 @@ Proves, without a single model call:
                   are counted separately, not as defects.
   4. idempotency: a re-run bootstrap is a strict no-op (nothing re-queued, no
                   edge rewrites).
+  5. cache      : a wipe-and-rebuild restores every per-unit derivation VERBATIM
+                  from cache/derivations/ without a single "model" call (practical
+                  determinism, audit 1.46); a changed working_language misses the
+                  cache by key instead of returning foreign-language summaries.
 
 The fixture is hermetic: config.yml is mandatory (extraction exits without one)
 and the `agent_dir` key is deliberately ABSENT so the machine's global defaults
@@ -87,6 +91,7 @@ def stub_derivation(queue_units: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     data->code link, and a tail of deliberately malformed / non-canonical items that
     exercise the per-item validation (audit 1.43)."""
     items: List[Dict[str, Any]] = []
+    sha = {u["id"]: u["content_sha"] for u in queue_units}
     for u in queue_units:
         item: Dict[str, Any] = {"id": u["id"], "content_sha": u["content_sha"],
                                 "summary": f"Summary of {u['id']}"}
@@ -99,13 +104,15 @@ def stub_derivation(queue_units: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         items.append(item)
     items += [
         # swapped fields: the edge list under `confidence`, the float under `edges`
-        {"id": f"{CORE}::top_fn",
+        {"id": f"{CORE}::top_fn", "content_sha": sha[f"{CORE}::top_fn"],
          "confidence": [{"rel": "depends_on", "to": f"{UTIL}::helper", "w": 0.6}],
          "edges": 0.77},
         # missing id -> skipped, batch continues
         {"summary": "an item with no id"},
-        # non-list part_of -> the field drops, the summary still applies
-        {"id": UTIL, "part_of": "not-a-list", "summary": "Utility helpers module."},
+        # non-list part_of -> the field drops, the summary still applies (a second
+        # item on the same sha also proves multi-item cache entries restore in order)
+        {"id": UTIL, "content_sha": sha[UTIL], "part_of": "not-a-list",
+         "summary": "Utility helpers module."},
         # not an object at all -> skipped
         "just-a-string",
         # doubled category prefix on a create item -> collapses to overview:build
@@ -179,6 +186,39 @@ def main() -> int:
         assert s["added"] == s["changed"] == s["requeued_stale"] == 0, s
         assert s["edges_refreshed"] == 0 and s["queued_for_semantic"] == 0, s
         print("PASS  idempotency: re-run bootstrap is a no-op")
+
+        # 5. derivation cache: wipe the graph, rebuild, restore verbatim (audit 1.46)
+        summaries_before = {nid: n["summary"] for nid, n in
+                            RC.load_nodes(gs.GraphStore(amg)).items()
+                            if n.get("source_kind") == "derived_from_file"}
+        shutil.rmtree(amg / "nodes")
+        shutil.rmtree(amg / "journal")
+        shutil.rmtree(amg / "work", ignore_errors=True)
+        s = RC.plan(proj, amg)                       # fresh skeleton, all stale
+        assert s["added"] == 11 and s["queued_for_semantic"] == 11, s
+        c = RC.apply_cached(proj, amg)
+        assert c["restored_units"] == 11 and c["remaining"] == 0, c
+        nodes = RC.load_nodes(gs.GraphStore(amg))
+        restored = {nid: n["summary"] for nid, n in nodes.items()
+                    if n.get("source_kind") == "derived_from_file"}
+        assert restored == summaries_before, "cache must restore derivations verbatim"
+        assert all(nodes[nid]["status"] == "active" for nid in restored), "all derived"
+        assert nodes[f"{CORE}::top_fn"]["confidence"] == 0.77, \
+            "a second cached item on the same sha must restore too"
+        guide_tos = {e["to"] for e in nodes[GUIDE]["edges"]}
+        assert f"{CORE}::Widget" in guide_tos, guide_tos   # re-normalized on restore
+        q = json.loads((amg / "work" / "queue.json").read_text(encoding="utf-8"))
+        assert q["units"] == [], "the restored units must leave the queue"
+        # a changed working language must MISS by key, never restore foreign summaries
+        (amg / "config.yml").write_text(
+            "active: true\nworking_language: ru\nmirror_path: [src, doc, data]\n",
+            encoding="utf-8")
+        shutil.rmtree(amg / "nodes")
+        shutil.rmtree(amg / "journal")
+        RC.plan(proj, amg)
+        c = RC.apply_cached(proj, amg)
+        assert c["restored_units"] == 0 and c["remaining"] == 11, c
+        print("PASS  cache: wipe+rebuild restores verbatim; language change misses")
 
         print("\nALL BUILD-PIPELINE CHECKS PASSED")
         return 0

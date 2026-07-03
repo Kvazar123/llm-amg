@@ -156,6 +156,17 @@ models:
 # -----------------------------------------------------------------------------
 derivation: eager        # eager | lazy
 
+# Persistent derivation cache (Stage 19). Every applied per-unit derivation is
+# stored under cache/derivations/ keyed by the unit's content hash (+ the
+# derivation contract version + working_language), so a wipe-and-rebuild restores
+# summaries and edges VERBATIM instead of re-deriving them differently each time —
+# practical determinism (stronger than temperature=0) and near-zero repeat cost.
+# bootstrap/plan restore hits automatically; `reconcile.py apply-cached` runs it
+# manually. Changing working_language invalidates the cache by key. Set false to
+# force fresh derivations (e.g. after a model upgrade), or simply delete the
+# cache/derivations/ directory.
+derivation_cache: true
+
 # -----------------------------------------------------------------------------
 # Spreading-activation retrieval (amg-retrieve). Query-biased Personalized PageRank.
 # -----------------------------------------------------------------------------
