@@ -84,7 +84,7 @@ flowchart LR
 
 ### Тиринг моделей в субагентов (`render_agent_models` / `render_codex_agents`)
 
-Блок `config.yml → models` — единственный источник правды по выбору моделей (audit 1.14). Карта ролей → субагенты: `discovery`→{`amg-classifier`,`amg-retriever`}, `module_summary`→{`amg-builder`}, `synthesis`→{`amg-synth`,`amg-consolidator`}, `structural_extraction`→нет субагента. Значение роли — плоская строка-модель или `{model, reasoning_effort}`.
+Блок `config.yml → models` — единственный источник правды по выбору моделей (audit 1.14). Карта ролей → субагенты: `discovery`→{`amg-classifier`,`amg-retriever`}, `module_summary`→{`amg-builder`,`amg-linker`}, `synthesis`→{`amg-synth`,`amg-consolidator`}, `structural_extraction`→нет субагента. Значение роли — плоская строка-модель или `{model, reasoning_effort}`.
 
 - **Claude Code** (`render_agent_models`): пишет поля `model`/`effort` во frontmatter `agents/amg-*.md` (точечной правкой, сохраняя `description`/`tools`/тело).
 - **Codex** (`render_codex_agents`): рендерит `agents/amg-*.md` в TOML-субагентов `.codex/agents/amg-*.toml` — `name`, `description`, `developer_instructions` (тело промпта, пути отрендерены в `.agents`), и из конфига `model_reasoning_effort` плюс `model` (если это реальный id, а не Claude-алиас: дефолтные Claude-алиасы для Codex опускаются — Codex берёт модель сессии). Переустановка заменяет набор `amg-*.toml`, не дублируя.

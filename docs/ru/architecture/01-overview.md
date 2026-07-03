@@ -50,10 +50,11 @@ flowchart TD
 |---|---|---|---|
 | Хранилище | `graph_store.py` | транзакционное чтение/запись узлов, журнал, блокировка, восстановление | `init` · `recover` · `verify` |
 | Извлечение структуры | `extract_structure.py` | классификация типа файла и нарезка на единицы | `<путь>` · `--stats` |
-| Сверка | `reconcile.py` | диф графа с источником, очередь на обогащение, применение | `bootstrap` · `plan` · `apply` |
+| Сверка | `reconcile.py` | диф графа с источником, очередь на обогащение, применение; кэш дериваций и метрики связности | `bootstrap` · `plan` · `apply` · `apply-cached` · `metrics` |
 | Захват заметок | `notes.py` | безопасная запись авторских узлов (решение / вывод / план / открытый вопрос) через транзакцию | `add` |
 | Нарезка очереди | `partition_queue.py` | делит `work/queue.json` на партии по поддеревьям для параллельных сборщиков | `[<root>]` · `--depth` |
 | Сводка очереди | `inspect_queue.py` | счётчики очереди (category / поддерево / kind / с текстом) | `[<root>]` |
+| Кандидаты линковки | `link_candidates.py` | пачки кандидатов кросс-доменных рёбер (близость сводок) и якоря хабов для глобальной линковки | `[<root>]` · `--hubs` |
 | Извлечение из графа | `retrieve.py` | засев → PPR → сборка пакета по ярусам | `"<запрос>"` · `--store` |
 | Семантический засев | `embed.py` | опциональное обогащение засева эмбеддингами; диагностика | одиночный запуск (диагностика) |
 | Read-индекс | `index_store.py` | производный SQLite-кэш под `load_nodes` (автоматический, одноразовый, пересобираемый) | — (внутренний) |
@@ -77,6 +78,7 @@ config.yml                       параметры по умолчанию
 CLAUDE.md                        петля активации (шаблон)
 agents/                          субагенты — по файлу на роль
   amg-builder.md                 генерация сводок и смысловых рёбер
+  amg-linker.md                  глобальная линковка: подтверждение кросс-доменных кандидатов
   amg-classifier.md              разрешение неоднозначных типов файлов
   amg-consolidator.md            суждение при консолидации памяти
   amg-retriever.md               сборка пакета (только чтение)
@@ -103,7 +105,7 @@ docs/                            документация (ru / en)
 
 | Скилл | Запускает скрипты | Вызывает субагентов |
 |---|---|---|
-| `amg-bootstrap` | `graph_store.py`, `extract_structure.py`, `reconcile.py` | `amg-classifier`, `amg-builder`, `amg-synth` |
+| `amg-bootstrap` | `graph_store.py`, `extract_structure.py`, `reconcile.py`, `link_candidates.py` | `amg-classifier`, `amg-builder`, `amg-synth`, `amg-linker` |
 | `amg-retrieve` | `retrieve.py`, `embed.py`, `verify_claims.py`, `eval_retrieval.py` | `amg-retriever` |
 | `amg-consolidate` | `consolidate.py` | `amg-consolidator` |
 
@@ -113,7 +115,8 @@ docs/                            документация (ru / en)
 |---|---|---|---|
 | `amg-classifier` | haiku | Read, Grep, Glob | присваивает тип файлам, которые детерминированный классификатор пометил неоднозначными |
 | `amg-builder` | sonnet | Read, Grep, Glob, Bash | по пакету единиц из очереди пишет сводку и смысловые рёбра → `derived-*.json` |
-| `amg-synth` | opus | Read, Grep, Glob, Bash | строит верхний уровень (хабы, межслойные рёбра, взвешенное мультичленство) и отчёт о пробелах |
+| `amg-synth` | opus | Read, Grep, Glob, Bash | строит верхний уровень (хабы по детерминированным якорям, рёбра стратегического слоя, взвешенное мультичленство) и отчёт о пробелах |
+| `amg-linker` | sonnet | Read, Grep, Glob, Bash | глобальная линковка после синтеза: подтверждает кросс-доменных кандидатов пачками, параллельно |
 | `amg-retriever` | haiku | Read, Grep, Glob, Bash | собирает пакет (только чтение), возвращает путь и краткую сводку |
 | `amg-consolidator` | opus | Read, Grep, Glob, Bash | решает, что повысить, слить, подытожить, сгруппировать под под-хаб, укоротить или убрать → actions JSON |
 
