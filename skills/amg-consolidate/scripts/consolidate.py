@@ -42,8 +42,9 @@ CLI:
   python consolidate.py digest  [<project_root>] [--root <agent_dir>]
 
 The graph root is <agent_dir>/amg, resolved by graph_store.resolve_amg_root:
---root -> AMG_AGENT_DIR env -> config search upward from <project_root> ->
-the engine's own location -> the default <project_root>/.claude.
+--root -> AMG_AGENT_DIR env -> upward search from <project_root> (presets
+first; a checkout / the home level never resolve as a store) -> the engine's
+own location -> the default <project_root>/.claude. Full rules: its docstring.
 """
 from __future__ import annotations
 

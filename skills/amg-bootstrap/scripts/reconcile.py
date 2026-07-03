@@ -35,9 +35,10 @@ Commands:
   python reconcile.py apply <derivation.json> [<project_root>] [--root <agent_dir>]
 
 The graph root is <agent_dir>/amg, resolved by graph_store.resolve_amg_root:
---root -> AMG_AGENT_DIR env -> the first ancestor of <project_root> holding
-amg/config.yml (or .claude/amg/config.yml) -> the engine's own location ->
-the default <project_root>/.claude.
+--root -> AMG_AGENT_DIR env -> upward search from <project_root> (agent-dir
+presets first, then a bare amg/ only when it is an initialized store; an AMG
+source checkout and the home level never resolve as a store) -> the engine's
+own location -> the default <project_root>/.claude. Full rules: its docstring.
 """
 from __future__ import annotations
 
