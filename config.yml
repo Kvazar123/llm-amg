@@ -174,6 +174,7 @@ retrieval:
     specifies: 0.9
     calls: 0.8
     depends_on: 0.8
+    inherits: 0.8                 # class -> base class (deterministic, from extraction)
     defines: 0.7
     part_of: 0.7
     imports: 0.6
@@ -251,6 +252,21 @@ near_duplicate_sim: 0.82           # Jaccard threshold to flag two nodes as merg
 # they are protected commitments (protect_types above).
 episodic_types: [section, note, open_question, plan]
 stale_age_days: 30                 # recency basis for the salience freshness signal
+
+# -----------------------------------------------------------------------------
+# Connectivity acceptance gate (Stage 19). `reconcile.py metrics` (also surfaced by
+# /amg status) reports the graph's build quality: connected components, the largest
+# component's share, unresolved INTERNAL edge targets (external `imports` to stdlib/
+# third-party are legitimate and counted separately), isolated nodes, and doc nodes
+# with no outgoing `documents` edge. The verdict (ok | attention) compares against
+# these thresholds; it is ADVISORY — a skeleton mid-build is legitimately unlinked —
+# and the bootstrap skill reads it as the acceptance step after a full build (an
+# `attention` verdict means: run the global linking pass, inspect the samples).
+# Deferred (`stale`) nodes are never counted as defects (lazy derivation, §4.10).
+# -----------------------------------------------------------------------------
+connectivity_gate:
+  min_largest_share: 0.9        # the largest component must hold at least this share of nodes
+  max_dangling_internal: 0      # unresolved internal (non-imports) edge targets tolerated
 
 # -----------------------------------------------------------------------------
 # Eval gate: compaction must not silently hurt retrieval. When `apply` carries a

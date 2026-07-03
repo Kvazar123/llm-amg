@@ -413,6 +413,22 @@ def _file_unit(rel: str, category: str, policy: str, text: str, lang: Optional[s
             "line_end": text.count("\n") + 1, "lang": lang, "content_sha": _sha(text)}
 
 
+def _dotted_chain(expr: ast.AST) -> Optional[str]:
+    """Reconstruct a dotted name chain (`helper`, `util.helper2`, `self.ping`) from a
+    Name/Attribute expression. None when the head is not a plain name (a call result,
+    subscript, literal): such a receiver is not deterministically resolvable, so the
+    reconcile resolver could never bind it — it is dropped at extraction rather than
+    recorded as a bare attribute that would only ever make a dangling edge (audit 1.40)."""
+    parts: List[str] = []
+    while isinstance(expr, ast.Attribute):
+        parts.append(expr.attr)
+        expr = expr.value
+    if isinstance(expr, ast.Name):
+        parts.append(expr.id)
+        return ".".join(reversed(parts))
+    return None
+
+
 def _python_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
     text = path.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines(keepends=True)
@@ -421,48 +437,72 @@ def _python_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
     except SyntaxError:
         return [_file_unit(rel, "code", policy, text, "python")]
 
+    # imports feed the module-map resolver (dotted module names); bindings map each
+    # LOCAL name to its dotted target (`import pkg.mod as pm` -> pm: pkg.mod;
+    # `from util import helper as h` -> h: util.helper) so the reconcile resolver can
+    # bind cross-file calls THROUGH the file's own imports — never by name coincidence.
     imports: List[str] = []
+    bindings: Dict[str, str] = {}
     for n in ast.walk(tree):
         if isinstance(n, ast.Import):
-            imports += [a.name for a in n.names]
+            for a in n.names:
+                imports.append(a.name)
+                # a plain `import pkg.mod` binds the top package name only
+                bindings[a.asname or a.name.split(".")[0]] = \
+                    a.name if a.asname else a.name.split(".")[0]
         elif isinstance(n, ast.ImportFrom) and n.module:
             imports.append(n.module)
+            for a in n.names:
+                if a.name != "*":
+                    bindings[a.asname or a.name] = f"{n.module}.{a.name}"
 
-    units = [{"id": f"code:{rel}", "kind": "module", "source_path": rel,
-              "category": "code", "policy": policy, "qualname": "", "lineno": 1,
-              "line_end": len(lines), "lang": "python", "content_sha": _sha(text),
-              "imports": sorted(set(imports))}]
+    units: List[Dict[str, Any]] = [
+        {"id": f"code:{rel}", "kind": "module", "source_path": rel,
+         "category": "code", "policy": policy, "qualname": "", "lineno": 1,
+         "line_end": len(lines), "lang": "python", "content_sha": _sha(text),
+         "imports": sorted(set(imports))}]
+    if bindings:
+        units[0]["import_bindings"] = bindings
 
     def calls_in(node: ast.AST) -> List[str]:
         names = []
         for sub in ast.walk(node):
             if isinstance(sub, ast.Call):
-                f = sub.func
-                if isinstance(f, ast.Name):
-                    names.append(f.id)
-                elif isinstance(f, ast.Attribute):
-                    names.append(f.attr)
+                chain = _dotted_chain(sub.func)
+                if chain:
+                    names.append(chain)
         return sorted(set(names))
 
     def slice_src(node: ast.stmt) -> str:
         return "".join(lines[node.lineno - 1: getattr(node, "end_lineno", node.lineno)])
 
-    def walk(node: ast.Module | ast.ClassDef, prefix: str) -> None:
+    def walk(node: ast.Module | ast.ClassDef, prefix: str,
+             container: Dict[str, Any]) -> None:
         for child in node.body:
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 qual = f"{prefix}{child.name}"
-                units.append({
+                unit: Dict[str, Any] = {
                     "id": f"code:{rel}::{qual}",
                     "kind": "class" if isinstance(child, ast.ClassDef) else "function",
                     "source_path": rel, "category": "code", "policy": policy,
                     "qualname": qual, "lineno": child.lineno,
                     "line_end": getattr(child, "end_lineno", None) or child.lineno,
                     "lang": "python",
-                    "content_sha": _sha(slice_src(child)), "calls": calls_in(child)})
+                    "content_sha": _sha(slice_src(child)), "calls": calls_in(child)}
                 if isinstance(child, ast.ClassDef):
-                    walk(child, prefix=f"{qual}.")
+                    # base-class chains (`Base`, `mod.Base`) -> `inherits` edges; a
+                    # non-name base (Generic[T], a call) is skipped as unresolvable
+                    bases = [b for b in (_dotted_chain(x) for x in child.bases) if b]
+                    if bases:
+                        unit["bases"] = bases
+                # the containment backbone (audit 1.41): module defines its top-level
+                # symbols, a class defines its methods -> `defines` edges in reconcile
+                container.setdefault("defines", []).append(qual)
+                units.append(unit)
+                if isinstance(child, ast.ClassDef):
+                    walk(child, prefix=f"{qual}.", container=unit)
 
-    walk(tree, prefix="")
+    walk(tree, prefix="", container=units[0])
     return units
 
 
@@ -565,26 +605,71 @@ def _treesitter_units(path: Path, rel: str, policy: str, lang: str) -> Optional[
             stack.extend(ch)
         return sorted({c for c in out if c.isidentifier()})
 
-    def walk(node: Any) -> None:
+    # Grammar node kinds / field names that carry a class's base list. Coverage is
+    # best-effort across grammars (JS/TS class_heritage, Java superclass field +
+    # super_interfaces, C++ base_class_clause, ...); a grammar with none simply
+    # yields no `bases` — Python is the fully-supported inheritance path (stdlib ast).
+    _TS_HERITAGE = {"class_heritage", "base_class_clause", "extends_clause",
+                    "super_interfaces", "implements_clause", "heritage_clause",
+                    "superclasses"}
+    _TS_IDENT = {"identifier", "type_identifier", "constant"}
+
+    def bases_of(node: Any) -> List[str]:
+        found: List[str] = []
+
+        def idents(n: Any) -> None:
+            stack = [n]
+            while stack:
+                c = stack.pop()
+                if kind_of(c) in _TS_IDENT:
+                    t = text_of(c).strip()
+                    if t:
+                        found.append(t)
+                else:
+                    stack.extend(children_of(c))
+
+        for fld in ("superclass", "superclasses"):
+            try:
+                fn = node.child_by_field_name(fld)
+            except Exception:
+                fn = None
+            if fn is not None:
+                idents(fn)
+        for c in children_of(node):
+            if kind_of(c) in _TS_HERITAGE:
+                idents(c)
+        return sorted(set(found))
+
+    def walk(node: Any, parent: Optional[Dict[str, Any]]) -> None:
         for child in children_of(node):
             k = kind_of(child)
+            unit: Optional[Dict[str, Any]] = None
             if k in _TS_DEF:
                 nm = name_of(child)
                 if nm:
                     src = data[_call(child.start_byte):_call(child.end_byte)] \
                         .decode("utf-8", "replace")
-                    units.append({
+                    unit = {
                         "id": f"code:{rel}::{nm}", "kind": _TS_DEF[k],
                         "source_path": rel,
                         "category": "code", "policy": policy, "qualname": nm,
                         "lineno": line_of(child), "line_end": end_line_of(child),
                         "lang": lang,
-                        "content_sha": _sha(src), "calls": calls_in(child)})
-            walk(child)
+                        "content_sha": _sha(src), "calls": calls_in(child)}
+                    if _TS_DEF[k] == "class":
+                        bs = bases_of(child)
+                        if bs:
+                            unit["bases"] = bs
+                    # containment backbone: the enclosing def (or the module unit)
+                    # defines this symbol — mirrors the Python chunker (audit 1.41)
+                    (parent if parent is not None else units[0]) \
+                        .setdefault("defines", []).append(nm)
+                    units.append(unit)
+            walk(child, unit if unit is not None else parent)
 
     if tree is None:                          # parser returned no tree -> skip
         return None
-    walk(_call(tree.root_node))
+    walk(_call(tree.root_node), None)
     return units
 
 

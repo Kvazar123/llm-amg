@@ -84,7 +84,8 @@ DEFAULTS = {
                      "operational": 6000, "periphery_links": 40},
     "relation_priors": {
         "documents": 0.9, "specifies": 0.9, "implements": 0.9,
-        "calls": 0.8, "depends_on": 0.8, "defines": 0.7, "part_of": 0.7,
+        "calls": 0.8, "depends_on": 0.8, "inherits": 0.8,
+        "defines": 0.7, "part_of": 0.7,
         "imports": 0.6, "refines": 0.6, "exemplifies": 0.6, "relates_to": 0.5,
         "follows": 0.4, "supersedes": 0.3, "contradicts": 0.3,
     },

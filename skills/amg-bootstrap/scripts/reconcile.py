@@ -29,10 +29,18 @@ Crucial safety rules (see ../references/consistency-model.md):
     the semantic re-derivation is committed. A crash mid-derivation loses nothing.
   * All writes go through graph_store transactions, so any interruption recovers.
 
+Deterministic edge resolution (stage 19, roadmap §4.2 / audits 1.40-1.42): every
+plan() builds cross-file symbol tables from the extracted units and resolves
+`calls`/`inherits` through each file's own imports (never by name coincidence),
+emits the `defines` containment backbone (module -> symbol, class -> method), and
+canonicalizes judgment-layer edge targets by unique path suffix — both on apply and
+in a whole-graph sweep, so a graph built before this pass heals on one bootstrap.
+
 Commands:
   python reconcile.py bootstrap [<project_root>] [--root <agent_dir>]
   python reconcile.py plan      [<project_root>] [--root <agent_dir>]
   python reconcile.py apply <derivation.json> [<project_root>] [--root <agent_dir>]
+  python reconcile.py metrics   [<project_root>] [--root <agent_dir>]   # connectivity report
 
 The graph root is <agent_dir>/amg, resolved by graph_store.resolve_amg_root:
 --root -> AMG_AGENT_DIR env -> upward search from <project_root> (agent-dir
@@ -48,8 +56,9 @@ import re
 import subprocess
 import sys
 import time
+from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import graph_store as gs
 from extract_structure import extract, load_config, resolve_sources, detect_policy_conflicts
@@ -182,7 +191,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
     raw_units = extract(project_root, config, amg_root)
     units = {u["id"]: u for u in raw_units}
     summary: Dict[str, Any] = {"added": 0, "changed": 0, "moved": 0, "deleted": 0, "unchanged": 0,
-               "requeued_stale": 0, "pointer_refreshed": 0, "frozen": 0}
+               "requeued_stale": 0, "pointer_refreshed": 0, "edges_refreshed": 0, "frozen": 0}
     queue: List[Dict[str, Any]] = []
 
     with store.lock():
@@ -190,7 +199,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
         nodes = load_nodes(store)
         tx = store.transaction()
 
-        module_map = _module_map(units)
+        symbols = _build_symbols(units)    # cross-file resolver tables (stage 19)
         default_lang = config.get("working_language", "en")
         commit = _git_commit(project_root)     # ingest-time provenance.commit (best-effort)
 
@@ -199,7 +208,19 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
         # purge+create — otherwise every mirror refactoring erases earned memory.
         pairs = _detect_moves(units, nodes)
         moves = {old["id"]: unit["id"] for old, unit in pairs}
-        migrated = [(_migrate_node(old, unit, module_map, default_lang, commit), old, unit)
+
+        # The post-diff id universe and its suffix index, for canonical-target repair
+        # (audit 1.42): every unit id plus every surviving non-unit node (hubs, notes,
+        # absorb orphans); purged mirrors and the moved-away old ids are excluded.
+        deleted_ids = {nid for nid, node in nodes.items()
+                       if nid not in units and nid not in moves
+                       and node.get("source_kind") == "derived_from_file"
+                       and node.get("policy") == "mirror"}
+        id_index = set(units) | {nid for nid in nodes
+                                 if nid not in deleted_ids and nid not in moves}
+        sfx = _build_suffix_index(id_index)
+
+        migrated = [(_migrate_node(old, unit, symbols, default_lang, commit), old, unit)
                     for old, unit in pairs]
         for (meta, needs_queue), old, unit in migrated:
             # second pass over the move map: an edge to ANOTHER simultaneously
@@ -208,6 +229,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
             for e in meta["edges"]:
                 if isinstance(e, dict) and e.get("to") in moves:
                     e["to"] = moves[e["to"]]
+            meta["edges"] = _normalize_edges(meta["edges"], id_index, sfx)
             tx.write(node_relpath(unit["id"], _dir_for(unit["category"])),
                      serialize_node(meta, old.get("_body", "")))
             tx.delete(old["_path"])
@@ -263,7 +285,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
                     "provenance": _provenance(unit["category"], commit),
                     "verification": _fresh_verification(),
                     "part_of": _part_of_for(unit),
-                    "edges": _structural_edges(unit, module_map),
+                    "edges": _structural_edges(unit, symbols),
                     "lang": config.get("working_language", "en"),
                     "status": "stale", "summary": "", "updated": _now(),
                 }
@@ -287,8 +309,9 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
                 node["line_end"] = unit.get("line_end", unit.get("lineno"))
                 node["provenance"] = _provenance(unit["category"], commit)
                 node["verification"] = _fresh_verification()   # source changed -> re-verify
-                node["edges"] = _refresh_structural_edges(node.get("edges") or [],
-                                                          unit, module_map)
+                node["edges"] = _normalize_edges(
+                    _refresh_structural_edges(node.get("edges") or [], unit, symbols),
+                    id_index, sfx)
                 node["status"] = "stale"
                 node["updated"] = _now()
                 node.setdefault("part_of", _part_of_for(unit))
@@ -296,7 +319,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
                 queue.append(_queue_item(unit))
                 summary["changed"] += 1
             else:
-                # Source content unchanged; two kinds of lag may still remain.
+                # Source content unchanged; three kinds of lag may still remain.
                 # Pointer drift: an edit ABOVE this unit shifted it without changing
                 # its content hash -> refresh lineno/qualname only, no re-derivation.
                 # Policy rides along: a folder moved between mirror_path/absorb_path
@@ -310,17 +333,32 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
                            or node.get("qualname") != unit.get("qualname", "")
                            or node.get("policy") != unit["policy"]
                            or node.get("type") != unit["kind"])
-                if drifted:
-                    node.pop("_path", None)
-                    body = node.pop("_body", "")
+                # Edge canon lag: structural extraction improved (the resolver,
+                # defines, inherits — stage 19) or an edge target's canonical id now
+                # exists. Re-extract + normalize and rewrite ONLY when the result
+                # differs, so an already-canonical graph stays a strict no-op
+                # (idempotency preserved) while a pre-resolver graph heals on one
+                # bootstrap without a single model call.
+                current_edges = node.get("edges") or []
+                fresh_edges = _normalize_edges(
+                    _refresh_structural_edges(current_edges, unit, symbols),
+                    id_index, sfx)
+                edges_changed = not _edges_equivalent(fresh_edges, current_edges)
+                if drifted or edges_changed:
                     node["qualname"] = unit.get("qualname", "")
                     node["lineno"] = unit.get("lineno")
                     node["line_end"] = unit.get("line_end", unit.get("lineno"))
                     node["policy"] = unit["policy"]
                     node["type"] = unit["kind"]
+                    if edges_changed:        # a pure reorder never churns the file
+                        node["edges"] = fresh_edges
                     node["updated"] = _now()
-                    tx.write(relpath, serialize_node(node, body))
-                    summary["pointer_refreshed"] += 1
+                    meta = {k: v for k, v in node.items() if not k.startswith("_")}
+                    tx.write(relpath, serialize_node(meta, node.get("_body", "")))
+                    if drifted:
+                        summary["pointer_refreshed"] += 1
+                    if edges_changed:
+                        summary["edges_refreshed"] += 1
                 # Derivation lag: the summary never caught up (e.g. a crash before
                 # the queue write, or apply never ran) -> re-queue; the node file
                 # itself needs no rewrite for this.
@@ -328,17 +366,30 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
                         or node.get("status") == "stale"):
                     queue.append(_queue_item(unit))
                     summary["requeued_stale"] += 1
-                elif not drifted:
+                elif not drifted and not edges_changed:
                     summary["unchanged"] += 1
 
         # deleted: mirror nodes whose source unit vanished
-        for uid, node in nodes.items():
-            if uid in units or uid in moves:    # moved old ids are already deleted
+        for uid in sorted(deleted_ids):
+            tx.delete(nodes[uid]["_path"])
+            summary["deleted"] += 1
+            # authored / absorb notes are intentionally left untouched (not in the set)
+
+        # Canonical-target sweep over nodes with no unit this run (hubs, notes,
+        # absorb orphans): their judgment edges may point at a target written
+        # without its full path — re-bind when exactly one canonical id exists
+        # (audit 1.42). Unit-backed nodes were normalized in their branches above.
+        # Writes only on an actual change, so a canonical graph stays a no-op.
+        for nid, node in nodes.items():
+            if nid in units or nid in moves or nid in deleted_ids:
                 continue
-            if node.get("source_kind") == "derived_from_file" and node.get("policy") == "mirror":
-                tx.delete(node["_path"])
-                summary["deleted"] += 1
-            # authored / absorb notes are intentionally left untouched
+            current = node.get("edges") or []
+            fixed = _normalize_edges(current, id_index, sfx)
+            if fixed is not current:         # same object back == nothing repaired
+                node["edges"] = fixed
+                meta = {k: v for k, v in node.items() if not k.startswith("_")}
+                tx.write(node["_path"], serialize_node(meta, node.get("_body", "")))
+                summary["edges_refreshed"] += 1
 
         txid = tx.commit()
         if txid:
@@ -359,7 +410,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
                 f"bootstrap: added={summary['added']} changed={summary['changed']} "
                 f"moved={summary['moved']} deleted={summary['deleted']} "
                 f"requeued={summary['requeued_stale']} frozen={summary['frozen']} "
-                f"queued={len(queue)}", txid)
+                f"edges_refreshed={summary['edges_refreshed']} queued={len(queue)}", txid)
 
     conflicts = detect_policy_conflicts(raw_units)        # 1.29: mirror/absorb overlap
     if conflicts:
@@ -399,21 +450,119 @@ def _module_map(units: Dict[str, Dict[str, Any]]) -> Dict[str, str]:
     return {k: v for k, v in out.items() if v}
 
 
-def _structural_edges(unit: Dict[str, Any], module_map: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
+def _build_symbols(units: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """Cross-file symbol tables for the deterministic edge resolver (stage 19,
+    roadmap §4.2 / audits 1.40-1.42): the module map (dotted name -> source path),
+    per-file top-level definition names, per-file qualname sets, and per-file import
+    bindings (local name -> dotted target, from the chunker). Resolution goes THROUGH
+    a file's own imports — never by global name coincidence — because a wrong edge is
+    worse than a dangling one. Built once per plan() from the extracted units."""
+    top: Dict[str, Set[str]] = {}
+    quals: Dict[str, Set[str]] = {}
+    bindings: Dict[str, Dict[str, str]] = {}
+    for u in units.values():
+        if u.get("category") != "code":
+            continue
+        rel = u.get("source_path") or ""
+        q = u.get("qualname") or ""
+        if q:
+            quals.setdefault(rel, set()).add(q)
+            if "." not in q:
+                top.setdefault(rel, set()).add(q)
+        if u.get("kind") == "module" and u.get("import_bindings"):
+            bindings[rel] = dict(u["import_bindings"])
+    return {"module_map": _module_map(units), "top": top, "quals": quals,
+            "bindings": bindings}
+
+
+def _resolve_dotted(dotted: str, symbols: Dict[str, Any]) -> Optional[str]:
+    """Bind a dotted chain (`util.helper2`, `pkg.mod.Class.method`) to a unit id: the
+    longest dotted prefix naming an in-project module wins, and the remainder must be
+    an existing qualname in that module — else None (a stdlib/third-party module, or
+    a symbol the module does not define, never becomes an edge)."""
+    module_map: Dict[str, str] = symbols.get("module_map") or {}
+    quals: Dict[str, Set[str]] = symbols.get("quals") or {}
+    parts = dotted.split(".")
+    for i in range(len(parts) - 1, 0, -1):
+        target = module_map.get(".".join(parts[:i]))
+        if target:
+            qual = ".".join(parts[i:])
+            return f"code:{target}::{qual}" if qual in quals.get(target, set()) else None
+    return None
+
+
+def _resolve_symbol(unit: Dict[str, Any], name: str,
+                    symbols: Dict[str, Any]) -> Optional[str]:
+    """Resolve a called or inherited name from `unit`'s point of view to a canonical
+    unit id, or None (-> no edge at all; audit 1.40). Order: a bare name binds to a
+    same-file top-level definition, then to the file's import bindings; a same-file
+    qualified reference (`Box.make`) binds directly; `self.X`/`cls.X` binds to a
+    method of the owning class; any other dotted chain expands its head through the
+    import bindings and then the module map. Builtins, unknown receivers, and
+    external modules resolve to nothing."""
+    if not symbols:
+        return None
+    rel = unit.get("source_path") or ""
+    top: Set[str] = (symbols.get("top") or {}).get(rel) or set()
+    quals: Set[str] = (symbols.get("quals") or {}).get(rel) or set()
+    bindings: Dict[str, str] = (symbols.get("bindings") or {}).get(rel) or {}
+    if "." not in name:
+        if name in top:
+            return f"code:{rel}::{name}"
+        bound = bindings.get(name)
+        return _resolve_dotted(bound, symbols) if bound else None
+    if name in quals:                        # same-file qualified ref (Box.method)
+        return f"code:{rel}::{name}"
+    head, rest = name.split(".", 1)
+    if head in ("self", "cls"):
+        q = unit.get("qualname") or ""
+        cls = q if unit.get("kind") == "class" else (q.rsplit(".", 1)[0] if "." in q else "")
+        if cls and f"{cls}.{rest}" in quals:
+            return f"code:{rel}::{cls}.{rest}"
+        return None
+    alias = bindings.get(head)
+    if not alias:
+        return None          # only the file's own imports may bind a chain (no guessing)
+    return _resolve_dotted(f"{alias}.{rest}", symbols)
+
+
+def _structural_edges(unit: Dict[str, Any], symbols: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """Deterministic edges for one unit (stage 19 completes roadmap §4.2):
+
+      * imports  : an in-project module resolves to its node id via the module map;
+                   stdlib/third-party stay dotted names — legitimately dangling, they
+                   record the import fact and retrieval simply drops them;
+      * defines  : the containment backbone — module -> top-level symbol, class ->
+                   method (audit 1.41); targets exist by construction (w 1.0, like
+                   the primary part_of membership: containment is definitional);
+      * inherits : class -> base class, resolved like calls (audit 1.41; w 0.8 —
+                   subclass-base coupling is tighter than a call);
+      * calls    : resolved against the symbol tables (same file -> import bindings
+                   -> module map) and emitted ONLY when the target unit exists —
+                   builtins and unresolvable receivers produce no edge (audit 1.40);
+      * follows  : chat/session adjacency (unchanged).
+    """
+    module_map: Dict[str, str] = (symbols or {}).get("module_map") or {}
     edges = []
     for mod in unit.get("imports", []) or []:
-        # in-project imports resolve to the module node id; stdlib/third-party
-        # stay as the dotted name (a dangling target retrieval simply drops)
-        target = (module_map or {}).get(mod)
+        target = module_map.get(mod)
         to = f"code:{target}" if target else f"code:{mod}"
         edges.append({"rel": "imports", "to": to, "w": 0.6, "coact": 0,
                       "origin": "structural"})
     rel = unit.get("source_path", "")
+    for qual in unit.get("defines", []) or []:
+        edges.append({"rel": "defines", "to": f"code:{rel}::{qual}", "w": 1.0,
+                      "coact": 0, "origin": "structural"})
+    for base in unit.get("bases", []) or []:
+        target2 = _resolve_symbol(unit, base, symbols or {})
+        if target2 and target2 != unit.get("id"):
+            edges.append({"rel": "inherits", "to": target2, "w": 0.8, "coact": 0,
+                          "origin": "structural"})
     for callee in unit.get("calls", []) or []:
-        # best-effort same-file target; retrieval drops edges whose target node
-        # does not exist, so cross-file calls are simply ignored until resolved.
-        edges.append({"rel": "calls", "to": f"code:{rel}::{callee}", "w": 0.7, "coact": 0,
-                      "origin": "structural"})
+        target2 = _resolve_symbol(unit, callee, symbols or {})
+        if target2 and target2 != unit.get("id"):
+            edges.append({"rel": "calls", "to": target2, "w": 0.7, "coact": 0,
+                          "origin": "structural"})
     prev = unit.get("follows")             # chat/session adjacency: this turn -> previous
     if prev:
         edges.append({"rel": "follows", "to": prev, "w": 0.3, "coact": 0,
@@ -427,15 +576,99 @@ def _structural_edges(unit: Dict[str, Any], module_map: Optional[Dict[str, str]]
     return out
 
 
+def _build_suffix_index(ids: Set[str]) -> Dict[Tuple[str, str], List[Tuple[str, str]]]:
+    """(category, qualifier) -> [(path, id)] over the known node ids, for canonical-id
+    repair (audit 1.42): a judgment-layer target written without its leading
+    directories (`code:core/foo.py::bar`) re-binds to the ONE node whose path ends
+    with the written path on a '/' boundary. Ambiguity -> no repair."""
+    out: Dict[Tuple[str, str], List[Tuple[str, str]]] = defaultdict(list)
+    for nid in ids:
+        if ":" not in nid:
+            continue
+        cat, tail = nid.split(":", 1)
+        path, _, qual = tail.partition("::")
+        out[(cat, qual)].append((path, nid))
+    return out
+
+
+def _edges_equivalent(a: List[Dict[str, Any]], b: List[Dict[str, Any]]) -> bool:
+    """Order-insensitive equality of two edge lists. Edge order carries no meaning
+    (adjacency accumulates by (rel, to)), so a mere reordering by the structural
+    refresh must not count as a change — otherwise every node that earned semantic
+    edges would be rewritten once per bootstrap for nothing."""
+    if len(a) != len(b):
+        return False
+
+    def key(e: Any) -> Tuple[str, str]:
+        if isinstance(e, dict):
+            return (str(e.get("rel")), str(e.get("to")))
+        return ("", str(e))
+
+    return sorted(a, key=key) == sorted(b, key=key)
+
+
+def _repair_target(to: str, sfx: Dict[Tuple[str, str], List[Tuple[str, str]]]) -> Optional[str]:
+    """The unique canonical id whose path ends with the written target's path (same
+    category and qualifier), or None. Segment-safe: `core/foo.py` matches
+    `src/pkg/core/foo.py` but a dotted external name (`json`) never matches a real
+    path (`src/json.py` does not end with `/json`)."""
+    if ":" not in to:
+        return None
+    cat, tail = to.split(":", 1)
+    path, _, qual = tail.partition("::")
+    if not path:
+        return None
+    hits = [nid for p, nid in sfx.get((cat, qual), ())
+            if p != path and p.endswith("/" + path)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _normalize_edges(edges: List[Dict[str, Any]], ids: Set[str],
+                     sfx: Dict[Tuple[str, str], List[Tuple[str, str]]]) -> List[Dict[str, Any]]:
+    """Re-bind edge targets that name no existing node to their canonical id when
+    exactly one candidate exists (path-suffix repair, audit 1.42). Unrepairable
+    targets stay as written — retrieval drops dangling edges, and `imports` to
+    external modules are legitimately dangling. Returns the SAME list object when
+    nothing changed (cheap no-op detection for callers); on a change the result is
+    deduplicated by (rel, to), since a repair may collide with an existing edge."""
+    repaired = False
+    out: List[Dict[str, Any]] = []
+    for e in edges:
+        to = e.get("to") if isinstance(e, dict) else None
+        if isinstance(to, str) and to not in ids:
+            fixed = _repair_target(to, sfx)
+            if fixed:
+                e = dict(e, to=fixed)
+                repaired = True
+        out.append(e)
+    if not repaired:
+        return edges
+    merged: Dict[Tuple[Any, Any], Dict[str, Any]] = {}
+    passthrough: List[Dict[str, Any]] = []
+    for e in out:
+        if not isinstance(e, dict) or not e.get("to"):
+            passthrough.append(e)
+            continue
+        key = (e.get("rel"), e["to"])
+        cur = merged.get(key)
+        if cur is None:
+            merged[key] = dict(e)
+        else:
+            cur["w"] = max(float(cur.get("w", 0)), float(e.get("w", 0)))
+            cur["coact"] = int(cur.get("coact", 0)) + int(e.get("coact", 0))
+    return passthrough + list(merged.values())
+
+
 def _refresh_structural_edges(existing: List[Dict[str, Any]], unit: Dict[str, Any],
-                              module_map: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
-    """Re-extract deterministic edges for a changed unit, keeping earned ones.
+                              symbols: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """Re-extract deterministic edges for a unit, keeping earned ones.
 
     Old structural edges — marked `origin: structural`, or legacy-unmarked
-    `imports`/`calls` (the only rels _structural_edges has ever produced) — are
-    replaced by a fresh extraction; an edge that persists across the change
-    inherits its earned weight and coact count. Edges of any other origin
-    (semantic / synthesized / consolidation) are kept untouched.
+    `imports`/`calls` (the only rels the pre-resolver extraction ever produced) —
+    are replaced by a fresh extraction; an edge that persists across the change
+    inherits its earned weight and coact count, while a target the resolver no
+    longer emits (a builtin, a same-file-glued miss) is dropped. Edges of any other
+    origin (semantic / synthesized / consolidation) are kept untouched.
     """
     old_structural: Dict[Tuple[Any, Any], Dict[str, Any]] = {}
     kept: List[Dict[str, Any]] = []
@@ -448,7 +681,7 @@ def _refresh_structural_edges(existing: List[Dict[str, Any]], unit: Dict[str, An
             kept.append(e)
     kept_keys = {(e.get("rel"), e.get("to")) for e in kept if isinstance(e, dict)}
     fresh: List[Dict[str, Any]] = []
-    for e in _structural_edges(unit, module_map):
+    for e in _structural_edges(unit, symbols):
         old = old_structural.get((e["rel"], e["to"]))
         if old:                                  # survived the change: keep earned signal
             e["w"] = max(e["w"], float(old.get("w", 0)))
@@ -488,7 +721,7 @@ def _detect_moves(units: Dict[str, Dict[str, Any]], nodes: Dict[str, Dict[str, A
     return pairs
 
 
-def _migrate_node(old: Dict[str, Any], unit: Dict[str, Any], module_map: Dict[str, str],
+def _migrate_node(old: Dict[str, Any], unit: Dict[str, Any], symbols: Dict[str, Any],
                   default_lang: str, commit: Optional[str] = None) -> Tuple[Dict[str, Any], bool]:
     """Node for a moved/renamed source unit: structural fields from the new
     unit, earned fields (summary, lang, semantic edges with their coact,
@@ -509,7 +742,7 @@ def _migrate_node(old: Dict[str, Any], unit: Dict[str, Any], module_map: Dict[st
             elif e["to"].startswith(f"code:{old_rel}::"):
                 e = dict(e, to=f"code:{new_rel}::" + e["to"][len(f"code:{old_rel}::"):])
         edges.append(e)
-    edges = _refresh_structural_edges(edges, unit, module_map)
+    edges = _refresh_structural_edges(edges, unit, symbols)
 
     old_parent = str(Path(old_rel).parent).replace("\\", "/")
     old_primary = old_parent if old_parent not in (".", "") else unit["category"]
@@ -657,6 +890,72 @@ def _synth_provenance(item: Dict[str, Any]) -> Dict[str, Any]:
 # Apply semantic derivation from the builder subagent
 # --------------------------------------------------------------------------- #
 
+# Category prefixes a synthesized create item may double up (`hub:overview:x`
+# instead of `overview:x`) — collapsed by _sanitize_item when the item's own type
+# names the inner prefix.
+_SYNTH_PREFIX_RE = re.compile(r"^(hub|overview|pattern|note):((?:hub|overview|pattern|note):.+)$")
+
+
+def _sanitize_item(item: Any) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Per-item validation/normalization for apply (audit 1.43): repair what is
+    mechanically repairable, skip what is not — one malformed item must never abort
+    the batch. Returns (clean_item, None) or (None, reason).
+
+    Repairs: swapped confidence/edges fields (the observed builder failure: the edge
+    list under `confidence`, a float under `edges`); a doubled category prefix on a
+    create item's id; malformed edge / membership entries (dropped one by one); a
+    non-list `edges`/`part_of` and a non-string `summary`/`lang`/`body` (field
+    dropped, the rest of the item applies); an out-of-range edge weight (dropped ->
+    the default applies at merge)."""
+    if not isinstance(item, dict):
+        return None, "item is not an object"
+    it = dict(item)
+    if isinstance(it.get("confidence"), list) and it["confidence"] and all(
+            isinstance(e, dict) and ("to" in e or "rel" in e) for e in it["confidence"]):
+        conf = it.get("edges")               # the swapped-away numeric estimate, if any
+        it["edges"] = it.pop("confidence")
+        if isinstance(conf, (int, float)) and not isinstance(conf, bool):
+            it["confidence"] = conf
+    nid = it.get("id")
+    if not isinstance(nid, str) or not nid.strip():
+        return None, "missing id"
+    nid = nid.strip()
+    m = _SYNTH_PREFIX_RE.match(nid)
+    if m and str(it.get("type", "")).strip() == m.group(2).split(":", 1)[0]:
+        nid = m.group(2)                     # hub:overview:x + type overview -> overview:x
+    it["id"] = nid
+    if "edges" in it:
+        if not isinstance(it["edges"], list):
+            it.pop("edges")
+        else:
+            edges = []
+            for e in it["edges"]:
+                if not (isinstance(e, dict) and isinstance(e.get("to"), str)
+                        and e["to"].strip() and isinstance(e.get("rel"), str)):
+                    continue                 # a malformed edge entry drops, not the item
+                e = dict(e, to=e["to"].strip())
+                if "w" in e:
+                    try:
+                        w = float(e["w"])
+                        if not 0.0 < w <= 1.0:
+                            raise ValueError
+                        e["w"] = w
+                    except (TypeError, ValueError):
+                        e.pop("w")           # default_edge_weight applies at merge
+                edges.append(e)
+            it["edges"] = edges
+    if "part_of" in it:
+        if not isinstance(it["part_of"], list):
+            it.pop("part_of")
+        else:
+            it["part_of"] = [p for p in it["part_of"]
+                             if isinstance(p, dict) and p.get("topic")]
+    for key in ("summary", "lang", "body", "content_sha"):
+        if key in it and not isinstance(it[key], str):
+            it.pop(key)
+    return it, None
+
+
 def apply_derivation(project_root: Path, derivation_path: Path,
                      amg_root: Optional[Path] = None) -> Dict[str, Any]:
     """Apply derivation items to the graph. Two item shapes are supported:
@@ -678,10 +977,17 @@ def apply_derivation(project_root: Path, derivation_path: Path,
     as 'derived' once its summary is durably committed. An edges-/part_of-only
     item leaves a stale node stale, so reconcile keeps re-queueing it until a
     summary arrives.
+
+    Robust per item (audit 1.43): each item is sanitized (_sanitize_item) and
+    applied under its own guard, so a malformed one is repaired or skipped
+    (`skipped_invalid` + reasons) without aborting the batch; edge targets are
+    canonicalized against the existing node set (audit 1.42) before merging.
     """
     amg_root = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     store = gs.GraphStore(amg_root)
     items = json.loads(Path(derivation_path).read_text(encoding="utf-8"))
+    if not isinstance(items, list):
+        items = [items]
     config = load_config(amg_root) or {}
     default_lang = config.get("working_language", "en")
     weights_cfg = config.get("weights") or {}
@@ -692,84 +998,109 @@ def apply_derivation(project_root: Path, derivation_path: Path,
     default_conf = _clamp01((config.get("verification") or {}).get(
         "default_confidence", config.get("default_confidence", DEFAULT_CONFIDENCE)))
     applied, created, skipped, skipped_stale = 0, 0, 0, 0
+    skipped_invalid = 0
+    invalid: List[str] = []
+
+    def _note_invalid(reason: str) -> None:
+        nonlocal skipped_invalid
+        skipped_invalid += 1
+        if len(invalid) < 10:
+            invalid.append(reason)
 
     with store.lock():
         store.recover()
         nodes = load_nodes(store)
+        known = set(nodes)
+        sfx = _build_suffix_index(known)
         tx = store.transaction()
-        for item in items:
-            node = nodes.get(item["id"])
-            if node is None:
-                if "type" in item:                       # synthesized node (e.g. a hub)
-                    path = node_relpath(item["id"], "_hubs")
-                    meta = {
-                        "id": item["id"], "type": item["type"],
-                        "source_kind": "synthesized", "policy": "authored",
-                        "source_hash": None, "derived_from_hash": None,
-                        "provenance": _synth_provenance(item),
-                        "confidence": _clamp01(item.get("confidence", default_conf),
-                                               default_conf),
-                        "verification": _fresh_verification(),
-                        "part_of": item.get("part_of", []),
-                        "edges": [dict(e, coact=e.get("coact", 0),
-                                       origin=e.get("origin", "synthesized"))
-                                  for e in item.get("edges", [])],
-                        "lang": item.get("lang", default_lang),
-                        "status": "active", "summary": item.get("summary", ""),
-                        "updated": _now(),
-                    }
-                    nodes[item["id"]] = dict(meta, _path=path, _body=item.get("body", ""))
-                    tx.write(path, serialize_node(meta, item.get("body", "")))
-                    created += 1
-                else:
-                    skipped += 1                          # update for an unknown id
+        for raw_item in items:
+            item, reason = _sanitize_item(raw_item)
+            if item is None:
+                _note_invalid(reason or "invalid item")
                 continue
-            # Resumable derivation (task 13): a derived item echoes the content_sha it was
-            # built from. If the source changed since (the node's source_hash moved on),
-            # applying it would attach a summary for STALE content AND mark the node derived
-            # for the NEW hash — a blind stale derivation. Skip it; the node stays stale and
-            # the next reconcile re-queues it. Only for source-derived nodes (synthesized/
-            # authored carry source_hash null -> no check, so a leftover hub item still applies).
-            isha = item.get("content_sha")
-            if isha and node.get("source_hash") and isha != node["source_hash"]:
-                skipped_stale += 1
-                continue
-            # existing node: read _path/_body WITHOUT popping, so repeated items on
-            # the same node accumulate instead of losing the path on the second pass.
-            if "summary" in item:
-                node["summary"] = item["summary"]
-            if "lang" in item:
-                node["lang"] = item["lang"]
-            if "part_of" in item:
-                node["part_of"] = _merge_part_of(node.get("part_of") or [],
-                                                 item["part_of"], renormalize)
-            if item.get("edges"):
-                node["edges"] = _merge_edges(node.get("edges", []), item["edges"],
-                                             default_w=default_w)
-            # Confidence estimate from the builder (Stage 13 task 3): an explicit value
-            # wins; otherwise a node that just earned a summary takes the default once.
-            if "confidence" in item:
-                node["confidence"] = _clamp01(item["confidence"], default_conf)
-            elif "summary" in item and node.get("confidence") is None:
-                node["confidence"] = default_conf
-            if "summary" in item or node.get("source_kind") != "derived_from_file":
-                node["derived_from_hash"] = node.get("source_hash")
-                node["status"] = "active"
-            node["updated"] = _now()
-            if "body" in item:
-                node["_body"] = item["body"]
-            meta = {k: v for k, v in node.items() if not k.startswith("_")}
-            tx.write(node["_path"], serialize_node(meta, node.get("_body", "")))
-            applied += 1
+            if item.get("edges"):            # bind targets to canonical ids (1.42)
+                item["edges"] = _normalize_edges(item["edges"], known, sfx)
+            try:
+                node = nodes.get(item["id"])
+                if node is None:
+                    if "type" in item:                       # synthesized node (e.g. a hub)
+                        path = node_relpath(item["id"], "_hubs")
+                        meta = {
+                            "id": item["id"], "type": item["type"],
+                            "source_kind": "synthesized", "policy": "authored",
+                            "source_hash": None, "derived_from_hash": None,
+                            "provenance": _synth_provenance(item),
+                            "confidence": _clamp01(item.get("confidence", default_conf),
+                                                   default_conf),
+                            "verification": _fresh_verification(),
+                            "part_of": item.get("part_of", []),
+                            "edges": [dict(e, coact=e.get("coact", 0),
+                                           origin=e.get("origin", "synthesized"))
+                                      for e in item.get("edges", [])],
+                            "lang": item.get("lang", default_lang),
+                            "status": "active", "summary": item.get("summary", ""),
+                            "updated": _now(),
+                        }
+                        nodes[item["id"]] = dict(meta, _path=path, _body=item.get("body", ""))
+                        known.add(item["id"])
+                        tx.write(path, serialize_node(meta, item.get("body", "")))
+                        created += 1
+                    else:
+                        skipped += 1                          # update for an unknown id
+                    continue
+                # Resumable derivation (task 13): a derived item echoes the content_sha it was
+                # built from. If the source changed since (the node's source_hash moved on),
+                # applying it would attach a summary for STALE content AND mark the node derived
+                # for the NEW hash — a blind stale derivation. Skip it; the node stays stale and
+                # the next reconcile re-queues it. Only for source-derived nodes (synthesized/
+                # authored carry source_hash null -> no check, so a leftover hub item still applies).
+                isha = item.get("content_sha")
+                if isha and node.get("source_hash") and isha != node["source_hash"]:
+                    skipped_stale += 1
+                    continue
+                # existing node: read _path/_body WITHOUT popping, so repeated items on
+                # the same node accumulate instead of losing the path on the second pass.
+                if "summary" in item:
+                    node["summary"] = item["summary"]
+                if "lang" in item:
+                    node["lang"] = item["lang"]
+                if "part_of" in item:
+                    node["part_of"] = _merge_part_of(node.get("part_of") or [],
+                                                     item["part_of"], renormalize)
+                if item.get("edges"):
+                    node["edges"] = _merge_edges(node.get("edges", []), item["edges"],
+                                                 default_w=default_w)
+                # Confidence estimate from the builder (Stage 13 task 3): an explicit value
+                # wins; otherwise a node that just earned a summary takes the default once.
+                if "confidence" in item:
+                    node["confidence"] = _clamp01(item["confidence"], default_conf)
+                elif "summary" in item and node.get("confidence") is None:
+                    node["confidence"] = default_conf
+                if "summary" in item or node.get("source_kind") != "derived_from_file":
+                    node["derived_from_hash"] = node.get("source_hash")
+                    node["status"] = "active"
+                node["updated"] = _now()
+                if "body" in item:
+                    node["_body"] = item["body"]
+                meta = {k: v for k, v in node.items() if not k.startswith("_")}
+                tx.write(node["_path"], serialize_node(meta, node.get("_body", "")))
+                applied += 1
+            except Exception as exc:         # one bad item must not sink the batch (1.43)
+                _note_invalid(f"{item.get('id')}: {type(exc).__name__}: {exc}")
         txid = tx.commit()
         if txid:
             _refresh_index(store.root, tx)     # warm the read-index under the lock
             store.append_log(                  # transactional audit line (1.15)
                 "reconcile",
-                f"apply: applied={applied} created={created} skipped={skipped}", txid)
+                f"apply: applied={applied} created={created} skipped={skipped} "
+                f"invalid={skipped_invalid}", txid)
 
-    return {"applied": applied, "created": created, "skipped_missing": skipped,
-            "skipped_stale": skipped_stale}
+    result: Dict[str, Any] = {"applied": applied, "created": created,
+                              "skipped_missing": skipped, "skipped_stale": skipped_stale,
+                              "skipped_invalid": skipped_invalid}
+    if invalid:
+        result["invalid"] = invalid
+    return result
 
 
 def _merge_part_of(existing: List[Dict[str, Any]], incoming: List[Dict[str, Any]],
@@ -823,6 +1154,114 @@ def _merge_edges(existing: List[Dict[str, Any]], incoming: List[Dict[str, Any]],
 
 
 # --------------------------------------------------------------------------- #
+# Connectivity metrics: the build-acceptance gate (stage 19, audit 1.44)
+# --------------------------------------------------------------------------- #
+
+# Advisory thresholds for the acceptance verdict; overridable via the
+# `connectivity_gate` config block. A healthy fully-built graph is ONE large
+# component with no unresolved internal targets (external `imports` don't count).
+GATE_DEFAULTS: Dict[str, Any] = {"min_largest_share": 0.9, "max_dangling_internal": 0}
+
+
+def graph_metrics(nodes: Dict[str, Dict[str, Any]],
+                  gate_cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Connectivity / build-quality metrics over a loaded node set (audit 1.44).
+
+    Lives in the reconcile layer deliberately: graph_store is domain-blind, so
+    fragmentation metrics belong where the data model is read; lifecycle.status
+    surfaces them. Connectivity follows the same view retrieval conducts on — edges
+    whose target exists plus part_of memberships that name a node, symmetrized.
+
+    Dangling edges are split by legitimacy: an unresolved `imports` target is an
+    external module (correctly dead, kept as a record of the import fact); ANY other
+    unresolved target is an internal miss the resolver could not bind (audits
+    1.40/1.42). Deferred `stale` nodes are reported but never counted as defects —
+    under lazy derivation an underived node is an expected state, not fragmentation
+    (roadmap §4.10); their structural backbone keeps them connected regardless.
+
+    The verdict (`gate`: ok | attention) compares against the `connectivity_gate`
+    thresholds and is ADVISORY: a skeleton mid-build is legitimately unlinked, so
+    nothing fails hard — the bootstrap skill reads the verdict as its acceptance
+    gate and reacts (run the global linker, inspect the samples).
+    """
+    gate = {**GATE_DEFAULTS, **(gate_cfg or {})}
+    ids = set(nodes)
+    parent: Dict[str, str] = {nid: nid for nid in ids}
+
+    def find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    edges_total = resolved = dangling_internal = dangling_external = 0
+    dangling_samples: List[str] = []
+    linked: Set[str] = set()
+    for nid, node in nodes.items():
+        for e in node.get("edges") or []:
+            if not isinstance(e, dict) or not e.get("to"):
+                continue
+            edges_total += 1
+            if e["to"] in ids:
+                resolved += 1
+                union(nid, e["to"])
+                linked.add(nid)
+                linked.add(e["to"])
+            elif e.get("rel") == "imports":
+                dangling_external += 1       # stdlib / third-party: legitimately dead
+            else:
+                dangling_internal += 1
+                if len(dangling_samples) < 10:
+                    dangling_samples.append(f"{nid} -{e.get('rel')}-> {e['to']}")
+        for p in node.get("part_of") or []:
+            if isinstance(p, dict) and p.get("topic") in ids:
+                union(nid, p["topic"])
+                linked.add(nid)
+                linked.add(p["topic"])
+
+    comp_sizes: Dict[str, int] = defaultdict(int)
+    for nid in ids:
+        comp_sizes[find(nid)] += 1
+    largest = max(comp_sizes.values()) if comp_sizes else 0
+    share = round(largest / len(ids), 4) if ids else 1.0
+    isolated = sorted(nid for nid in ids if nid not in linked)
+
+    # Doc nodes with no outgoing `documents` edge (stage 19, task 6). Advisory: a
+    # chat/session turn or a plain note legitimately documents nothing; stale
+    # (not-yet-derived) nodes are excluded — they could not have earned one yet.
+    doc_undocumented = sorted(
+        nid for nid, n in nodes.items()
+        if (n.get("_path") or "").startswith("nodes/doc/")
+        and n.get("status") != "stale"
+        and not any(isinstance(e, dict) and e.get("rel") == "documents"
+                    for e in n.get("edges") or []))
+
+    ok = (share >= float(gate["min_largest_share"])
+          and dangling_internal <= int(gate["max_dangling_internal"]))
+    return {
+        "nodes": len(ids),
+        "components": len(comp_sizes),
+        "largest_component_share": share,
+        "isolated_nodes": len(isolated),
+        "isolated_sample": isolated[:10],
+        "edges_total": edges_total,
+        "edges_resolved": resolved,
+        "dangling_internal": dangling_internal,
+        "dangling_internal_sample": dangling_samples,
+        "dangling_external_imports": dangling_external,
+        "doc_without_documents": len(doc_undocumented),
+        "doc_without_documents_sample": doc_undocumented[:10],
+        "stale_nodes": sum(1 for n in nodes.values() if n.get("status") == "stale"),
+        "gate": "ok" if ok else "attention",
+    }
+
+
+# --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
 
@@ -850,6 +1289,26 @@ def main(argv: List[str]) -> int:
         project_root = Path(args[2]).resolve() if len(args) > 2 else Path.cwd()
         amg_root = gs.resolve_amg_root(cli_root, project_root)
         print(json.dumps(apply_derivation(project_root, derivation, amg_root), indent=2))
+        return 0
+
+    if cmd == "metrics":
+        # Read-only connectivity report (audit 1.44). The gate thresholds come from
+        # the local config read tolerantly — a diagnostic must not exit on a missing
+        # or odd config the way extraction deliberately does.
+        project_root = Path(args[1]).resolve() if len(args) > 1 else Path.cwd()
+        amg_root = gs.resolve_amg_root(cli_root, project_root)
+        gate_cfg: Dict[str, Any] = {}
+        cfg_file = amg_root / "config.yml"
+        if cfg_file.exists():
+            try:
+                raw = yaml.safe_load(cfg_file.read_text(encoding="utf-8")) or {}
+                if isinstance(raw, dict) and isinstance(raw.get("connectivity_gate"), dict):
+                    gate_cfg = raw["connectivity_gate"]
+            except (OSError, yaml.YAMLError):
+                gate_cfg = {}
+        store = gs.GraphStore(amg_root)
+        print(json.dumps(graph_metrics(load_nodes(store), gate_cfg),
+                         ensure_ascii=False, indent=2))
         return 0
 
     print(__doc__)

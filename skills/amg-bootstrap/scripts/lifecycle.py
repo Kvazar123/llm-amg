@@ -540,6 +540,10 @@ def status(project_root: Path, amg: Path) -> Dict[str, Any]:
     for n in nodes.values():
         by_status[str(n.get("status") or "active")] += 1
     problems = store.verify(repair=False)    # read-only: report, do not mutate
+    # Connectivity gate (stage 19, audit 1.44): fragmentation must be visible here,
+    # not only in the 3D viewer. Computed over the already-loaded nodes (cheap).
+    gate_cfg = cfg.get("connectivity_gate") if isinstance(cfg.get("connectivity_gate"), dict) else {}
+    metrics = rc.graph_metrics(nodes, gate_cfg)
     return {
         "active": _is_active(cfg),
         "automation": _automation_on(cfg),
@@ -556,6 +560,9 @@ def status(project_root: Path, amg: Path) -> Dict[str, Any]:
         "last_pack": _mtime(amg / "cache" / "pack.md"),
         "last_consolidation": _last_consolidation(amg),
         "eval_summary": _eval_summary(amg),
+        "connectivity": {k: metrics[k] for k in
+                         ("components", "largest_component_share", "isolated_nodes",
+                          "dangling_internal", "doc_without_documents", "gate")},
     }
 
 
@@ -575,6 +582,13 @@ def format_status(d: Dict[str, Any]) -> str:
         f"  last pack:            {d['last_pack'] or '-'}",
         f"  last consolidation:   {d['last_consolidation'] or '-'}",
     ]
+    cm = d.get("connectivity")
+    if cm:
+        lines.append(f"  connectivity:         {cm.get('gate')} "
+                     f"(components={cm.get('components')}, "
+                     f"largest={cm.get('largest_component_share')}, "
+                     f"dangling_internal={cm.get('dangling_internal')}, "
+                     f"doc w/o documents={cm.get('doc_without_documents')})")
     es = d.get("eval_summary")
     if es:
         lines.append(f"  eval gate:            {es.get('status')} "

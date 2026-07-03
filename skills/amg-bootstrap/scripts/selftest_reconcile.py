@@ -45,6 +45,14 @@ Checks:
                 mirrors the same rules (Stage 18, audits 1.39/1.37).
  16. missing  : a missing config.yml exits with an "AMG is not installed"
                 diagnostic naming the resolved root (audit 1.50), no traceback.
+ 17. resolver : stage 19 (audits 1.40/1.41) — the deterministic resolver emits the
+                defines backbone and inherits edges, binds cross-file calls through
+                the file's own imports, and emits NO edge for builtins/unresolvable
+                receivers (nothing dangles).
+ 18. repair   : stage 19 (audit 1.42) — a judgment edge whose target was written
+                without its leading directories re-binds to the unique canonical id
+                (at apply and by the bootstrap sweep); an ambiguous suffix stays
+                untouched; a second bootstrap is a strict no-op (idempotent sweep).
 
 Run:  python selftest_reconcile.py
 """
@@ -707,6 +715,123 @@ def case_provenance_and_confidence() -> None:
         shutil.rmtree(proj, ignore_errors=True)
 
 
+def case_resolver_backbone() -> None:
+    """Stage 19 (audits 1.40/1.41): defines backbone, inherits, resolver-bound calls;
+    builtins and external attribute chains produce NO edge at all."""
+    proj = Path(tempfile.mkdtemp(prefix="amg-resolve-"))
+    try:
+        amg = proj / ".claude" / "amg"
+        amg.mkdir(parents=True)
+        (amg / "config.yml").write_text(
+            "active: true\nworking_language: en\nmirror_path: src\n", encoding="utf-8")
+        pkg = proj / "src" / "pkg"
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text("from pkg.core import Widget\n", encoding="utf-8")
+        (pkg / "util.py").write_text("def helper(x):\n    return x\n", encoding="utf-8")
+        (pkg / "core.py").write_text(
+            "from pkg.util import helper\n"
+            "import json\n\n\n"
+            "def top_fn(a):\n"
+            "    if isinstance(a, str):\n"
+            "        return helper(json.dumps(a))\n"
+            "    return helper(a)\n\n\n"
+            "class Base:\n"
+            "    def ping(self):\n"
+            "        return 1\n\n\n"
+            "class Widget(Base):\n"
+            "    def render(self):\n"
+            "        return self.ping() + helper(0) + Base.ping(self)\n",
+            encoding="utf-8")
+        s = RC.plan(proj, amg)
+        assert s["added"] == 9, s            # 3 modules + helper + top_fn + Base(.ping) + Widget(.render)
+        nodes = RC.load_nodes(gs.GraphStore(amg))
+        core = "code:src/pkg/core.py"
+        util_helper = "code:src/pkg/util.py::helper"
+
+        def rels(nid: str) -> set:
+            return {(e["rel"], e["to"]) for e in nodes[nid]["edges"]}
+
+        # defines backbone: module -> top-level symbols, class -> its methods
+        assert {("defines", f"{core}::top_fn"), ("defines", f"{core}::Base"),
+                ("defines", f"{core}::Widget")} <= rels(core), rels(core)
+        assert ("defines", f"{core}::Base.ping") in rels(f"{core}::Base"), \
+            rels(f"{core}::Base")
+        # imports resolve in-project; stdlib stays a dotted (external) name
+        assert ("imports", "code:src/pkg/util.py") in rels(core), rels(core)
+        assert ("imports", "code:json") in rels(core), rels(core)
+        # calls: cross-file through the import binding; builtins/externals emit nothing
+        top_calls = {(r, t) for r, t in rels(f"{core}::top_fn") if r == "calls"}
+        assert top_calls == {("calls", util_helper)}, top_calls
+        # inherits + same-file qualified ref + inherited self-method NOT guessed
+        w_rels = rels(f"{core}::Widget")
+        assert ("inherits", f"{core}::Base") in w_rels, w_rels
+        assert ("calls", f"{core}::Base.ping") in w_rels, w_rels
+        assert ("calls", util_helper) in w_rels, w_rels
+        assert not any(t.endswith("::ping") and r == "calls" and "Base" not in t
+                       for r, t in w_rels), w_rels    # self.ping (inherited) is not guessed
+        # __init__ imports pkg.core -> the package module is connected, not an orphan
+        assert ("imports", core) in rels("code:src/pkg/__init__.py")
+        print("PASS  resolver: defines/inherits/cross-file calls bound; builtins emit no edge")
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+
+def case_prefix_repair_sweep() -> None:
+    """Stage 19 (audit 1.42): canonical-id repair by unique path suffix — at apply
+    for judgment edges, and by the bootstrap sweep for nodes written earlier; an
+    ambiguous suffix is never repaired; the sweep is idempotent (second run no-op)."""
+    proj = Path(tempfile.mkdtemp(prefix="amg-repair-"))
+    try:
+        amg = proj / ".claude" / "amg"
+        amg.mkdir(parents=True)
+        (amg / "config.yml").write_text(
+            "active: true\nworking_language: en\nmirror_path: src\n", encoding="utf-8")
+        src = proj / "src"
+        (src / "a").mkdir(parents=True)
+        (src / "b").mkdir(parents=True)
+        (src / "app.py").write_text("def top(x):\n    return x\n", encoding="utf-8")
+        (src / "a" / "dup.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        (src / "b" / "dup.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+        RC.plan(proj, amg)
+        top_id = "code:src/app.py::top"
+
+        # apply-time repair: a documents target missing its src/ prefix re-binds
+        work = amg / "work"
+        work.mkdir(exist_ok=True)
+        (work / "d.json").write_text(json.dumps([
+            {"id": "hub:t", "type": "hub", "summary": "T",
+             "edges": [{"rel": "documents", "to": "code:app.py::top", "w": 0.9},
+                       {"rel": "documents", "to": "code:dup.py::f", "w": 0.5}]}]),
+            encoding="utf-8")
+        RC.apply_derivation(proj, work / "d.json", amg)
+        hub = RC.load_nodes(gs.GraphStore(amg))["hub:t"]
+        tos = {e["to"] for e in hub["edges"]}
+        assert top_id in tos, tos                      # unique suffix -> repaired
+        assert "code:dup.py::f" in tos, tos            # ambiguous (a/ vs b/) -> untouched
+
+        # sweep repair: a node written with a broken target BEFORE the resolver era
+        store = gs.GraphStore(amg)
+        broken = dict(hub)
+        broken.pop("_path"), broken.pop("_body", "")
+        broken["id"] = "hub:legacy"
+        broken["edges"] = [{"rel": "documents", "to": "code:app.py::top", "w": 0.7,
+                            "coact": 0, "origin": "synthesized"}]
+        with store.lock():
+            store.transaction().write(
+                RC.node_relpath("hub:legacy", "_hubs"),
+                RC.serialize_node(broken, "")).commit()
+        s = RC.plan(proj, amg)
+        assert s["edges_refreshed"] >= 1, s
+        legacy = RC.load_nodes(store)["hub:legacy"]
+        assert legacy["edges"][0]["to"] == top_id, legacy["edges"]
+        s = RC.plan(proj, amg)                         # idempotent: nothing left to fix
+        assert s["edges_refreshed"] == 0, s
+        print("PASS  repair: unique suffix re-binds (apply + sweep), ambiguity untouched, "
+              "sweep idempotent")
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+
 def case_merge_conflict_resilience() -> None:
     """Stage 16: a node file left with git merge-conflict markers must NOT crash the read
     paths (its YAML no longer parses) — every load_nodes skips it — and find_conflict_markers
@@ -766,6 +891,8 @@ if __name__ == "__main__":
         case_resume_freshness()
         case_provenance_and_confidence()
         case_merge_conflict_resilience()
+        case_resolver_backbone()
+        case_prefix_repair_sweep()
         print("\nALL RECONCILE CHECKS PASSED")
     finally:
         shutil.rmtree(proj, ignore_errors=True)
