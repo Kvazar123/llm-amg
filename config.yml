@@ -109,7 +109,7 @@ log_group_lines: 50            # lines per .log episode block
 # This block is the SINGLE SOURCE OF TRUTH: install (and reinstall) renders each
 # role's model + reasoning effort into the matching agent's frontmatter:
 #   discovery      -> amg-classifier, amg-retriever
-#   module_summary -> amg-builder
+#   module_summary -> amg-builder, amg-linker
 #   synthesis      -> amg-synth, amg-consolidator
 #   structural_extraction -> none (deterministic, no model)
 # A role is a flat model string OR a {model, reasoning_effort} mapping, e.g.
@@ -156,7 +156,7 @@ models:
 # -----------------------------------------------------------------------------
 derivation: eager        # eager | lazy
 
-# Persistent derivation cache (Stage 19). Every applied per-unit derivation is
+# Persistent derivation cache. Every applied per-unit derivation is
 # stored under cache/derivations/ keyed by the unit's content hash (+ the
 # derivation contract version + working_language), so a wipe-and-rebuild restores
 # summaries and edges VERBATIM instead of re-deriving them differently each time —
@@ -166,6 +166,22 @@ derivation: eager        # eager | lazy
 # force fresh derivations (e.g. after a model upgrade), or simply delete the
 # cache/derivations/ directory.
 derivation_cache: true
+
+# -----------------------------------------------------------------------------
+# Global semantic linking pass. After all summaries exist,
+# link_candidates.py nominates, for every derived node, its top-K most similar
+# nodes from other domains/files (cosine over the cached seed embeddings when a
+# backend is installed, else a lexical token-overlap fallback) into bounded
+# work/link-batch-*.json files; parallel amg-linker subagents CONFIRM candidates
+# by meaning and emit the cross-domain edges (doc <-> code, example <-> guide,
+# ADR -> code) plus section->hub memberships. Similarity only nominates — the
+# judgment layer decides. Already-linked pairs are never re-nominated (the pass
+# is incrementally re-runnable); stale (deferred) nodes join as they derive.
+# -----------------------------------------------------------------------------
+linker:
+  top_k: 5              # candidate nominees per node
+  min_sim: 0.35         # embedding-cosine floor for a nomination (embeddings mode)
+  batch_nodes: 40       # nodes per link batch (bounds one linker's context)
 
 # -----------------------------------------------------------------------------
 # Spreading-activation retrieval (amg-retrieve). Query-biased Personalized PageRank.
@@ -265,7 +281,7 @@ episodic_types: [section, note, open_question, plan]
 stale_age_days: 30                 # recency basis for the salience freshness signal
 
 # -----------------------------------------------------------------------------
-# Connectivity acceptance gate (Stage 19). `reconcile.py metrics` (also surfaced by
+# Connectivity acceptance gate. `reconcile.py metrics` (also surfaced by
 # /amg status) reports the graph's build quality: connected components, the largest
 # component's share, unresolved INTERNAL edge targets (external `imports` to stdlib/
 # third-party are legitimate and counted separately), isolated nodes, and doc nodes
@@ -273,7 +289,7 @@ stale_age_days: 30                 # recency basis for the salience freshness si
 # these thresholds; it is ADVISORY — a skeleton mid-build is legitimately unlinked —
 # and the bootstrap skill reads it as the acceptance step after a full build (an
 # `attention` verdict means: run the global linking pass, inspect the samples).
-# Deferred (`stale`) nodes are never counted as defects (lazy derivation, §4.10).
+# Deferred (`stale`) nodes are never counted as defects (see `derivation: lazy`).
 # -----------------------------------------------------------------------------
 connectivity_gate:
   min_largest_share: 0.9        # the largest component must hold at least this share of nodes

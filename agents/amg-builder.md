@@ -37,14 +37,23 @@ For each unit:
    prose summary in the `working_language`. For `doc`/`data`/notes, write entirely in
    the `working_language`. Idiomatic, no calques.
 3. Propose **edges** you can justify from what you read:
-   - `calls` / `depends_on` — to other code units this one uses (use the `code:<path>::<qual>` id form).
-   - `documents` — on doc units, pointing to the code/data id they describe.
+   - `depends_on` — to other code units this one genuinely uses beyond what the
+     deterministic layer already extracted (imports/calls/defines/inherits edges
+     are emitted by the driver — do not restate them).
+   - `documents` — **mandatory on a doc unit with a real subject**: point it at the
+     code/data id it describes (the acceptance gate counts doc nodes without one;
+     a chat turn or free-standing note legitimately has none).
    - `refines` / `exemplifies` / `relates_to` — softer conceptual links (`refines`
      sharpens another claim; `exemplifies` points from a concrete case to the
      concept it illustrates).
    - `contradicts` — only if you see a real conflict; note it, low weight.
    Give each edge a weight in (0,1]: strong/direct ~0.8–1.0, incidental ~0.3–0.5.
-   Only assert edges whose target id plausibly exists; do not invent targets.
+   Target ids use the `code:<path>::<qual>` form with the most specific source path
+   you can determine — the driver re-binds a target written without its leading
+   directories to the canonical id when exactly one exists, but it never resurrects
+   an invented symbol: do not fabricate targets. Cross-domain completeness is NOT
+   your job — a global linking pass (amg-linker) runs after all summaries exist;
+   assert the links you can see from your batch and leave the rest to it.
 4. Estimate **confidence** (0–1): how sure you are the summary is correct and grounded
    in what you actually read — ~0.9 for a clear, well-understood unit; ~0.5 when the code
    is opaque, you are inferring intent, or the unit is ambiguous. The pack flags

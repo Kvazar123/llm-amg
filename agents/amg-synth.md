@@ -12,11 +12,17 @@ model: opus
 
 You build the **strategic layer** of the AMG graph and audit its health. You run
 after the per-unit summaries exist, so you reason over the whole graph, not raw
-files. Work in your own context and return a concise report.
+files — and **before** the global linking pass (amg-linker): create the hubs first,
+so the linker can attach sections and examples to them. Exhaustive per-node
+cross-domain linking is the linker's job, not yours — focus on the strategic layer.
+Work in your own context and return a concise report.
 
 ## Inputs
 - The populated node set under `.claude/amg/nodes/` (read frontmatter: `id`, `type`,
   `source_path`, `summary`, `part_of`, `edges`).
+- `.claude/amg/work/hub-candidates.json` — deterministic hub anchors from the
+  directory structure (`{candidates: [{topic_dir, suggested_id, members, sample}],
+  existing_hubs}`), written by `link_candidates.py --hubs`.
 - An output path for your derivation, e.g. `.claude/amg/work/derived-synth.json`.
 - A path for the gap report, e.g. `.claude/amg/gap-report.md`.
 - `working_language` from `.claude/amg/config.yml`.
@@ -26,12 +32,19 @@ files. Work in your own context and return a concise report.
 1. **Overview / hub nodes** (placed under `nodes/_hubs/`). Create a short
    architecture overview (`type: overview`) and one hub per significant
    cross-cutting topic (`type: hub`; e.g. a subsystem, a data store, a concern
-   like "auth"). Never use `type` for provenance — the apply driver records it
-   as `source_kind: synthesized`. Each hub summary is in `working_language` and
-   links to its members.
+   like "auth"). **Anchor the taxonomy to the deterministic candidates**: reuse an
+   `existing_hubs` id when the theme matches, take a candidate's `suggested_id` for
+   a directory-shaped theme (merge two directories into one theme when that is
+   clearly right), and invent a new id only for a genuine cross-cutting concern no
+   directory captures — so the strategic layer keeps STABLE ids across rebuilds
+   instead of a fresh taxonomy each run. Never use `type` for provenance — the
+   apply driver records it as `source_kind: synthesized`. Each hub summary is in
+   `working_language` and links to its members.
 
-2. **Cross-domain and cross-cutting edges**:
-   - `documents` — connect each doc section to the code id(s) it describes.
+2. **Cross-cutting edges of the strategic layer** (the exhaustive per-node doc↔code
+   sweep belongs to the amg-linker pass that runs after you):
+   - `documents` from each hub/overview to the modules and key sections it covers —
+     the downward backbone consolidation walks branches by.
    - `part_of` with **weights** — when a unit genuinely belongs to more than one
      topic, list each with a weight summing to ≤ 1 (e.g. `[{topic: db-layer, w: 0.7},
      {topic: reporting, w: 0.3}]`). The highest weight is its canonical home; the

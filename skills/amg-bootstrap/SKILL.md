@@ -67,15 +67,20 @@ delegating per-unit reading to subagents.
    ```
 
 2. **Diff and write the skeleton.** Compute added/changed/deleted across all source
-   folders, write structural nodes crash-safely, and emit the semantic work queue:
+   folders, write structural nodes crash-safely (with the deterministic edge
+   backbone: imports/defines/inherits + resolver-bound calls), and emit the semantic
+   work queue:
    ```bash
    python .claude/skills/amg-bootstrap/scripts/reconcile.py bootstrap .
    ```
-   The printed counts tell you the scope. If `queued_for_semantic` is 0, the graph
-   is already current — stop here. To see how files were classified first (and
-   whether tree-sitter is active), run `extract_structure.py . --stats`. It lists
-   `ambiguous_files` (extensionless or unknown types it defaulted to prose),
-   `resolved_by_override` (already settled), and a `classifier_hint` when any remain.
+   The printed counts tell you the scope. Derivations already in the persistent
+   cache are restored automatically (`restored_from_cache`), so `queued_for_semantic`
+   is the REAL model work left — on a rebuild over unchanged content it is 0.
+   If `queued_for_semantic` is 0 and the graph was already linked, stop here.
+   To see how files were classified first (and whether tree-sitter is active), run
+   `extract_structure.py . --stats`. It lists `ambiguous_files` (extensionless or
+   unknown types it defaulted to prose), `resolved_by_override` (already settled),
+   and a `classifier_hint` when any remain.
    If files are ambiguous you MAY refine them (optional — the queue is never blocked):
      a. spawn the `amg-classifier` subagent on the `ambiguous_files` list; it returns
         a compact `{ "<path>": {"category": code|doc|data, "language": <grammar|null>} }`
@@ -95,7 +100,8 @@ delegating per-unit reading to subagents.
    Then spawn an `amg-builder` subagent per batch **in parallel**, each given its
    `work/queue-<part>.json` and an output path like `.claude/amg/work/derived-<part>.json`.
    The subagent reads the queued units, writes summaries (in the configured
-   `working_language` for docs/notes; keep code identifiers verbatim) and local edges,
+   `working_language` for docs/notes; keep code identifiers verbatim) and local edges
+   (`documents` is mandatory on a doc unit with a real subject),
    **echoes each unit's `content_sha`** into its output item (so a re-run re-derives only
    what changed), and returns a one-line summary. It does **not** write graph files.
 
@@ -104,18 +110,49 @@ delegating per-unit reading to subagents.
    python .claude/skills/amg-bootstrap/scripts/reconcile.py apply .claude/amg/work/derived-<batch>.json .
    ```
    This sets `derived_from_hash = source_hash` and flips nodes to `active`, so a unit
-   counts as derived only once its summary/edges are durably committed.
+   counts as derived only once its summary/edges are durably committed. A malformed
+   item is repaired or skipped per item (`skipped_invalid` + reasons) — the batch
+   never aborts; applied items are stored in the persistent derivation cache, so a
+   future rebuild restores them for free.
 
-5. **Synthesis and gap report (strong model).** Spawn one `amg-synth` subagent. It
-   reads the now-populated nodes and produces: top-level architecture/overview nodes,
-   cross-domain edges (e.g. `documents` from a doc section to the code it describes),
-   weighted multi-membership (`part_of`) for cross-cutting topics, and a **gap
-   report** — undocumented code (code nodes with no inbound `documents` edge),
-   drifted docs (docs referencing changed/removed code), and contradictions. Apply
-   its derivation file the same way (step 4) and surface the gap report to the user.
+5. **Synthesis and gap report (strong model) — hubs BEFORE linking.** First write
+   the deterministic hub anchors, then spawn one `amg-synth` subagent:
+   ```bash
+   python .claude/skills/amg-bootstrap/scripts/link_candidates.py --hubs .   # -> work/hub-candidates.json
+   ```
+   It reads the now-populated nodes plus `work/hub-candidates.json` and produces:
+   top-level architecture/overview nodes anchored to the stable suggested ids,
+   hub->member `documents` edges, weighted multi-membership (`part_of`) for
+   cross-cutting topics, pattern nodes, and a **gap report** — undocumented code
+   (code nodes with no inbound `documents` edge), drifted docs (docs referencing
+   changed/removed code), and contradictions. Apply its derivation file the same
+   way (step 4) and surface the gap report to the user.
 
-6. **Log.** The scripts append a txid-stamped line to `.claude/amg/log.md`. Confirm
-   to the user with the counts and the gap-report highlights.
+6. **Global semantic linking (parallel).** The builders were each locked to their
+   batch, so cross-domain edges (doc <-> code, example <-> guide, ADR -> code) need a
+   global pass. Nominate candidates deterministically, then confirm them by meaning:
+   ```bash
+   python .claude/skills/amg-bootstrap/scripts/link_candidates.py .   # -> work/link-batch-*.json
+   ```
+   (Uses cached embeddings for similarity when a backend is installed, else a
+   lexical fallback — it degrades softly, never blocks.) Spawn an `amg-linker`
+   subagent per batch **in parallel**, each given its `work/link-batch-<n>.json` and
+   an output path like `.claude/amg/work/derived-links-<n>.json`; apply each result
+   (step 4). The pass is incrementally re-runnable: already-linked pairs are never
+   re-nominated, so re-running it after new derivations only adds what is missing.
+
+7. **Acceptance gate (connectivity).** Verify the build is one connected graph:
+   ```bash
+   python .claude/skills/amg-bootstrap/scripts/reconcile.py metrics .
+   ```
+   `gate: ok` means: one dominant component, no unresolved internal edge targets,
+   doc nodes carry `documents`. On `attention`, read the samples it prints —
+   typically the fix is re-running step 6 over the remaining islands (or step 3 for
+   still-stale nodes); unresolved `imports` to stdlib/third-party are legitimate
+   and never flagged. The same verdict shows in `/amg status`.
+
+8. **Log.** The scripts append a txid-stamped line to `.claude/amg/log.md`. Confirm
+   to the user with the counts, the gap-report highlights, and the gate verdict.
 
 ## Derivation strategy: eager vs lazy
 
@@ -134,8 +171,11 @@ python .claude/skills/amg-bootstrap/scripts/partition_queue.py --priority .
 #  -> work/queue-deferred.json  (leaf detail: functions, doc sections, records — deferred)
 ```
 Run steps 3–4 over `work/queue-priority.json` **only**, and **always** run synthesis
-(step 5). The structural skeleton (step 2) and the strategic synthesis are **never**
-deferred — that is the safeguard: the map is always present, only fine detail waits.
+(step 5) and the linking pass (step 6 — it works over whatever is derived and is
+incrementally re-runnable, so deferred nodes join it as they are derived; the
+connectivity gate never counts deferred `stale` nodes as fragmentation). The
+structural skeleton (step 2) and the strategic synthesis are **never** deferred —
+that is the safeguard: the map is always present, only fine detail waits.
 
 **Background fill (over sessions, used-first).** A deferred unit is derived on first touch
 by the retrieve skill (when a query activates it — phase B), and an idle or later bootstrap
@@ -171,5 +211,10 @@ graph converges to fully derived — most-used first — without a bootstrap spi
 - `scripts/partition_queue.py` — split `work/queue.json` into `work/queue-<part>.json`
   batches by subtree (for parallel step 3); `scripts/inspect_queue.py` — a read-only
   queue summary (counts by category / subtree / kind, units carrying pre-extracted text).
+- `scripts/link_candidates.py` — deterministic prep for the global linking pass:
+  candidate nomination by cached-embedding similarity (lexical fallback) into
+  `work/link-batch-*.json`, and `--hubs` for the stable hub anchors
+  (`work/hub-candidates.json`).
 - Subagents: `../../agents/amg-builder.md`, `../../agents/amg-synth.md`,
+  `../../agents/amg-linker.md` (global linking, step 6),
   `../../agents/amg-classifier.md` (optional, for ambiguous files).

@@ -488,7 +488,10 @@ def write_config(dest_amg: Path, agent_dir: str, entrypoint: str,
 
 ROLE_AGENTS = {
     "discovery": ("amg-classifier", "amg-retriever"),
-    "module_summary": ("amg-builder",),
+    # amg-linker is bulk confirmation over bounded candidate batches — the same
+    # tier as the builder; its global reach comes from candidate nomination, not
+    # from model size (stage 19).
+    "module_summary": ("amg-builder", "amg-linker"),
     "synthesis": ("amg-synth", "amg-consolidator"),
     # structural_extraction is deterministic — no model, no agent.
 }

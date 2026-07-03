@@ -23,6 +23,11 @@ Proves, without a single model call:
                   from cache/derivations/ without a single "model" call (practical
                   determinism, audit 1.46); a changed working_language misses the
                   cache by key instead of returning foreign-language summaries.
+  6. candidates : link_candidates nominates unlinked cross-domain pairs by summary
+                  similarity (the lexical fallback path — no embedding backend
+                  needed), skips already-linked pairs and stale nodes, batches
+                  deterministically with the hub list attached, and --hubs writes
+                  stable directory-anchored hub suggestions (audits 1.45/1.46).
 
 The fixture is hermetic: config.yml is mandatory (extraction exits without one)
 and the `agent_dir` key is deliberately ABSENT so the machine's global defaults
@@ -41,6 +46,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import graph_store as gs
+import link_candidates as LC
 import reconcile as RC
 
 CORE = "code:src/pkg/core.py"
@@ -54,8 +60,11 @@ def build_project() -> Path:
     proj = Path(tempfile.mkdtemp(prefix="amg-build-"))
     amg = proj / ".claude" / "amg"
     amg.mkdir(parents=True)
+    # embeddings off: the candidate check below must exercise the LEXICAL fallback
+    # deterministically, whatever backends this machine has installed
     (amg / "config.yml").write_text(
-        "active: true\nworking_language: en\nmirror_path: [src, doc, data]\n",
+        "active: true\nworking_language: en\nmirror_path: [src, doc, data]\n"
+        "retrieval:\n  embeddings:\n    enabled: off\n",
         encoding="utf-8")
     pkg = proj / "src" / "pkg"
     pkg.mkdir(parents=True)
@@ -96,9 +105,14 @@ def stub_derivation(queue_units: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         item: Dict[str, Any] = {"id": u["id"], "content_sha": u["content_sha"],
                                 "summary": f"Summary of {u['id']}"}
         if u["id"] == GUIDE:
+            # rare shared tokens with Base.ping below -> a lexical link candidate
+            item["summary"] = ("Guide covering Widget rendering and the heartbeat "
+                               "health probe.")
             # the mis-prefixed target the resolver must re-bind (audit 1.42)
             item["edges"] = [{"rel": "documents", "to": "code:pkg/core.py::Widget",
                               "w": 0.9}]
+        if u["id"] == f"{CORE}::Base.ping":
+            item["summary"] = "Returns the heartbeat health probe value."
         if u["id"] == RECORD:
             item["edges"] = [{"rel": "relates_to", "to": CORE, "w": 0.5}]
         items.append(item)
@@ -148,6 +162,12 @@ def main() -> int:
         assert ("imports", CORE) in rels(INIT)
         print("PASS  skeleton: backbone + resolved calls, no builtin edges")
 
+        # lazy-aware: with nothing derived yet, the linker prep has nothing to link
+        lc0 = LC.build_batches(proj, amg)
+        assert lc0["eligible"] == 0 and lc0["batches"] == 0, lc0
+        assert lc0["skipped_stale"] == 11, lc0
+        print("PASS  candidates: stale (underived) nodes are skipped, not linked")
+
         # 2. stub builder -> apply: malformed items repaired/skipped, batch survives
         queue = json.loads((amg / "work" / "queue.json").read_text(encoding="utf-8"))
         (amg / "work" / "derived-stub.json").write_text(
@@ -187,7 +207,34 @@ def main() -> int:
         assert s["edges_refreshed"] == 0 and s["queued_for_semantic"] == 0, s
         print("PASS  idempotency: re-run bootstrap is a no-op")
 
-        # 5. derivation cache: wipe the graph, rebuild, restore verbatim (audit 1.46)
+        # 5. link candidates over the built graph (lexical fallback: embeddings off)
+        lc = LC.build_batches(proj, amg)
+        assert lc["mode"] == "lexical" and lc["batches"] >= 1, lc
+        pairs = set()
+        hubs_seen = set()
+        for f in sorted((amg / "work").glob("link-batch-*.json")):
+            batch = json.loads(f.read_text(encoding="utf-8"))
+            hubs_seen |= {h["id"] for h in batch["hubs"]}
+            for n in batch["nodes"]:
+                for c in n["candidates"]:
+                    pairs.add((n["id"], c["id"]))
+        ping = f"{CORE}::Base.ping"
+        assert (GUIDE, ping) in pairs or (ping, GUIDE) in pairs, \
+            "the unlinked cross-domain pair with shared rare tokens must be nominated"
+        assert (GUIDE, f"{CORE}::Widget") not in pairs \
+            and (f"{CORE}::Widget", GUIDE) not in pairs, \
+            "an already-linked pair must never be re-nominated"
+        assert {"hub:build", "overview:build"} <= hubs_seen, hubs_seen
+        hc = LC.hub_candidates(amg)
+        assert hc["candidates"] >= 1 and hc["existing_hubs"] == 2, hc
+        hdata = json.loads((amg / "work" / "hub-candidates.json").read_text(encoding="utf-8"))
+        assert any(r["suggested_id"] == "hub:src-pkg" and r["members"] == 9
+                   for r in hdata["candidates"]), hdata["candidates"]
+        assert "hub:build" in hdata["existing_hubs"], hdata
+        print("PASS  candidates: cross-domain pair nominated, linked pair excluded, "
+              "hubs anchored to directories")
+
+        # 6. derivation cache: wipe the graph, rebuild, restore verbatim (audit 1.46)
         summaries_before = {nid: n["summary"] for nid, n in
                             RC.load_nodes(gs.GraphStore(amg)).items()
                             if n.get("source_kind") == "derived_from_file"}

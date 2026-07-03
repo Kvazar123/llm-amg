@@ -292,9 +292,12 @@ def test_codex_env():
         synth_head = synth.split("developer_instructions")[0]
         assert 'model = "gpt-5.5"' in synth_head, synth_head
         assert 'model_reasoning_effort = "xhigh"' in synth_head, "max clamps to xhigh in Codex"
-        assert len(list((t / ".codex/agents").glob("amg-*.toml"))) == 5, "reinstall: no dup TOML"
+        assert len(list((t / ".codex/agents").glob("amg-*.toml"))) == 6, "reinstall: no dup TOML"
         builder_head = (t / ".codex/agents/amg-builder.toml").read_text(encoding="utf-8").split("developer_instructions")[0]
         assert "model =" not in builder_head, "a Claude-alias default is omitted for codex"
+        linker_head = (t / ".codex/agents/amg-linker.toml").read_text(encoding="utf-8").split("developer_instructions")[0]
+        assert 'model_reasoning_effort' not in linker_head, \
+            "module_summary is flat -> the linker gets no effort field either"
         # uninstall clears the codex TOML subagents
         I.main(["--target", str(t), "--env", "codex", "--uninstall"])
         assert not list((t / ".codex/agents").glob("amg-*.toml")), "uninstall clears codex TOML"
@@ -313,6 +316,7 @@ def test_models_render():
         # by the role -> agent map (discovery/module_summary/synthesis)
         I.main(["--target", str(t), "--mirror", "src", "--no-verify"])
         assert fm("amg-builder.md")["model"] == "sonnet", "module_summary -> amg-builder"
+        assert fm("amg-linker.md")["model"] == "sonnet", "module_summary -> amg-linker too"
         assert fm("amg-synth.md")["model"] == "opus", "synthesis -> amg-synth"
         assert fm("amg-classifier.md")["model"] == "haiku", "discovery -> amg-classifier"
         assert "effort" not in fm("amg-builder.md"), "flat role: no effort field added"
