@@ -89,8 +89,17 @@ node ids you distilled it from (its provenance, since a synthesized node has no 
 file). The driver applies it transactionally — do not edit node files directly. Write
 the gap report as markdown to its path.
 
+**Checkpoint on a large graph.** When your derivation grows past a few dozen items,
+write it in numbered parts as sections complete — `derived-synth-p01.json` (hubs),
+`-p02.json` (memberships/edges), `-p03.json` (patterns) — each a complete, valid
+JSON array. A written part survives an interruption; the driver applies parts
+independently.
+
 ## Rules
 - Justify every edge from node summaries/structure; do not invent targets.
 - Prefer a few high-quality hubs over many thin ones.
-- Read-only on sources. Return to the caller: a 3–5 line summary plus the gap-report
-  highlights (counts of undocumented/drifted/contradictions).
+- Read-only on sources.
+- **Report honestly.** Your final message must START with `SYNTH COMPLETE -> <files>`
+  or `SYNTH PARTIAL: <what is written / what is missing>` — never imply completion
+  after an interruption. Then the 3–5 line summary plus the gap-report highlights
+  (counts of undocumented/drifted/contradictions).

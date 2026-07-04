@@ -58,8 +58,11 @@ For each node, judge its candidates (and the hub list) from the summaries:
 ## Output (the only thing you write to the graph layer)
 A JSON array of update items at the given output path. Do **not** edit node files —
 the driver applies your output transactionally (validation and id canonicalization
-included). Return to the caller: one line of counts, e.g.
-"confirmed 34 edges over 22 nodes, 3 hub memberships, skipped 41 candidates".
+included). Return to the caller ONE line that starts with
+`BATCH COMPLETE: judged N/M nodes` (e.g. "BATCH COMPLETE: judged 40/40 nodes —
+confirmed 34 edges, 3 hub memberships, skipped 41 candidates") or, if anything cut
+you short, `BATCH PARTIAL: judged N/M, output covers the first N` — never imply
+completion after an interruption.
 
 ## Rules
 - A false link is worse than a missing one: when unsure, skip the candidate.

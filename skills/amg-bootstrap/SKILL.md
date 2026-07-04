@@ -55,6 +55,20 @@ this ingest step is type-aware.
   bulk summaries, no model on extraction. Tiers are declared in `config.yml`
   under `models`.
 
+## Thin orchestration (token hygiene)
+Everything in YOUR context is re-sent on every turn — that resend, not the
+subagents' work, is the dominant token sink of a build. Keep the orchestration
+layer thin:
+- never paste `queue.json`, `derived-*.json`, node files, or raw directory listings
+  into the conversation — pass subagents **file paths**, they read in their own
+  isolated context;
+- inspect through aggregates only: `inspect_queue.py` for the queue's shape and the
+  progress percentage, the one-line counts that `bootstrap`/`apply` print;
+- keep per-batch results to the subagent's single status line; do not echo item
+  contents back;
+- the queue already carries each unit's text, so neither you nor the builders
+  re-read source files during derivation.
+
 ## Workflow
 
 Run these from the project root. Use bash; keep the main conversation clean by
@@ -74,9 +88,12 @@ delegating per-unit reading to subagents.
    python .claude/skills/amg-bootstrap/scripts/reconcile.py bootstrap .
    ```
    The printed counts tell you the scope. Derivations already in the persistent
-   cache are restored automatically (`restored_from_cache`), so `queued_for_semantic`
-   is the REAL model work left — on a rebuild over unchanged content it is 0.
-   If `queued_for_semantic` is 0 and the graph was already linked, stop here.
+   cache are restored automatically (`restored_from_cache`), and trivial code units
+   (dunders, one-line getters) are summarized by code on the spot
+   (`auto_summarized`, `config.yml → trivial_unit_max_lines`) — so
+   `queued_for_semantic` is the REAL model work left; on a rebuild over unchanged
+   content it is 0. If `queued_for_semantic` is 0 and the graph was already linked,
+   stop here.
    To see how files were classified first (and whether tree-sitter is active), run
    `extract_structure.py . --stats`. It lists `ambiguous_files` (extensionless or
    unknown types it defaulted to prose), `resolved_by_override` (already settled),
@@ -91,29 +108,40 @@ delegating per-unit reading to subagents.
         own fallback, so each labeled file now routes to the right chunker (code by
         symbol, data by record) instead of the prose default.
 
-3. **Semantic derivation (bulk).** Read `.claude/amg/work/queue.json`. To see its shape
-   first, run `inspect_queue.py .` (counts by category / subtree / kind). If it is large,
-   split it into batches by subtree with the helper rather than an ad-hoc script:
+3. **Semantic derivation (bulk).** Check the queue's shape with `inspect_queue.py .`
+   (counts by category / subtree / kind + the progress block) — do NOT read
+   `queue.json` into your own context. Split the queue with the helper:
    ```bash
-   python .claude/skills/amg-bootstrap/scripts/partition_queue.py .   # -> work/queue-<part>.json
+   python .claude/skills/amg-bootstrap/scripts/partition_queue.py .   # -> work/queue-<part>[-NN].json
    ```
-   Then spawn an `amg-builder` subagent per batch **in parallel**, each given its
-   `work/queue-<part>.json` and an output path like `.claude/amg/work/derived-<part>.json`.
-   The subagent reads the queued units, writes summaries (in the configured
-   `working_language` for docs/notes; keep code identifiers verbatim) and local edges
-   (`documents` is mandatory on a doc unit with a real subject),
-   **echoes each unit's `content_sha`** into its output item (so a re-run re-derives only
-   what changed), and returns a one-line summary. It does **not** write graph files.
+   It groups by subtree AND bounds every batch by unit count / input volume
+   (`config.yml → builder`), so a dense directory never becomes one giant batch.
+   Then spawn an `amg-builder` subagent per batch **in parallel**, each given only
+   its batch PATH (`work/queue-<part>.json`) and an output path like
+   `.claude/amg/work/derived-<part>.json`. The units carry their own `text`, so the
+   builder summarizes straight from the batch (in the configured `working_language`
+   for docs/notes; code identifiers verbatim), proposes local edges (`documents` is
+   mandatory on a doc unit with a real subject), **echoes each unit's `content_sha`**
+   into its items, **checkpoints output in numbered parts**
+   (`derived-<part>-p01.json`, …) and reports `BATCH COMPLETE: N/M` or
+   `BATCH PARTIAL: N/M`. It does **not** write graph files.
 
-4. **Apply derivations.** For each produced file, apply it transactionally:
+4. **Apply derivations — and verify the counts.** Apply every produced part
+   transactionally (glob `work/derived-*.json`, including `-pNN` parts):
    ```bash
-   python .claude/skills/amg-bootstrap/scripts/reconcile.py apply .claude/amg/work/derived-<batch>.json .
+   python .claude/skills/amg-bootstrap/scripts/reconcile.py apply .claude/amg/work/derived-<part>-p01.json .
    ```
    This sets `derived_from_hash = source_hash` and flips nodes to `active`, so a unit
    counts as derived only once its summary/edges are durably committed. A malformed
    item is repaired or skipped per item (`skipped_invalid` + reasons) — the batch
    never aborts; applied items are stored in the persistent derivation cache, so a
    future rebuild restores them for free.
+   **Do not take a builder's word for completion**: compare the sum of
+   `applied + skipped_*` across a batch's parts with the batch's unit count, and
+   treat any `BATCH PARTIAL` or shortfall as an interrupted batch — re-spawn a
+   builder on the remainder (or just re-run step 2: an underived unit re-queues by
+   construction, nothing is lost). After each apply round, report progress from
+   `inspect_queue.py .` (`progress.derived_percent` — the traveled part of the path).
 
 5. **Synthesis and gap report (strong model) — hubs BEFORE linking.** First write
    the deterministic hub anchors, then spawn one `amg-synth` subagent:
@@ -152,7 +180,10 @@ delegating per-unit reading to subagents.
    and never flagged. The same verdict shows in `/amg status`.
 
 8. **Log.** The scripts append a txid-stamped line to `.claude/amg/log.md`. Confirm
-   to the user with the counts, the gap-report highlights, and the gate verdict.
+   to the user with the counts, the final progress percentage (`inspect_queue.py .`),
+   the gap-report highlights, and the gate verdict — and say honestly whether every
+   batch completed or something remains for the next run (an interrupted batch is
+   normal: the next bootstrap re-queues exactly the remainder).
 
 ## Derivation strategy: eager vs lazy
 
@@ -189,11 +220,13 @@ graph converges to fully derived — most-used first — without a bootstrap spi
 ## Scale and safety notes
 - For very large repos, run step 3 as several scoped subagents rather than one; each
   works in its own isolated context so nothing overflows.
-- **Resume after an interrupted run:** if a prior run left `work/derived-*.json`
-  (builders wrote them, but `apply` never ran), apply those FIRST (step 4) before
-  re-running step 2. It is freshness-safe — each item carries its `content_sha`, so
-  `apply` skips any whose source has since changed (they re-queue) and you re-derive
-  only the remainder, not the whole queue.
+- **Resume after an interrupted run — apply leftovers FIRST:** if a prior run left
+  `work/derived-*.json` files (including `-pNN` checkpoint parts of a batch that
+  never finished), apply them all (step 4) before re-running step 2. It is
+  freshness-safe — each item carries its `content_sha`, so `apply` skips any whose
+  source has since changed (they re-queue) and you re-derive only the remainder,
+  not the whole queue. The checkpoints make this loss-bounded: a builder that died
+  mid-batch still left every finished part on disk.
 - Every write goes through the journal, so an interruption at any point recovers via
   step 1 on the next run.
 - Re-running the whole skill on an unchanged repo is free: extraction is exact and
@@ -208,9 +241,10 @@ graph converges to fully derived — most-used first — without a bootstrap spi
 - `scripts/extract_structure.py` — deterministic source → units: classifier +
   chunker registry (python/tree-sitter/markdown/text/json/pdf/docx/xlsx), ignore
   defaults, `--stats` for a classification + extractor-availability summary.
-- `scripts/partition_queue.py` — split `work/queue.json` into `work/queue-<part>.json`
-  batches by subtree (for parallel step 3); `scripts/inspect_queue.py` — a read-only
-  queue summary (counts by category / subtree / kind, units carrying pre-extracted text).
+- `scripts/partition_queue.py` — split `work/queue.json` into `work/queue-<part>[-NN].json`
+  batches by subtree, bounded by unit count and input volume (`config.yml → builder`);
+  `scripts/inspect_queue.py` — a read-only queue summary (counts by category / subtree /
+  kind, units carrying text) plus the build-progress block (derived vs stale, percent).
 - `scripts/link_candidates.py` — deterministic prep for the global linking pass:
   candidate nomination by cached-embedding similarity (lexical fallback) into
   `work/link-batch-*.json`, and `--hubs` for the stable hub anchors

@@ -64,12 +64,20 @@ For each unit:
    claims against the live source). Omit it only if you truly cannot tell — a default applies.
 
 ## Output (the only thing you write to the graph layer)
-Write a JSON array to the given output path. Do **not** edit node files yourself —
+Write JSON arrays of derivation items. Do **not** edit node files yourself —
 the driver applies your output transactionally so it is crash-safe. **Echo each
 unit's `content_sha` verbatim** into its item: the driver uses it to skip an item
 whose source changed since you derived it (resumable derivation — it never applies a
 summary built against stale content), so a crash between your write and the apply
 loses no correctness and re-derives only what actually changed, not the whole queue.
+
+**Checkpoint as you go — never hold the whole batch for one final write.** For an
+output path `.../derived-<batch>.json`, write numbered parts instead:
+`.../derived-<batch>-p01.json`, `-p02.json`, … — each a complete, valid JSON array
+covering the last ~10 units you finished. A written part is durable: an
+interruption (rate limit, disconnect, output ceiling) loses at most the units since
+the last part, never the batch. Do not grow or rewrite an already-written part —
+start the next one.
 
 ```json
 [
@@ -93,4 +101,12 @@ loses no correctness and re-derives only what actually changed, not the whole qu
   speculative edges rather than guessing.
 - Read-only on all source folders (whatever `mirror_path`/`absorb_path` point to).
   Never modify sources.
-- Return to the caller: counts only (e.g. "derived 18 units, 7 edges proposed").
+- **Report honestly — completion is a verifiable claim, not a sign-off.** Your final
+  message must START with one of:
+  `BATCH COMPLETE: derived N/M units -> <part files>` — only when every unit of the
+  batch is covered by a written part (N == M);
+  `BATCH PARTIAL: derived N/M, last part <file>` — whenever anything kept you from
+  finishing (and if you can see why, say it in one clause).
+  Never write "Done" or imply success otherwise: the orchestrator compares your
+  counts against the batch and re-runs only the remainder, so an honest PARTIAL is
+  cheap and a false COMPLETE silently loses units.
