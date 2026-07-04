@@ -61,15 +61,20 @@ def build_project() -> Path:
     amg = proj / ".claude" / "amg"
     amg.mkdir(parents=True)
     # embeddings off: the candidate check below must exercise the LEXICAL fallback
-    # deterministically, whatever backends this machine has installed
+    # deterministically, whatever backends this machine has installed; the trivial
+    # shortcut is ON (stage 20) — helper and Widget.render are its targets below
     (amg / "config.yml").write_text(
         "active: true\nworking_language: en\nmirror_path: [src, doc, data]\n"
+        "trivial_unit_max_lines: 3\n"
         "retrieval:\n  embeddings:\n    enabled: off\n",
         encoding="utf-8")
     pkg = proj / "src" / "pkg"
     pkg.mkdir(parents=True)
     (pkg / "__init__.py").write_text("from pkg.core import Widget\n", encoding="utf-8")
-    (pkg / "util.py").write_text("def helper(x):\n    return x\n", encoding="utf-8")
+    # the module docstring keeps the MODULE's content hash distinct from the helper
+    # slice's (a one-function file would otherwise share one sha and one cache entry)
+    (pkg / "util.py").write_text(
+        '"""Utility helpers."""\n\n\ndef helper(x):\n    return x\n', encoding="utf-8")
     (pkg / "core.py").write_text(
         "from pkg.util import helper\n"
         "import json\n\n\n"
@@ -79,10 +84,15 @@ def build_project() -> Path:
         "    return helper(a)\n\n\n"
         "class Base:\n"
         "    def ping(self):\n"
+        "        \"\"\"Health probe.\"\"\"\n"
+        "        self.checked = True\n"
         "        return 1\n\n\n"
         "class Widget(Base):\n"
         "    def render(self):\n"
-        "        return self.ping() + helper(0)\n",
+        "        return self.ping() + helper(0)\n\n\n"
+        "class Caller:\n"
+        "    def __call__(self):\n"
+        "        return helper(1)\n",
         encoding="utf-8")
     (proj / "doc").mkdir()
     (proj / "doc" / "guide.md").write_text(
@@ -147,9 +157,11 @@ def main() -> int:
     proj = build_project()
     amg = proj / ".claude" / "amg"
     try:
-        # 1. skeleton: deterministic backbone + resolver-bound calls
+        # 1. skeleton: deterministic backbone + resolver-bound calls; trivial units
+        # (helper, Widget.render — <=3 lines) auto-summarized out of the queue
         s = RC.plan(proj, amg)
-        assert s["added"] == 11 and s["queued_for_semantic"] == 11, s
+        assert s["added"] == 13 and s["queued_for_semantic"] == 11, s
+        assert s["auto_summarized"] == 2, s
         nodes = RC.load_nodes(gs.GraphStore(amg))
 
         def rels(nid: str) -> set:
@@ -161,6 +173,21 @@ def main() -> int:
             == {("calls", f"{UTIL}::helper")}, rels(f"{CORE}::top_fn")
         assert ("imports", CORE) in rels(INIT)
         print("PASS  skeleton: backbone + resolved calls, no builtin edges")
+
+        # stage 20 (audit 1.47): a trivial function is derived by code — active, its
+        # one-line source as the summary, structural edges intact, NOT in the queue;
+        # a protocol dunder (__call__) and a 4-line body still go to the model
+        helper_node = nodes[f"{UTIL}::helper"]
+        assert helper_node["status"] == "active", helper_node
+        assert helper_node["summary"].startswith("def helper(x): return x"), helper_node
+        assert helper_node["derived_from_hash"] == helper_node["source_hash"]
+        assert nodes[f"{CORE}::Widget.render"]["status"] == "active"
+        queued_ids = {u["id"] for u in json.loads(
+            (amg / "work" / "queue.json").read_text(encoding="utf-8"))["units"]}
+        assert f"{UTIL}::helper" not in queued_ids and f"{CORE}::Widget.render" not in queued_ids
+        assert f"{CORE}::Caller.__call__" in queued_ids, "protocol dunder must reach the model"
+        assert f"{CORE}::Base.ping" in queued_ids, "a 4-line body is not trivial"
+        print("PASS  trivial: auto-summary derives dunder-sized units; guard + size respected")
 
         # stage 20 (audit 1.47): the queue carries each unit's own text + line_end,
         # so the builder summarizes from the queue without re-opening sources
@@ -177,9 +204,10 @@ def main() -> int:
         assert "text" not in big and big["line_end"] is None, big
         print("PASS  queue: unit text + line_end inlined; oversized falls back to pointer")
 
-        # lazy-aware: with nothing derived yet, the linker prep has nothing to link
+        # lazy-aware: only the two auto-summarized nodes are linkable yet (and they
+        # are already linked structurally, so no batch); stale nodes are skipped
         lc0 = LC.build_batches(proj, amg)
-        assert lc0["eligible"] == 0 and lc0["batches"] == 0, lc0
+        assert lc0["eligible"] == 2 and lc0["batches"] == 0, lc0
         assert lc0["skipped_stale"] == 11, lc0
         print("PASS  candidates: stale (underived) nodes are skipped, not linked")
 
@@ -243,7 +271,7 @@ def main() -> int:
         hc = LC.hub_candidates(amg)
         assert hc["candidates"] >= 1 and hc["existing_hubs"] == 2, hc
         hdata = json.loads((amg / "work" / "hub-candidates.json").read_text(encoding="utf-8"))
-        assert any(r["suggested_id"] == "hub:src-pkg" and r["members"] == 9
+        assert any(r["suggested_id"] == "hub:src-pkg" and r["members"] == 11
                    for r in hdata["candidates"]), hdata["candidates"]
         assert "hub:build" in hdata["existing_hubs"], hdata
         print("PASS  candidates: cross-domain pair nominated, linked pair excluded, "
@@ -257,7 +285,8 @@ def main() -> int:
         shutil.rmtree(amg / "journal")
         shutil.rmtree(amg / "work", ignore_errors=True)
         s = RC.plan(proj, amg)                       # fresh skeleton, all stale
-        assert s["added"] == 11 and s["queued_for_semantic"] == 11, s
+        assert s["added"] == 13 and s["queued_for_semantic"] == 11, s
+        assert s["auto_summarized"] == 2, s          # trivial units re-derive by code
         c = RC.apply_cached(proj, amg)
         assert c["restored_units"] == 11 and c["remaining"] == 0, c
         nodes = RC.load_nodes(gs.GraphStore(amg))
@@ -271,9 +300,31 @@ def main() -> int:
         assert f"{CORE}::Widget" in guide_tos, guide_tos   # re-normalized on restore
         q = json.loads((amg / "work" / "queue.json").read_text(encoding="utf-8"))
         assert q["units"] == [], "the restored units must leave the queue"
+
+        # a trivial unit with an EARNED cached derivation queues instead of the
+        # template: the cache restores the judged summary verbatim (cache wins)
+        sha_helper = RC.load_nodes(gs.GraphStore(amg))[f"{UTIL}::helper"]["source_hash"]
+        gs.atomic_write_text(
+            RC._derivation_cache_path(amg, sha_helper),
+            json.dumps({"contract": RC.DERIVATION_CONTRACT, "lang": "en",
+                        "items": [{"id": f"{UTIL}::helper", "content_sha": sha_helper,
+                                   "summary": "Cached judged summary."}]}))
+        shutil.rmtree(amg / "nodes")
+        shutil.rmtree(amg / "journal")
+        shutil.rmtree(amg / "work", ignore_errors=True)
+        s = RC.plan(proj, amg)
+        assert s["auto_summarized"] == 1 and s["queued_for_semantic"] == 12, s
+        c = RC.apply_cached(proj, amg)
+        assert c["restored_units"] == 12 and c["remaining"] == 0, c
+        nodes = RC.load_nodes(gs.GraphStore(amg))
+        assert nodes[f"{UTIL}::helper"]["summary"] == "Cached judged summary.", \
+            "the earned cached derivation must beat the trivial template"
+        print("PASS  trivial+cache: an earned cached summary wins over the template")
+
         # a changed working language must MISS by key, never restore foreign summaries
         (amg / "config.yml").write_text(
-            "active: true\nworking_language: ru\nmirror_path: [src, doc, data]\n",
+            "active: true\nworking_language: ru\nmirror_path: [src, doc, data]\n"
+            "trivial_unit_max_lines: 3\n",
             encoding="utf-8")
         shutil.rmtree(amg / "nodes")
         shutil.rmtree(amg / "journal")

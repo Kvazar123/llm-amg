@@ -104,6 +104,16 @@ log_group_lines: 50            # lines per .log episode block
 # above it the queue item falls back to the path:line pointer. 0 = pointer-only queue.
 queue_text_max_chars: 20000
 
+# Trivial code units — dunders, one-line getters and other mechanical bodies — are
+# summarized by code instead of spending a model call each: a FUNCTION whose whole
+# definition spans at most this many lines gets a deterministic summary (its own code
+# collapsed to one line, identifiers verbatim) and is marked derived, so it neither
+# burns a model call nor loops in the re-derivation queue. Protocol dunders
+# (__call__, __enter__, __getitem__, ...) always go to the model — their presence
+# changes how a class is used. A unit already derived once restores its earned
+# summary from the derivation cache instead (the cache wins). 0 disables the shortcut.
+trivial_unit_max_lines: 3
+
 # -----------------------------------------------------------------------------
 # Optional, for the most out of non-Python code. If `tree-sitter-language-pack`
 # is installed, other languages get function-level units + call edges; if not,

@@ -198,7 +198,8 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
     raw_units = extract(project_root, config, amg_root)
     units = {u["id"]: u for u in raw_units}
     summary: Dict[str, Any] = {"added": 0, "changed": 0, "moved": 0, "deleted": 0, "unchanged": 0,
-               "requeued_stale": 0, "pointer_refreshed": 0, "edges_refreshed": 0, "frozen": 0}
+               "requeued_stale": 0, "pointer_refreshed": 0, "edges_refreshed": 0, "frozen": 0,
+               "auto_summarized": 0}
     queue: List[Dict[str, Any]] = []
 
     with store.lock():
@@ -210,6 +211,18 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
         default_lang = config.get("working_language", "en")
         commit = _git_commit(project_root)     # ingest-time provenance.commit (best-effort)
         text_cap = int(config.get("queue_text_max_chars", QUEUE_TEXT_MAX_CHARS) or 0)
+        trivial_max = int(config.get("trivial_unit_max_lines", 0) or 0)
+        cache_on = bool(config.get("derivation_cache", True))
+
+        def _auto_summary(unit: Dict[str, Any]) -> Optional[str]:
+            """The trivial-unit shortcut, cache-aware: a unit already derived once
+            restores its EARNED judgment verbatim from the derivation cache, so the
+            template applies only to a genuine cache miss (audit 1.47)."""
+            s = _trivial_summary(unit, trivial_max)
+            if s is not None and cache_on and _cache_lookup(
+                    store.root, str(default_lang), unit["content_sha"]):
+                return None                # let apply_cached restore the earned summary
+            return s
 
         # moved: an added unit whose content matches a node that would be purged
         # is the same source at a new path/name. Migrate earned fields instead of
@@ -284,28 +297,37 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
             relpath = node["_path"] if node else node_relpath(uid, kind_dir)
 
             if node is None:
+                auto = _auto_summary(unit)
                 meta = {
                     "id": uid, "type": unit["kind"], "source_path": unit["source_path"],
                     "qualname": unit.get("qualname", ""), "lineno": unit.get("lineno"),
                     "line_end": unit.get("line_end", unit.get("lineno")),
                     "source_kind": "derived_from_file", "policy": unit["policy"],
-                    "source_hash": unit["content_sha"], "derived_from_hash": None,
+                    "source_hash": unit["content_sha"],
+                    "derived_from_hash": unit["content_sha"] if auto else None,
                     "provenance": _provenance(unit["category"], commit),
                     "verification": _fresh_verification(),
                     "part_of": _part_of_for(unit),
                     "edges": _structural_edges(unit, symbols),
                     "lang": config.get("working_language", "en"),
-                    "status": "stale", "summary": "", "updated": _now(),
+                    "status": "active" if auto else "stale",
+                    "summary": auto or "", "updated": _now(),
                 }
                 tx.write(relpath, serialize_node(meta, ""))
-                queue.append(_queue_item(unit, text_cap))
+                if auto:
+                    summary["auto_summarized"] += 1
+                else:
+                    queue.append(_queue_item(unit, text_cap))
                 summary["added"] += 1
 
             elif node.get("source_hash") != unit["content_sha"]:
                 # Update structural fields; KEEP the earned summary and semantic
                 # edges until re-derived. Structural edges are re-extracted so the
                 # graph stays structurally equal to the source (a new call gets
-                # its edge, a dropped call loses it).
+                # its edge, a dropped call loses it). A now-trivial unit is
+                # auto-summarized instead of queued: the old summary describes the
+                # OLD code, the template describes the current one.
+                auto = _auto_summary(unit)
                 node.pop("_path", None)
                 body = node.pop("_body", "")
                 node["source_hash"] = unit["content_sha"]
@@ -320,11 +342,20 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
                 node["edges"] = _normalize_edges(
                     _refresh_structural_edges(node.get("edges") or [], unit, symbols),
                     id_index, sfx)
-                node["status"] = "stale"
+                if auto:
+                    node["summary"] = auto
+                    node["derived_from_hash"] = unit["content_sha"]
+                    node["status"] = "active"
+                    node.pop("confidence", None)   # any old estimate rated the old summary
+                else:
+                    node["status"] = "stale"
                 node["updated"] = _now()
                 node.setdefault("part_of", _part_of_for(unit))
                 tx.write(relpath, serialize_node(node, body))
-                queue.append(_queue_item(unit, text_cap))
+                if auto:
+                    summary["auto_summarized"] += 1
+                else:
+                    queue.append(_queue_item(unit, text_cap))
                 summary["changed"] += 1
             else:
                 # Source content unchanged; three kinds of lag may still remain.
@@ -352,7 +383,14 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
                     _refresh_structural_edges(current_edges, unit, symbols),
                     id_index, sfx)
                 edges_changed = not _edges_equivalent(fresh_edges, current_edges)
-                if drifted or edges_changed:
+                # Derivation lag: the summary never caught up (e.g. a crash before
+                # the queue write, or apply never ran). A lagging TRIVIAL unit is
+                # resolved right here by the auto-summary (it would otherwise loop
+                # in the queue forever); anything else re-queues.
+                lagging = (node.get("derived_from_hash") != unit["content_sha"]
+                           or node.get("status") == "stale")
+                auto = _auto_summary(unit) if lagging else None
+                if drifted or edges_changed or auto:
                     node["qualname"] = unit.get("qualname", "")
                     node["lineno"] = unit.get("lineno")
                     node["line_end"] = unit.get("line_end", unit.get("lineno"))
@@ -360,6 +398,11 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
                     node["type"] = unit["kind"]
                     if edges_changed:        # a pure reorder never churns the file
                         node["edges"] = fresh_edges
+                    if auto:
+                        node["summary"] = auto
+                        node["derived_from_hash"] = unit["content_sha"]
+                        node["status"] = "active"
+                        node.pop("confidence", None)
                     node["updated"] = _now()
                     meta = {k: v for k, v in node.items() if not k.startswith("_")}
                     tx.write(relpath, serialize_node(meta, node.get("_body", "")))
@@ -367,13 +410,12 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
                         summary["pointer_refreshed"] += 1
                     if edges_changed:
                         summary["edges_refreshed"] += 1
-                # Derivation lag: the summary never caught up (e.g. a crash before
-                # the queue write, or apply never ran) -> re-queue; the node file
-                # itself needs no rewrite for this.
-                if (node.get("derived_from_hash") != unit["content_sha"]
-                        or node.get("status") == "stale"):
-                    queue.append(_queue_item(unit, text_cap))
-                    summary["requeued_stale"] += 1
+                if lagging:
+                    if auto:
+                        summary["auto_summarized"] += 1
+                    else:
+                        queue.append(_queue_item(unit, text_cap))
+                        summary["requeued_stale"] += 1
                 elif not drifted and not edges_changed:
                     summary["unchanged"] += 1
 
@@ -418,6 +460,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
                 f"bootstrap: added={summary['added']} changed={summary['changed']} "
                 f"moved={summary['moved']} deleted={summary['deleted']} "
                 f"requeued={summary['requeued_stale']} frozen={summary['frozen']} "
+                f"auto={summary['auto_summarized']} "
                 f"edges_refreshed={summary['edges_refreshed']} queued={len(queue)}", txid)
 
     conflicts = detect_policy_conflicts(raw_units)        # 1.29: mirror/absorb overlap
@@ -781,6 +824,44 @@ def _migrate_node(old: Dict[str, Any], unit: Dict[str, Any], symbols: Dict[str, 
         "status": status, "summary": old.get("summary", ""), "updated": _now(),
     }
     return meta, (not fresh) or status == "stale"
+
+
+# Protocol dunders that change HOW a class is used even when their body is one line
+# (callable, context manager, attribute/index magic, iteration, construction): a
+# code-verbatim template would state the mechanics but miss exactly that semantic,
+# so these always go to the judgment layer regardless of size. Python-construct
+# names, not natural language — the engine stays language-universal.
+_SIGNIFICANT_DUNDERS = {
+    "__call__", "__enter__", "__exit__", "__getattr__", "__getattribute__",
+    "__setattr__", "__delattr__", "__getitem__", "__setitem__", "__delitem__",
+    "__iter__", "__next__", "__new__", "__init_subclass__",
+}
+
+
+def _trivial_summary(unit: Dict[str, Any], max_lines: int) -> Optional[str]:
+    """Deterministic auto-summary for a TRIVIAL code unit — a function whose whole
+    definition spans at most `max_lines` lines: dunders, one-line getters and other
+    mechanical bodies (audit 1.47). The summary is the unit's own code collapsed to
+    one line — language-neutral (identifiers verbatim; the working_language rule
+    concerns prose), token-bearing for lexical seeding, impossible to hallucinate.
+    Returns None when the unit does not qualify (only code functions; the protocol
+    dunders above are exempt — their presence is the semantic).
+
+    Deliberately a SUMMARY, not a skip: plan() re-queues any unit whose
+    derived_from_hash lags forever, so a merely-skipped unit would loop in the queue.
+    The auto-summary marks the unit derived (derived_from_hash = source_hash) while
+    the pointer and structural edges stay intact."""
+    if max_lines <= 0 or unit.get("kind") != "function" or unit.get("category") != "code":
+        return None
+    lineno, line_end = unit.get("lineno"), unit.get("line_end")
+    if not lineno or not line_end or (int(line_end) - int(lineno) + 1) > max_lines:
+        return None
+    if (unit.get("qualname") or "").rsplit(".", 1)[-1] in _SIGNIFICANT_DUNDERS:
+        return None
+    text = (unit.get("text") or "").strip()
+    if not text:
+        return None
+    return re.sub(r"\s+", " ", text)[:240]
 
 
 # Ceiling on the unit text carried into work/queue.json (chars). Every chunker now
