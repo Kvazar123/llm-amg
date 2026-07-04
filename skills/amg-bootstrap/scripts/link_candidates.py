@@ -221,7 +221,10 @@ def build_batches(project_root: Path, amg_root: Path,
 
     work = amg_root / "work"
     for old in work.glob("link-batch-*.json") if work.exists() else []:
-        old.unlink()                          # a re-run replaces the batch set
+        try:
+            old.unlink()                      # a re-run replaces the batch set
+        except OSError:
+            pass     # transiently held (AV/indexer on Windows): must not kill the pass
     batches = 0
     for start in range(0, len(entries), batch_nodes):
         batches += 1

@@ -136,7 +136,10 @@ def partition(amg_root: Path, depth: int = 2, max_units: Optional[int] = None,
         # a re-run replaces the batch set (stale parts would re-derive for nothing);
         # the priority/deferred pair belongs to priority_split, not to this splitter
         if old.name not in ("queue-priority.json", "queue-deferred.json"):
-            old.unlink()
+            try:
+                old.unlink()
+            except OSError:
+                pass     # transiently held (AV/indexer on Windows): must not kill the split
     for key, group_units in groups.items():
         safe = key.replace("/", "_").replace("\\", "_") or "_root"
         slices = _chunk(group_units, cap_units, cap_chars)
