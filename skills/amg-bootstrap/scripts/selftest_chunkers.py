@@ -192,6 +192,26 @@ def test_chat_reconcile():
         shutil.rmtree(proj, ignore_errors=True)
 
 
+def test_paragraph_linenos(tmp):
+    """Paragraph blocks carry REAL line numbers (audit 1.51) and their `text`; the
+    block content (and hash) matches the former regex split, so old graphs converge
+    by pointer drift only."""
+    p = tmp / "notes.txt"
+    p.write_text("first para line 1\nfirst para line 2\n\n\nsecond para\n \nthird para\n",
+                 encoding="utf-8")
+    units = ES._text_units(p, "notes.txt", "mirror")
+    assert [u["qualname"] for u in units] == ["b1", "b2", "b3"], units
+    assert (units[0]["lineno"], units[0]["line_end"]) == (1, 2), units[0]
+    assert (units[1]["lineno"], units[1]["line_end"]) == (5, 5), units[1]
+    assert (units[2]["lineno"], units[2]["line_end"]) == (7, 7), units[2]
+    assert units[0]["text"] == "first para line 1\nfirst para line 2", units[0]
+    # hash parity with the former re.split(r"\n\s*\n") chunking (idempotency guard)
+    import re as _re
+    old = [b.strip() for b in _re.split(r"\n\s*\n", p.read_text(encoding="utf-8")) if b.strip()]
+    assert [u["content_sha"] for u in units] == [ES._sha(b) for b in old], "hash drift"
+    print("PASS  paragraphs: real lineno/line_end per block; hashes unchanged")
+
+
 def test_reconcile_buckets():
     proj = Path(tempfile.mkdtemp(prefix="amg-chunk-rc-"))
     try:
@@ -229,6 +249,7 @@ if __name__ == "__main__":
         test_log(tmp)
         test_rst(tmp)
         test_recursive_json(tmp)
+        test_paragraph_linenos(tmp)
         test_chat(tmp)
         test_chat_reconcile()
         test_reconcile_buckets()

@@ -209,6 +209,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
         symbols = _build_symbols(units)    # cross-file resolver tables (stage 19)
         default_lang = config.get("working_language", "en")
         commit = _git_commit(project_root)     # ingest-time provenance.commit (best-effort)
+        text_cap = int(config.get("queue_text_max_chars", QUEUE_TEXT_MAX_CHARS) or 0)
 
         # moved: an added unit whose content matches a node that would be purged
         # is the same source at a new path/name. Migrate earned fields instead of
@@ -241,7 +242,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
                      serialize_node(meta, old.get("_body", "")))
             tx.delete(old["_path"])
             if needs_queue:
-                queue.append(_queue_item(unit))
+                queue.append(_queue_item(unit, text_cap))
             summary["moved"] += 1
 
         # Redirect inbound references (edges, part_of) to the moved ids. Dicts
@@ -297,7 +298,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
                     "status": "stale", "summary": "", "updated": _now(),
                 }
                 tx.write(relpath, serialize_node(meta, ""))
-                queue.append(_queue_item(unit))
+                queue.append(_queue_item(unit, text_cap))
                 summary["added"] += 1
 
             elif node.get("source_hash") != unit["content_sha"]:
@@ -323,7 +324,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
                 node["updated"] = _now()
                 node.setdefault("part_of", _part_of_for(unit))
                 tx.write(relpath, serialize_node(node, body))
-                queue.append(_queue_item(unit))
+                queue.append(_queue_item(unit, text_cap))
                 summary["changed"] += 1
             else:
                 # Source content unchanged; three kinds of lag may still remain.
@@ -371,7 +372,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
                 # itself needs no rewrite for this.
                 if (node.get("derived_from_hash") != unit["content_sha"]
                         or node.get("status") == "stale"):
-                    queue.append(_queue_item(unit))
+                    queue.append(_queue_item(unit, text_cap))
                     summary["requeued_stale"] += 1
                 elif not drifted and not edges_changed:
                     summary["unchanged"] += 1
@@ -782,16 +783,27 @@ def _migrate_node(old: Dict[str, Any], unit: Dict[str, Any], symbols: Dict[str, 
     return meta, (not fresh) or status == "stale"
 
 
-def _queue_item(unit: Dict[str, Any]) -> Dict[str, Any]:
-    # qualname/lineno let the builder focus on the right slice of the source;
-    # lang here is the SOURCE language/format (python/markdown/...), not the
-    # node's `lang` field (which is the summary's working language).
+# Ceiling on the unit text carried into work/queue.json (chars). Every chunker now
+# hands over the unit's exact content slice, and inlining it is strictly cheaper for
+# the builder than a Read call (same content cost, no tool round-trip that re-sends
+# the whole accumulated context — the dominant token sink of a build, audit 1.47).
+# The cap only guards against pathological units (a minified bundle, a giant module):
+# above it the item falls back to the pointer and the builder reads the slice itself.
+QUEUE_TEXT_MAX_CHARS = 20000
+
+
+def _queue_item(unit: Dict[str, Any], text_cap: int = QUEUE_TEXT_MAX_CHARS) -> Dict[str, Any]:
+    # qualname/lineno/line_end let the builder focus on the right slice of the
+    # source; lang here is the SOURCE language/format (python/markdown/...), not
+    # the node's `lang` field (which is the summary's working language).
     item = {"id": unit["id"], "kind": unit["kind"], "source_path": unit["source_path"],
             "category": unit["category"], "content_sha": unit["content_sha"],
             "qualname": unit.get("qualname", ""), "lineno": unit.get("lineno"),
+            "line_end": unit.get("line_end", unit.get("lineno")),
             "lang": unit.get("lang")}
-    if unit.get("text"):                  # pre-extracted (PDF/DOCX/XLSX): summarize from this
-        item["text"] = unit["text"]
+    text = unit.get("text")
+    if text and 0 < len(text) <= text_cap:    # cap 0 = pointer-only queue (opt-out)
+        item["text"] = text               # summarize from this; do not re-open the source
     return item
 
 

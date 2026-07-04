@@ -26,6 +26,12 @@ Pipeline per file:
   4. tag          each unit carries `category` (code|doc|data) -> physical node bucket,
                   and `policy` (mirror|absorb) inherited from its source.
 
+Every unit also carries its own content as `text` — the exact slice its hash was
+computed from (a function's source, a markdown section, a serialized JSON record, an
+extracted PDF page). The semantic builder summarizes FROM the queue instead of
+re-opening sources file by file; reconcile caps what enters the queue
+(queue_text_max_chars), so a pathologically large unit falls back to the pointer.
+
 tree-sitter is OPTIONAL. Python is handled fully by the stdlib `ast`, with NO dependency.
 Other languages get function-level granularity + call edges ONLY if
 `tree-sitter-language-pack` is importable and the grammar loads; otherwise the file
@@ -410,7 +416,8 @@ def _classify_path(path: Path, rel: str, overrides: Dict[str, Dict[str, Any]]
 def _file_unit(rel: str, category: str, policy: str, text: str, lang: Optional[str] = None) -> Dict[str, Any]:
     return {"id": f"{category}:{rel}", "kind": "file", "source_path": rel,
             "category": category, "policy": policy, "qualname": "", "lineno": 1,
-            "line_end": text.count("\n") + 1, "lang": lang, "content_sha": _sha(text)}
+            "line_end": text.count("\n") + 1, "lang": lang, "content_sha": _sha(text),
+            "text": text}
 
 
 def _dotted_chain(expr: ast.AST) -> Optional[str]:
@@ -460,7 +467,7 @@ def _python_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
         {"id": f"code:{rel}", "kind": "module", "source_path": rel,
          "category": "code", "policy": policy, "qualname": "", "lineno": 1,
          "line_end": len(lines), "lang": "python", "content_sha": _sha(text),
-         "imports": sorted(set(imports))}]
+         "text": text, "imports": sorted(set(imports))}]
     if bindings:
         units[0]["import_bindings"] = bindings
 
@@ -481,6 +488,7 @@ def _python_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
         for child in node.body:
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 qual = f"{prefix}{child.name}"
+                src = slice_src(child)
                 unit: Dict[str, Any] = {
                     "id": f"code:{rel}::{qual}",
                     "kind": "class" if isinstance(child, ast.ClassDef) else "function",
@@ -488,7 +496,7 @@ def _python_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
                     "qualname": qual, "lineno": child.lineno,
                     "line_end": getattr(child, "end_lineno", None) or child.lineno,
                     "lang": "python",
-                    "content_sha": _sha(slice_src(child)), "calls": calls_in(child)}
+                    "content_sha": _sha(src), "text": src, "calls": calls_in(child)}
                 if isinstance(child, ast.ClassDef):
                     # base-class chains (`Base`, `mod.Base`) -> `inherits` edges; a
                     # non-name base (Generic[T], a call) is skipped as unresolvable
@@ -655,7 +663,7 @@ def _treesitter_units(path: Path, rel: str, policy: str, lang: str) -> Optional[
                         "category": "code", "policy": policy, "qualname": nm,
                         "lineno": line_of(child), "line_end": end_line_of(child),
                         "lang": lang,
-                        "content_sha": _sha(src), "calls": calls_in(child)}
+                        "content_sha": _sha(src), "text": src, "calls": calls_in(child)}
                     if _TS_DEF[k] == "class":
                         bs = bases_of(child)
                         if bs:
@@ -726,21 +734,42 @@ def _markdown_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
         units.append({"id": f"doc:{rel}::{qual}", "kind": "section", "source_path": rel,
                       "category": "doc", "policy": policy, "qualname": qual,
                       "lineno": start + 1, "line_end": end, "lang": "markdown",
-                      "content_sha": _sha(chunk)})
+                      "content_sha": _sha(chunk), "text": chunk})
     return units or [_file_unit(rel, "doc", policy, text, "markdown")]
 
 
 def _text_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
+    """Blank-line-separated paragraph blocks with REAL line numbers (audit 1.51):
+    blocks are the runs of non-blank lines, so `lineno`/`line_end` point at the actual
+    slice instead of a flat 1. The block content (and therefore its hash) is identical
+    to the former regex split — existing graphs converge by cheap pointer drift, never
+    by re-derivation."""
     text = path.read_text(encoding="utf-8", errors="replace")
-    blocks, idx, n = [], 0, 0
-    for raw in re.split(r"\n\s*\n", text):
-        block = raw.strip()
-        if not block:
-            continue
-        n += 1
-        blocks.append({"id": f"doc:{rel}::b{n}", "kind": "block", "source_path": rel,
-                       "category": "doc", "policy": policy, "qualname": f"b{n}",
-                       "lineno": 1, "lang": "text", "content_sha": _sha(block)})
+    lines = text.splitlines()
+    blocks: List[Dict[str, Any]] = []
+    n = 0
+    start: Optional[int] = None
+
+    def flush(end: int) -> None:               # end = index just past the block's last line
+        nonlocal n, start
+        if start is None:
+            return
+        block = "\n".join(lines[start:end]).strip()
+        if block:
+            n += 1
+            blocks.append({"id": f"doc:{rel}::b{n}", "kind": "block", "source_path": rel,
+                           "category": "doc", "policy": policy, "qualname": f"b{n}",
+                           "lineno": start + 1, "line_end": end, "lang": "text",
+                           "content_sha": _sha(block), "text": block})
+        start = None
+
+    for i, ln in enumerate(lines):
+        if ln.strip():
+            if start is None:
+                start = i
+        else:
+            flush(i)
+    flush(len(lines))
     return blocks or [_file_unit(rel, "doc", policy, text, "text")]
 
 
@@ -784,7 +813,7 @@ def _rst_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
                           "source_path": rel, "category": "doc", "policy": policy,
                           "qualname": "_preamble", "lineno": 1,
                           "line_end": heads[0][1], "lang": "rst",
-                          "content_sha": _sha(pre)})
+                          "content_sha": _sha(pre), "text": pre})
     bounds = [h[1] for h in heads] + [len(lines)]
     for idx, (title, start) in enumerate(heads):
         chunk = "".join(lines[start:bounds[idx + 1]]).strip()
@@ -797,7 +826,7 @@ def _rst_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
         units.append({"id": f"doc:{rel}::{qual}", "kind": "section", "source_path": rel,
                       "category": "doc", "policy": policy, "qualname": qual,
                       "lineno": start + 1, "line_end": bounds[idx + 1], "lang": "rst",
-                      "content_sha": _sha(chunk)})
+                      "content_sha": _sha(chunk), "text": chunk})
     return units or [_file_unit(rel, "doc", policy, text, "rst")]
 
 
@@ -875,7 +904,8 @@ def _json_descend(rel: str, policy: str, parent: str, container: object, depth: 
             frag = json.dumps(v, ensure_ascii=False, sort_keys=True)
             units.append({"id": f"data:{rel}::{qual}", "kind": "record", "source_path": rel,
                           "category": "data", "policy": policy, "qualname": qual,
-                          "lineno": 1, "lang": "json", "content_sha": _sha(frag)})
+                          "lineno": 1, "lang": "json", "content_sha": _sha(frag),
+                          "text": frag})
 
 
 def _data_units(path: Path, rel: str, policy: str, max_depth: int = 4,
@@ -910,7 +940,7 @@ def _data_units(path: Path, rel: str, policy: str, max_depth: int = 4,
             units.append({"id": f"data:{rel}::{str(key)[:48]}", "kind": "record",
                           "source_path": rel, "category": "data", "policy": policy,
                           "qualname": str(key)[:48], "lineno": 1, "lang": "json",
-                          "content_sha": _sha(frag)})
+                          "content_sha": _sha(frag), "text": frag})
     return units or [_file_unit(rel, "data", policy, text)]
 
 
@@ -947,7 +977,8 @@ def _ndjson_units(path: Path, rel: str, policy: str, cap: int = 500) -> List[Dic
         frag = json.dumps(obj, ensure_ascii=False, sort_keys=True)
         units.append({"id": f"data:{rel}::{qual}", "kind": "record", "source_path": rel,
                       "category": "data", "policy": policy, "qualname": qual,
-                      "lineno": i, "lang": "ndjson", "content_sha": _sha(frag)})
+                      "lineno": i, "lang": "ndjson", "content_sha": _sha(frag),
+                      "text": frag})
         if n >= cap:
             break
     return units or [_file_unit(rel, "data", policy, text, "ndjson")]
@@ -1025,7 +1056,7 @@ def _session_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
         units.append({"id": f"doc:{rel}::m{n}", "kind": "section", "source_path": rel,
                       "category": "doc", "policy": policy, "qualname": f"m{n}",
                       "lineno": s + 1, "line_end": e, "lang": "session",
-                      "content_sha": _sha(chunk)})
+                      "content_sha": _sha(chunk), "text": chunk})
     return units or [_file_unit(rel, "doc", policy, text, "session")]
 
 

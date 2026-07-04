@@ -16,22 +16,25 @@ your batch and return only a short summary to the caller.
 
 ## Input you are given
 - A list of queued units, each: `{id, kind, source_path, category, content_sha,
-  qualname, lineno, lang}`, where `category` is one of `code` / `doc` / `data`,
-  `kind` is the unit shape (module, function, class, section, page, sheet, block,
-  record, file), and `lang` is the SOURCE language/format (e.g. `python`,
-  `markdown`, `rst`, `log`, `csv`, `chat`) — not the language you write in. A unit
-  may also carry a `text` field with the content already extracted or assembled for
-  you (a PDF page, a DOCX/PPTX section, an XLSX/CSV table description, a log episode,
-  or a chat message with its role/time): summarize from THAT, do not re-open the
-  source.
+  qualname, lineno, line_end, lang, text?}`, where `category` is one of `code` /
+  `doc` / `data`, `kind` is the unit shape (module, function, class, section, page,
+  sheet, block, record, file), and `lang` is the SOURCE language/format (e.g.
+  `python`, `markdown`, `rst`, `log`, `csv`, `chat`) — not the language you write in.
+  `text` is the unit's OWN content, already sliced for you (a function's source, a
+  markdown section, a serialized record, a PDF page, a log episode, a chat message
+  with its role/time) — it is present for nearly every unit and is authoritative:
+  **summarize from it and never re-open the source when it is present**. Only an
+  oversized unit arrives without `text` (pointer only) — then read exactly the
+  `source_path` slice `lineno`–`line_end`, nothing more.
 - An output path, e.g. `.claude/amg/work/derived-<batch>.json`.
 - The project's `working_language` (from `.claude/amg/config.yml`).
 
 ## What to do
 For each unit:
-1. If the unit has a `text` field, summarize from THAT (the source is binary — do
-   not try to open it). Otherwise read the relevant slice of `source_path` (use the
-   unit's `kind`/`qualname` to focus; read surrounding context only as needed).
+1. If the unit has a `text` field, summarize from THAT — do not open the source
+   (re-reading what you already have is the main token sink of a build). Only when
+   `text` is absent, read the `source_path` slice `lineno`–`line_end` (use
+   `kind`/`qualname` to focus; read surrounding context only as needed).
 2. Write a **summary**: 1–3 sentences capturing purpose and role, not a restatement
    of the content. For `code`, keep identifiers and signatures verbatim but write the
    prose summary in the `working_language`. For `doc`/`data`/notes, write entirely in

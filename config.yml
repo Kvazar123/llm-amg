@@ -97,6 +97,13 @@ json_recurse_min_chars: 2048   # only descend into a container whose JSON exceed
 json_max_nodes: 500            # cap on record units per JSON / NDJSON file
 log_group_lines: 50            # lines per .log episode block
 
+# Ceiling (chars) on the unit text carried into the semantic work queue. Extraction
+# already slices every unit's exact content, so the queue hands it to the builder and
+# the builder never re-reads sources file by file (the main cost of a build). The cap
+# only guards against pathological units (a minified bundle, a giant one-piece file):
+# above it the queue item falls back to the path:line pointer. 0 = pointer-only queue.
+queue_text_max_chars: 20000
+
 # -----------------------------------------------------------------------------
 # Optional, for the most out of non-Python code. If `tree-sitter-language-pack`
 # is installed, other languages get function-level units + call edges; if not,

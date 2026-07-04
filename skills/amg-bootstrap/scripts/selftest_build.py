@@ -162,6 +162,21 @@ def main() -> int:
         assert ("imports", CORE) in rels(INIT)
         print("PASS  skeleton: backbone + resolved calls, no builtin edges")
 
+        # stage 20 (audit 1.47): the queue carries each unit's own text + line_end,
+        # so the builder summarizes from the queue without re-opening sources
+        q0 = {u["id"]: u for u in json.loads(
+            (amg / "work" / "queue.json").read_text(encoding="utf-8"))["units"]}
+        assert "def top_fn(a):" in q0[f"{CORE}::top_fn"]["text"], q0[f"{CORE}::top_fn"]
+        assert q0[f"{CORE}::top_fn"]["line_end"] > q0[f"{CORE}::top_fn"]["lineno"]
+        assert "How Widget renders" in q0[GUIDE]["text"], q0[GUIDE]
+        assert q0[RECORD]["text"], "a JSON record carries its serialized fragment"
+        assert all(u.get("text") for u in q0.values()), "every fixture unit fits the cap"
+        # the cap: an oversized unit falls back to the pointer (no text in the item)
+        big = RC._queue_item({"id": "x", "kind": "file", "source_path": "x", "category":
+                              "doc", "content_sha": "s", "text": "y" * 30001}, 30000)
+        assert "text" not in big and big["line_end"] is None, big
+        print("PASS  queue: unit text + line_end inlined; oversized falls back to pointer")
+
         # lazy-aware: with nothing derived yet, the linker prep has nothing to link
         lc0 = LC.build_batches(proj, amg)
         assert lc0["eligible"] == 0 and lc0["batches"] == 0, lc0
