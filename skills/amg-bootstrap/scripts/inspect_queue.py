@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """
-inspect_queue.py — a read-only summary of the semantic work queue.
+inspect_queue.py — a read-only summary of the semantic work queue + build progress.
 
 After `reconcile.py bootstrap` writes `work/queue.json`, this shows its shape at a
 glance so you can decide how to derive it: how many units in total, the spread by
 category (code / doc / data), by unit kind (module / function / section / record / …),
-by top-level subtree, and how many units already carry pre-extracted `text` (PDF/DOCX/
-XLSX/CSV/log/chat — the builder summarizes those without re-opening the source). It is
-the counterpart to partition_queue.py (which does the actual split) and a sibling of
-inspect_graph.py (which browses the built graph). Nothing is written.
+by top-level subtree, and how many units carry their `text` inline (nearly all —
+the builder summarizes from the queue without re-opening sources; only oversized
+units fall back to the pointer). The `progress` block reports how far the build has
+come over the GRAPH — derived vs still-stale nodes as a percentage — so the
+orchestrator and the user see the traveled part of the path after every apply round
+(stage 20, audit 1.48). It is the counterpart to partition_queue.py (which does the
+actual split) and a sibling of inspect_graph.py (which browses the built graph).
+Nothing is written.
 
 CLI:
   python inspect_queue.py [<project_root>] [--root <agent_dir>]
@@ -25,14 +29,30 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import graph_store as gs
+import reconcile as rc                        # node loader for the progress block
 from partition_queue import subtree_key       # reuse the same subtree grouping
 
 
+def _progress(amg_root: Path) -> Dict[str, Any]:
+    """Derivation progress over the graph: nodes whose semantic layer is done vs
+    still stale. A scan, not the read-index — a progress ping between apply rounds
+    is rare enough that correctness-simplicity wins."""
+    total = stale = 0
+    if (amg_root / "nodes").exists():
+        nodes = rc.load_nodes(gs.GraphStore(amg_root))
+        total = len(nodes)
+        stale = sum(1 for n in nodes.values() if n.get("status") == "stale")
+    pct = round(100.0 * (total - stale) / total, 1) if total else 0.0
+    return {"nodes_total": total, "derived": total - stale, "stale": stale,
+            "derived_percent": pct}
+
+
 def summarize(amg_root: Path) -> Dict[str, Any]:
-    """Counts over work/queue.json. {"queue": None} when there is no queue file."""
+    """Counts over work/queue.json plus the graph progress block. `queue: None`
+    (with progress still present) when there is no queue file."""
     qpath = amg_root / "work" / "queue.json"
     if not qpath.exists():
-        return {"queue": None}
+        return {"queue": None, "progress": _progress(amg_root)}
     data = json.loads(qpath.read_text(encoding="utf-8"))
     units: List[Dict[str, Any]] = data.get("units", []) if isinstance(data, dict) else []
     by_category: Dict[str, int] = defaultdict(int)
@@ -47,7 +67,8 @@ def summarize(amg_root: Path) -> Dict[str, Any]:
             with_text += 1
     return {"total": len(units), "generated": data.get("generated") if isinstance(data, dict) else None,
             "by_category": dict(by_category), "by_kind": dict(by_kind),
-            "by_subtree": dict(by_subtree), "with_text": with_text}
+            "by_subtree": dict(by_subtree), "with_text": with_text,
+            "progress": _progress(amg_root)}
 
 
 def main(argv: List[str]) -> int:

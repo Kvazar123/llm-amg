@@ -185,6 +185,19 @@ derivation: eager        # eager | lazy
 derivation_cache: true
 
 # -----------------------------------------------------------------------------
+# Builder batches. partition_queue.py groups the semantic queue by subtree and
+# additionally splits any group under these caps — by unit count and by the
+# estimated input volume (the sum of carried unit texts) — so one builder's batch
+# never outgrows its context or its per-response output ceiling (a dense directory
+# used to become one giant batch whose loss on an interruption cost hours). The
+# builders also checkpoint output in parts, so an interrupted batch keeps what it
+# already wrote. Symmetric to linker.batch_nodes for the linking pass.
+# -----------------------------------------------------------------------------
+builder:
+  batch_units: 40         # units per builder batch
+  batch_max_chars: 120000 # estimated input volume per batch (sum of unit texts)
+
+# -----------------------------------------------------------------------------
 # Global semantic linking pass. After all summaries exist,
 # link_candidates.py nominates, for every derived node, its top-K most similar
 # nodes from other domains/files (cosine over the cached seed embeddings when a

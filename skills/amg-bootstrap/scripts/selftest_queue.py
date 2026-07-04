@@ -80,8 +80,40 @@ def test_inspect(tmp: Path) -> None:
     assert s["by_category"]["data"] == 2, s
     assert s["by_kind"]["function"] == 3, s
     assert s["with_text"] == 1, "only the CSV unit carries pre-extracted text"
-    assert IQ.summarize(tmp / "nope") == {"queue": None}, "missing queue -> None"
-    print("PASS  inspect: counts by category/kind, with_text, missing-queue -> None")
+    assert s["progress"]["nodes_total"] == 0, s["progress"]   # fixture has no graph
+    missing = IQ.summarize(tmp / "nope")
+    assert missing["queue"] is None and missing["progress"]["derived_percent"] == 0.0
+    print("PASS  inspect: counts by category/kind, with_text, progress; missing-queue -> None")
+
+
+def test_caps(tmp: Path) -> None:
+    """Stage 20 (audit 1.48): a dense subtree splits into numbered parts under the
+    builder caps — by unit count and by carried-text volume — while small groups
+    keep the old single-file names; a re-run replaces the previous batch set."""
+    amg = tmp / "amg4"
+    (amg / "work").mkdir(parents=True)
+    units = [{"id": f"code:src/big/f{i}.py::fn", "kind": "function",
+              "source_path": f"src/big/f{i}.py", "category": "code",
+              "text": "x" * 1000} for i in range(7)]
+    units.append({"id": "doc:doc/a.md::s", "kind": "section",
+                  "source_path": "doc/a.md", "category": "doc"})
+    (amg / "work" / "queue.json").write_text(
+        json.dumps({"generated": "t", "units": units}), encoding="utf-8")
+
+    counts = PQ.partition(amg, depth=2, max_units=3, max_chars=10 ** 6)
+    assert counts == {"src/big-01": 3, "src/big-02": 3, "src/big-03": 1, "doc": 1}, counts
+    assert (amg / "work" / "queue-src_big-01.json").exists()
+    assert (amg / "work" / "queue-doc.json").exists(), "small group keeps the plain name"
+
+    counts2 = PQ.partition(amg, depth=2, max_units=100, max_chars=2500)   # volume cap
+    assert counts2["src/big-01"] == 2 and counts2["src/big-04"] == 1, counts2
+
+    counts3 = PQ.partition(amg, depth=2, max_units=100, max_chars=10 ** 6)
+    assert counts3 == {"src/big": 7, "doc": 1}, counts3
+    assert not (amg / "work" / "queue-src_big-01.json").exists(), \
+        "a re-run must replace the previous batch set"
+    assert (amg / "work" / "queue.json").exists(), "the master queue is never touched"
+    print("PASS  caps: unit/volume chunking with -NN parts; re-run replaces the set")
 
 
 def test_priority(tmp: Path) -> None:
@@ -127,6 +159,7 @@ def main() -> int:
         test_subtree_key()
         test_partition(tmp)
         test_inspect(tmp)
+        test_caps(tmp)
         test_priority(tmp)
         print("\nALL QUEUE-HELPER CHECKS PASSED")
     finally:
