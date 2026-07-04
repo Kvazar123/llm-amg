@@ -179,7 +179,7 @@ delegating per-unit reading to subagents.
    still-stale nodes); unresolved `imports` to stdlib/third-party are legitimate
    and never flagged. The same verdict shows in `/amg status`.
 
-8. **Log.** The scripts append a txid-stamped line to `.claude/amg/log.md`. Confirm
+8. **Log.** The scripts append a txid-stamped line to `.claude/amg/actions.log`. Confirm
    to the user with the counts, the final progress percentage (`inspect_queue.py .`),
    the gap-report highlights, and the gate verdict — and say honestly whether every
    batch completed or something remains for the next run (an interrupted batch is

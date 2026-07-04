@@ -1,8 +1,8 @@
 ---
 name: amg-consolidate
 description: >-
-  Maintain AMG memory: fold the co-activation log into edge weights (Hebbian +
-  decay), file the session's conclusions/decisions as notes by value, and run
+  Maintain AMG memory: fold the co-activation log (Hebbian weight updates only when
+  enabled), file the session's conclusions/decisions as notes by value, and run
   threshold-gated branch compaction so the graph stays sharp and bounded. USE THIS
   at the END of a working session (before /clear), on a schedule, or when asked to
   "consolidate / clean up / compact memory", or when retrieval feels noisy. Memory
@@ -15,7 +15,10 @@ description: >-
 
 This closes the memory loop. Three concerns, in order of cost and safety:
 
-1. **Weights** — strengthen what was used, fade what wasn't. Deterministic, no model.
+1. **Weights** — fold the co-activation log. By default this only accumulates the
+   `coact` counters (conductance stays static and predictable); the Hebbian update
+   itself — strengthen the used, fade the unused, prune — runs only when
+   `weights.apply_hebbian: true`. Deterministic, no model.
 2. **Salience** — promote the session's worthwhile conclusions to long-term memory.
    Capture during a session is cheap and broad; *selection happens here*, with the
    full context, so we don't have to be right in the moment.
@@ -29,8 +32,8 @@ subagent, which emits an action list that the script applies transactionally.
 
 ## When to run
 End of a session (before `/clear`), on a schedule, or on request. Running it on an
-unchanged, in-budget graph is cheap and safe (weights decay slightly; nothing is
-compacted).
+unchanged, in-budget graph is cheap and safe (with no new co-activation log nothing
+changes; nothing is compacted).
 
 ## Workflow
 
@@ -38,9 +41,11 @@ compacted).
    ```bash
    python .claude/skills/amg-consolidate/scripts/consolidate.py weights .
    ```
-   This reads `.claude/amg/work/coactivation.log` (written by retrieval), applies
-   Hebbian reinforcement + decay, prunes faded edges, renormalizes `part_of`, and
-   rotates the log into the archive.
+   This reads `.claude/amg/work/coactivation.log` (written by retrieval), folds it
+   into the edges' `coact` counters, renormalizes `part_of`, and rotates the log into
+   the archive. The Hebbian update itself (reinforcement + decay + pruning) runs only
+   when `weights.apply_hebbian: true` in config.yml — off by default, so edge
+   conductance stays static until an uplift is measured.
 
 2. **Capture this session's conclusions** through the safe note API — never by
    hand-editing files under `nodes/`:

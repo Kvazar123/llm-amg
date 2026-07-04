@@ -153,8 +153,8 @@ def case_documented_layout():
     """The on-disk layout documented in 02-data-model.md and consistency-model.md
     must match exactly what graph_store.init() creates: the five node buckets plus
     journal/, and NO phantom files (index.md / graph.json are written and read by no
-    code). Everything else (work/, archive/, cache/, log.md, LOCK) is created on
-    demand, not by init()."""
+    code). Everything else (work/, archive/, cache/, actions.log, LOCK) is created
+    on demand, not by init()."""
     store = fresh_store()                       # fresh_store() already calls init()
     expected = {store.root, store.journal_dir, store.nodes_dir,
                 store.nodes_dir / "code", store.nodes_dir / "doc",
@@ -168,37 +168,46 @@ def case_documented_layout():
     for phantom in ("index.md", "graph.json"):
         assert not (store.root / phantom).exists(), \
             f"{phantom} is documented nowhere and must not exist"
-    for p in ("work", "archive", "cache", "log.md", "LOCK"):
+    for p in ("work", "archive", "cache", "actions.log", "LOCK"):
         assert not (store.root / p).exists(), f"{p} must be created on demand, not by init()"
     shutil.rmtree(store.root, ignore_errors=True)
     print("PASS  documented layout == graph_store.init() (5 buckets, no phantom files)")
 
 
 def case_action_log():
-    """append_log writes log.md transactionally, de-dups by txid, and rotates when
-    bounded — so a long-lived graph never rewrites an unbounded file (audit 1.15)."""
+    """append_log writes actions.log transactionally, de-dups by txid, and rotates
+    when bounded — so a long-lived graph never rewrites an unbounded file (audit
+    1.15); a plain flat log, no markdown markup (audit 1.36), and a legacy log.md
+    is adopted on the first write with its `## ` prefixes stripped."""
     store = fresh_store()
-    log = store.root / "log.md"
+    log = store.root / "actions.log"
 
     def nlines() -> int:
         return len(log.read_text(encoding="utf-8").splitlines()) if log.exists() else 0
+
+    # 0. Legacy adoption: a pre-rename log.md seeds the new file, prefixes stripped.
+    (store.root / "log.md").write_text(
+        "## [2026-01-01T00:00:00] tx-old consolidate | legacy line\n", encoding="utf-8")
 
     # 1. First line written through a real transaction (journal clean afterwards).
     store.append_log("consolidate", "weights folded", "tx-aaaa")
     body = log.read_text(encoding="utf-8")
     assert "consolidate | weights folded" in body and "tx-aaaa" in body
+    assert body.splitlines()[0] == "[2026-01-01T00:00:00] tx-old consolidate | legacy line", \
+        "legacy log.md history must carry over with the '## ' prefix stripped"
+    assert not any(ln.startswith("## ") for ln in body.splitlines()), "flat log, no markup"
     assert not list(store.journal_dir.iterdir()), "log write must commit and clean the journal"
 
     # 2. De-dup: the SAME committed txid must not append a second line.
     store.append_log("consolidate", "again", "tx-aaaa")
-    assert nlines() == 1, "same txid must not append twice"
+    assert nlines() == 2, "same txid must not append twice"
 
     # 3. A new txid appends; a None txid (e.g. a reject event) always appends.
     store.append_log("reconcile", "bootstrap: added=3", "tx-bbbb")
     store.append_log("consolidate", "eval-gate REJECTED", None)
-    assert nlines() == 3
+    assert nlines() == 4
     lines = log.read_text(encoding="utf-8").splitlines()
-    assert " reconcile |" in lines[1] and " consolidate |" in lines[2], \
+    assert " reconcile |" in lines[2] and " consolidate |" in lines[3], \
         "source label must be discriminable (lifecycle._last_consolidation filters on it)"
 
     # 4. Rotation: a bounded log moves the overflow to archive/, keeps the tail live.
@@ -208,9 +217,9 @@ def case_action_log():
     live = log.read_text(encoding="utf-8").splitlines()
     assert len(live) <= 5, f"live log must stay bounded, got {len(live)}"
     assert "line 19" in live[-1], "the newest line stays live (status reads the tail)"
-    assert list((store.root / "archive").glob("log-*.md")), "rotation must archive the overflow"
+    assert list((store.root / "archive").glob("actions-*.log")), "rotation must archive the overflow"
     shutil.rmtree(store.root, ignore_errors=True)
-    print("PASS  action log: transactional, de-duped by txid, bounded by rotation")
+    print("PASS  action log: flat actions.log, transactional, de-duped, rotated; legacy adopted")
 
 
 if __name__ == "__main__":

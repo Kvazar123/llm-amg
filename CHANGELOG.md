@@ -4,6 +4,19 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [1.11.1] — 2026-07-05
+
+A standalone fix release driven by the user's final review (audits §1.36 + §1.52 closed; a full prompt-consistency audit; README restructure). PATCH: no schema, config, or interface changes beyond the audit-log filename (the legacy file is adopted automatically).
+
+### Fixed
+- **Flat action log** (audits 1.36 + 1.52 p.1): the human-readable audit trail is now `actions.log` — plain `[<ts>] <txid> <source> | <msg>` lines with no markdown markup (every entry has the same shape, so headings added nothing); rotation goes to `archive/actions-<ts>.log`, and a legacy `log.md` is adopted on the first write with its `## ` prefixes stripped, then left untouched. `lifecycle` reads the new name with a legacy fallback; docs, blocks, and the consistency model renamed; the stale "best-effort, consolidation-only" paragraph in `07-consolidation.md` now describes the transactional log both write layers share.
+- **Prompt drifts found by a cross-audit of all 12 control-plane prompts:** the consolidate skill still claimed weights "decay slightly" on every run (stale pre-default-off wording — folding only accumulates `coact` unless `weights.apply_hebbian: true`; three spots fixed); the generic and Codex activation blocks predated the global linking pass — the codex subagent table now lists `amg-linker`, and the skill-less loop gained the linking step (nominate → judge per `amg-linker.md` → apply → `metrics` gate) plus "summarize from the queue's own `text`"; `/amg status`'s field list caught up (branch/commit, conflicts, connectivity); the generic block now drives status/on/off through `lifecycle.py` instead of hand-editing the config.
+- Batch-set cleanup in the queue and link-candidate splitters survives a transiently locked file on Windows (AV/indexer) — best-effort unlink.
+
+### Changed
+- **READMEs restructured for the first-page reader:** a "What sets AMG apart" bullet list closes "What it is" (the differentiators visible before "How it works"), and "What's implemented and what's planned" moved to sit directly before the license; both languages mirrored.
+- Roadmap bookkeeping: §3.2 anglicism table extended (батч, ресенд, чекпоинт, резюмируемость, линковка + the «деривация» relapse note); stage 21 gained three review-driven items (GUIDE completeness with the known flag gaps listed, the live-explanation prose register per §3.4, mirrored native quality for the EN translation); section-4 status banners; new audit item 1.53 (gitignore `!` negation is dropped — over-ignoring; standalone-fix home).
+
 ## [1.11.0] — 2026-07-05
 
 Stage 20 closed — building is economical and interruption-proof: the cost falls where it actually accrues (re-reading, re-sending, redoing), never in the meaning of what is built. Last of the three dogfood build-reliability stages (18–20); fixes audits §1.47/§1.48/§1.51. Additive (MINOR): new queue-item fields and config keys only; node schema, edges, and the derivation-item contract are unchanged (`DERIVATION_CONTRACT` not bumped — an existing derivation cache stays valid). The live ×20–30 cost/connectivity measurement is the joint Stage 19–20 acceptance on the real dogfood stand (user-run, outside dev sessions).

@@ -14,9 +14,10 @@ close synonyms, not the exact word.
 
     python .claude/skills/amg-bootstrap/scripts/lifecycle.py <verb>
 
-- `status` (state, info) — the one-screen report: active, automation, graph root, node
-  and stale counts, pending transactions, stale lock, queue size, last pack, last
-  consolidation, eval summary. Present it as-is.
+- `status` (state, info) — the one-screen report: active, automation, graph root, git
+  branch/commit, node and stale counts, pending transactions, stale lock, merge
+  conflicts, queue size, last pack, last consolidation, connectivity verdict, eval
+  summary. Present it as-is.
 - `on` (enable, activate, start) / `off` (disable, stop) — flip `active` in config.yml;
   confirm the new state. Note: `on` only enables AMG — building the graph is `sync`.
 - `repair` (fix, heal) — recover + verify --repair; confirm what was healed.

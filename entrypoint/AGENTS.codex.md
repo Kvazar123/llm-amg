@@ -39,7 +39,7 @@ Trigger by meaning and synonyms, not an exact command:
 
 | Operation | Skill | Subagents (TOML in `.codex/agents`) |
 |---|---|---|
-| Build / sync the graph | **amg-bootstrap** | amg-classifier, amg-builder, amg-synth |
+| Build / sync the graph | **amg-bootstrap** | amg-classifier, amg-builder, amg-synth, amg-linker |
 | Retrieve context | **amg-retrieve** | amg-retriever |
 | Consolidate memory | **amg-consolidate** | amg-consolidator |
 | Capture a note | `notes.py add` (direct) | — |
@@ -77,8 +77,8 @@ There are no SessionStart/SessionEnd hooks here, so **you** run each step at the
 
 ### Where things are
 - The graph: `.claude/amg/nodes/` — the source of truth, one file per node — plus `work/`
-  (scratch), `journal/` (crash-recovery state), `archive/`, `sessions/`, `log.md` (the
-  action log), and `digest.md` (read above).
+  (scratch), `journal/` (crash-recovery state), `archive/`, `sessions/`, `actions.log`
+  (the action log), and `digest.md` (read above).
 - Activation / sources / tunables: `.claude/amg/config.yml`.
 
 ### Boundaries — use the memory, don't edit its machinery mid-task

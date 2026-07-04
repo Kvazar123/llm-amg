@@ -101,8 +101,8 @@ explicit request.
 ### Where things are
 - The graph: `.claude/amg/nodes/` — the source of truth, one file per node — plus
   `work/` (scratch), `journal/` (crash-recovery state, empty when idle), `archive/`,
-  `sessions/` (auto-dumped session transcripts, ingested as a source), `log.md` (the
-  human-readable action log), and `digest.md` (the auto-generated standing-decisions
+  `sessions/` (auto-dumped session transcripts, ingested as a source), `actions.log`
+  (the human-readable action log), and `digest.md` (the auto-generated standing-decisions
   block imported above).
 - Activation / sources / tunables: `.claude/amg/config.yml`.
 

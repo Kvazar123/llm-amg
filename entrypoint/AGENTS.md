@@ -50,7 +50,8 @@ There are no hooks here, so **you** run each step at the right moment.
    python .claude/skills/amg-bootstrap/scripts/reconcile.py bootstrap .
    ```
    If it reports `queued_for_semantic > 0`, do the semantic enrichment **yourself**: read
-   `.claude/amg/work/queue.json`, and for each unit write a 1–3 phrase summary plus the
+   `.claude/amg/work/queue.json` (each unit carries its own `text` — summarize from it,
+   do not re-open sources), and for each unit write a 1–3 phrase summary plus the
    meaningful edges, following the guidance in `.claude/agents/amg-builder.md` (per-unit
    summaries + edges) and `.claude/agents/amg-synth.md` (an overview, hubs, cross-domain
    `documents` edges, and a gap report). Write the result to
@@ -58,8 +59,18 @@ There are no hooks here, so **you** run each step at the right moment.
    ```
    python .claude/skills/amg-bootstrap/scripts/reconcile.py apply .claude/amg/work/derived-<batch>.json .
    ```
-   Building from empty and reconciling are the same operation — crash-safe and idempotent,
-   so re-running never duplicates or loses anything.
+   Then complete the cross-domain links (doc <-> code <-> example) with the global
+   linking pass — per-batch summarizing cannot see across batches:
+   ```
+   python .claude/skills/amg-bootstrap/scripts/link_candidates.py .
+   ```
+   Judge each `work/link-batch-*.json` yourself following `.claude/agents/amg-linker.md`
+   (confirm only real relations; similarity merely nominates), write the update items to
+   `.claude/amg/work/derived-links-<n>.json`, apply them the same way, and check the
+   result — `python .claude/skills/amg-bootstrap/scripts/reconcile.py metrics .` should
+   report one dominant component (`gate: ok`). Building from empty and reconciling are
+   the same operation — crash-safe and idempotent, so re-running never duplicates or
+   loses anything.
 
 2. **Retrieve before you work.** For each task, FIRST assemble a context pack from the
    graph (seed → spreading activation → a budgeted pack), then work from it — do not dump
@@ -94,8 +105,10 @@ There are no hooks here, so **you** run each step at the right moment.
 ### Operations on request
 The same operations also run on a plain-language request — match intent and synonyms, not
 the exact word: "index / sync the project" → step 1; "gather context on X" → step 2; "wrap
-up / tidy memory" → step 3; "memory status" → run `graph_store.py verify` and read the
-node / queue counts; "enable / disable AMG" → flip `active:` in `.claude/amg/config.yml`.
+up / tidy memory" → step 3; "memory status" → `python
+.claude/skills/amg-bootstrap/scripts/lifecycle.py status .` (one screen, including the
+connectivity verdict); "enable / disable AMG" →
+`python .claude/skills/amg-bootstrap/scripts/lifecycle.py on` / `off .`.
 "open / show / visualize the graph" → render the read-only, offline 3D viewer and open it:
 ```
 python .claude/skills/amg-retrieve/scripts/export_graph.py --store .claude/amg --open
@@ -108,7 +121,7 @@ equivalent, and it works the same.)
 ### Where things are
 - The graph: `.claude/amg/nodes/` — the source of truth, one file per node — plus `work/`
   (scratch), `journal/` (crash-recovery state, empty when idle), `archive/`, `sessions/`,
-  `log.md` (the action log), and `digest.md` (read above).
+  `actions.log` (the action log), and `digest.md` (read above).
 - Activation / sources / tunables: `.claude/amg/config.yml`.
 
 ### Boundaries — use the memory, don't edit its machinery mid-task

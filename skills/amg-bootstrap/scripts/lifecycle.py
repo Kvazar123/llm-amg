@@ -505,8 +505,11 @@ def _queue_size(amg: Path) -> Optional[int]:
 
 
 def _last_consolidation(amg: Path) -> Optional[str]:
-    """The most recent consolidation line from the best-effort action log."""
-    log = amg / "log.md"
+    """The most recent consolidation line from the best-effort action log
+    (actions.log; a graph last written before the rename still has log.md)."""
+    log = amg / "actions.log"
+    if not log.exists():
+        log = amg / "log.md"                 # legacy name, adopted on the next write
     if not log.exists():
         return None
     last = None

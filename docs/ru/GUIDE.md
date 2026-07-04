@@ -413,6 +413,7 @@ tree-sitter-language-pack
 .claude/amg/work/
 .claude/amg/archive/
 .claude/amg/LOCK
+.claude/amg/actions.log
 .claude/amg/log.md
 ```
 

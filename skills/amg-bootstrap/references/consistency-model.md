@@ -100,7 +100,7 @@ on an unchanged repo does zero model work and produces zero changes.
   cache/embeddings.json  node embedding cache (disposable)
   cache/index.sqlite  generated read-index over nodes/ for retrieve.load_nodes
                       (disposable; rebuilt on a signature miss; never the source of truth)
-  log.md              human-readable action audit log (transactional, de-duped by txid, rotated)
+  actions.log         human-readable action audit log (flat lines, transactional, de-duped by txid, rotated)
   LOCK                single-writer lock (absent when no writer holds it)
 ```
 
@@ -220,7 +220,7 @@ mid-apply and asserting consistency after `recover()`.
 
 ## 11. Logging
 
-`log.md` is a human-readable audit trail of completed actions, written through the
+`actions.log` is a human-readable audit trail of completed actions — a flat log of uniform lines (formerly `log.md`; a legacy file is adopted, prefixes stripped, on the first write), written through the
 store's `append_log(source, msg, txid)` — **transactionally**, not by a raw append.
 Each entry is `## [<ts>] <txid> <source> | ...`, staged as a single content-addressed
 blob, so a replay during recovery is idempotent and an entry whose `txid` is already
@@ -230,7 +230,7 @@ live, so a long-lived graph never rewrites an unbounded file per write. Both wri
 it — `consolidate.py` and `reconcile.py` (the latter only when a diff actually changed
 the graph, so an unchanged re-run logs nothing and stays idempotent). Writing is still
 best-effort (any failure is swallowed): graph integrity rests on the journal, not on
-`log.md`, so a missing audit line remains harmless. This implements the model "append as
+the audit log, so a missing audit line remains harmless. This implements the model "append as
 part of a committed transaction with de-dup by txid" (audit 1.15, done at Stage 12).
 
 ## 12. What is *not* auto-recoverable, and the mitigations

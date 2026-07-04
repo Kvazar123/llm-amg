@@ -388,9 +388,13 @@ class GraphStore:
     def append_log(self, source: str, msg: str, txid: Optional[str] = None,
                    archive_dir: str = "archive", max_lines: int = 500,
                    keep_tail: int = 100) -> None:
-        """Append one human-readable audit line to log.md, transactionally.
+        """Append one human-readable audit line to actions.log, transactionally.
 
-        Line shape: `## [<ts>] <txid|-> <source> | <msg>`. Unlike a plain append:
+        Line shape: `[<ts>] <txid|-> <source> | <msg>` — a plain flat log: every
+        entry has the same shape, so markdown markup would add nothing (the file
+        was historically named log.md with `## ` heading prefixes; a legacy log.md
+        is carried over line-by-line on the first write, prefixes stripped, and
+        then left untouched as its own archive). Unlike a plain append:
 
           * the write goes through a transaction (atomic, crash-safe, idempotent
             on replay — the whole log is staged as one content-addressed blob);
@@ -398,27 +402,32 @@ class GraphStore:
             (de-dup by txid), so a re-run of the same committed change never
             double-logs;
           * the log is BOUNDED: once it would exceed `max_lines`, the older lines
-            are rotated into `<archive_dir>/log-<ts>.md` and only the tail stays
-            live, so a long-lived graph never rewrites an unbounded file per write.
+            are rotated into `<archive_dir>/actions-<ts>.log` and only the tail
+            stays live, so a long-lived graph never rewrites an unbounded file.
 
         Call it under the single-writer lock the caller already holds (it opens its
         own transaction; commit() does not take the lock). Best-effort: any failure
-        is swallowed — graph integrity rests on the journal, not on log.md, so a
-        missing or torn audit line is harmless.
+        is swallowed — graph integrity rests on the journal, not on the audit log,
+        so a missing or torn line is harmless.
         """
         try:
-            log_rel = "log.md"
+            log_rel = "actions.log"
             log_path = self.root / log_rel
-            lines = (log_path.read_text(encoding="utf-8").splitlines()
-                     if log_path.exists() else [])
+            if log_path.exists():
+                lines = log_path.read_text(encoding="utf-8").splitlines()
+            else:                        # first write: adopt the legacy log.md history
+                legacy = self.root / "log.md"
+                lines = ([ln[3:] if ln.startswith("## ") else ln
+                          for ln in legacy.read_text(encoding="utf-8").splitlines()]
+                         if legacy.exists() else [])
             if txid and any(txid in ln for ln in lines):
                 return                                  # already logged this txn
             ts = time.strftime("%Y-%m-%dT%H:%M:%S")
-            lines.append(f"## [{ts}] {txid or '-'} {source} | {msg}")
+            lines.append(f"[{ts}] {txid or '-'} {source} | {msg}")
             tx = self.transaction()
             if len(lines) > max_lines:                  # rotate, keep the tail live
                 cut = len(lines) - keep_tail
-                arch = f"{archive_dir}/log-{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:6]}.md"
+                arch = f"{archive_dir}/actions-{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:6]}.log"
                 tx.write(arch, "\n".join(lines[:cut]) + "\n")
                 lines = lines[cut:]
             tx.write(log_rel, "\n".join(lines) + "\n")
