@@ -193,7 +193,7 @@ def test_chat_reconcile():
 
 
 def test_paragraph_linenos(tmp):
-    """Paragraph blocks carry REAL line numbers (audit 1.51) and their `text`; the
+    """Paragraph blocks carry REAL line numbers and their `text`; the
     block content (and hash) matches the former regex split, so old graphs converge
     by pointer drift only."""
     p = tmp / "notes.txt"

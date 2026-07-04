@@ -9,8 +9,8 @@ by top-level subtree, and how many units carry their `text` inline (nearly all �
 the builder summarizes from the queue without re-opening sources; only oversized
 units fall back to the pointer). The `progress` block reports how far the build has
 come over the GRAPH — derived vs still-stale nodes as a percentage — so the
-orchestrator and the user see the traveled part of the path after every apply round
-(stage 20, audit 1.48). It is the counterpart to partition_queue.py (which does the
+orchestrator and the user see the traveled part of the path after every apply
+round. It is the counterpart to partition_queue.py (which does the
 actual split) and a sibling of inspect_graph.py (which browses the built graph).
 Nothing is written.
 

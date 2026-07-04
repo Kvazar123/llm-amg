@@ -62,7 +62,7 @@ def build_project() -> Path:
     amg.mkdir(parents=True)
     # embeddings off: the candidate check below must exercise the LEXICAL fallback
     # deterministically, whatever backends this machine has installed; the trivial
-    # shortcut is ON (stage 20) — helper and Widget.render are its targets below
+    # shortcut is ON — helper and Widget.render are its targets below
     (amg / "config.yml").write_text(
         "active: true\nworking_language: en\nmirror_path: [src, doc, data]\n"
         "trivial_unit_max_lines: 3\n"
@@ -174,7 +174,7 @@ def main() -> int:
         assert ("imports", CORE) in rels(INIT)
         print("PASS  skeleton: backbone + resolved calls, no builtin edges")
 
-        # stage 20 (audit 1.47): a trivial function is derived by code — active, its
+        # a trivial function is derived by code — active, its
         # one-line source as the summary, structural edges intact, NOT in the queue;
         # a protocol dunder (__call__) and a 4-line body still go to the model
         helper_node = nodes[f"{UTIL}::helper"]
@@ -189,7 +189,7 @@ def main() -> int:
         assert f"{CORE}::Base.ping" in queued_ids, "a 4-line body is not trivial"
         print("PASS  trivial: auto-summary derives dunder-sized units; guard + size respected")
 
-        # stage 20 (audit 1.47): the queue carries each unit's own text + line_end,
+        # the queue carries each unit's own text + line_end,
         # so the builder summarizes from the queue without re-opening sources
         q0 = {u["id"]: u for u in json.loads(
             (amg / "work" / "queue.json").read_text(encoding="utf-8"))["units"]}

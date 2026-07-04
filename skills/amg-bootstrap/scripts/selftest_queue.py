@@ -87,7 +87,7 @@ def test_inspect(tmp: Path) -> None:
 
 
 def test_caps(tmp: Path) -> None:
-    """Stage 20 (audit 1.48): a dense subtree splits into numbered parts under the
+    """A dense subtree splits into numbered parts under the
     builder caps — by unit count and by carried-text volume — while small groups
     keep the old single-file names; a re-run replaces the previous batch set."""
     amg = tmp / "amg4"

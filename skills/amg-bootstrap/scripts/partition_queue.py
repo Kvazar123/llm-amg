@@ -44,7 +44,7 @@ except ImportError:                       # pragma: no cover
     sys.stderr.write("partition_queue.py needs PyYAML: pip install pyyaml\n")
     raise
 
-# One builder batch is bounded two ways (stage 20, audit 1.48): by unit count and by
+# One builder batch is bounded two ways: by unit count and by
 # estimated input volume. Symmetric to `linker.batch_nodes` for the linking pass.
 BUILDER_DEFAULTS: Dict[str, Any] = {"batch_units": 40, "batch_max_chars": 120000}
 

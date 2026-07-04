@@ -217,7 +217,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
         def _auto_summary(unit: Dict[str, Any]) -> Optional[str]:
             """The trivial-unit shortcut, cache-aware: a unit already derived once
             restores its EARNED judgment verbatim from the derivation cache, so the
-            template applies only to a genuine cache miss (audit 1.47)."""
+            template applies only to a genuine cache miss."""
             s = _trivial_summary(unit, trivial_max)
             if s is not None and cache_on and _cache_lookup(
                     store.root, str(default_lang), unit["content_sha"]):
@@ -841,7 +841,7 @@ _SIGNIFICANT_DUNDERS = {
 def _trivial_summary(unit: Dict[str, Any], max_lines: int) -> Optional[str]:
     """Deterministic auto-summary for a TRIVIAL code unit — a function whose whole
     definition spans at most `max_lines` lines: dunders, one-line getters and other
-    mechanical bodies (audit 1.47). The summary is the unit's own code collapsed to
+    mechanical bodies. The summary is the unit's own code collapsed to
     one line — language-neutral (identifiers verbatim; the working_language rule
     concerns prose), token-bearing for lexical seeding, impossible to hallucinate.
     Returns None when the unit does not qualify (only code functions; the protocol
@@ -867,7 +867,7 @@ def _trivial_summary(unit: Dict[str, Any], max_lines: int) -> Optional[str]:
 # Ceiling on the unit text carried into work/queue.json (chars). Every chunker now
 # hands over the unit's exact content slice, and inlining it is strictly cheaper for
 # the builder than a Read call (same content cost, no tool round-trip that re-sends
-# the whole accumulated context — the dominant token sink of a build, audit 1.47).
+# the whole accumulated context — the dominant token sink of a build).
 # The cap only guards against pathological units (a minified bundle, a giant module):
 # above it the item falls back to the pointer and the builder reads the slice itself.
 QUEUE_TEXT_MAX_CHARS = 20000

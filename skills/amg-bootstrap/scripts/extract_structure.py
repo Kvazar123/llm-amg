@@ -739,7 +739,7 @@ def _markdown_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
 
 
 def _text_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
-    """Blank-line-separated paragraph blocks with REAL line numbers (audit 1.51):
+    """Blank-line-separated paragraph blocks with REAL line numbers:
     blocks are the runs of non-blank lines, so `lineno`/`line_end` point at the actual
     slice instead of a flat 1. The block content (and therefore its hash) is identical
     to the former regex split — existing graphs converge by cheap pointer drift, never
