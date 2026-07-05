@@ -33,22 +33,28 @@ At session start, check whether `.claude/amg/config.yml` exists with `active: tr
 
 ### Operations — manual and by request
 Every operation is available three ways: a `/amg <verb>` command, a direct skill, and
-plain-language intent. Match meaning and synonyms, not the exact word.
+plain-language intent. Match meaning and synonyms, not the exact word — the examples
+below are English, but the same intent in the user's language counts. One guard: treat
+a phrase as a memory operation **only when it explicitly refers to this memory** — it
+names the memory, the memory graph, or AMG. A generic "show the graph", "fix the
+graph", or "wrap up" about something else (the user's own data structure, a chart, the
+conversation) must NOT trigger one; when unsure, just answer normally.
 
-| Operation | `/amg` verb (synonyms) | Skill / script | Verbal intent |
+| Operation | `/amg` verb (synonyms) | Skill / script | Verbal intent (names the memory) |
 |---|---|---|---|
-| Show status | `status` | `lifecycle.py status` | "memory status", "статус памяти" |
-| Enable / disable | `on` / `off` (activate, start · stop) | `lifecycle.py on`/`off` | "включи / выключи / запусти AMG" |
-| Repair the graph | `repair` (fix, heal) | `lifecycle.py repair` | "почини / проверь граф" |
-| Build / sync the graph | `sync` (build, index, reconcile) | **amg-bootstrap** | "проиндексируй / синхронизируй проект" |
-| Retrieve context | `retrieve <q>` (recall, context) | **amg-retrieve** | "собери контекст по X" |
-| Consolidate memory | `consolidate` (maintain, compact) | **amg-consolidate** | "подведём итоги", "прибери память" |
-| Open the graph viewer | `view` (show graph, visualize) | `export_graph.py --open` | "open / show the graph", "visualize the memory" |
-| Capture a note | — | `notes.py add` | "запомни, что …" |
+| Show status | `status` | `lifecycle.py status` | "memory status", "how is the memory graph" |
+| Enable / disable | `on` / `off` (activate, start · stop) | `lifecycle.py on`/`off` | "turn AMG on / off", "enable the memory" |
+| Repair the graph | `repair` (fix, heal) | `lifecycle.py repair` | "repair / check the memory graph" |
+| Build / sync the graph | `sync` (build, index, reconcile) | **amg-bootstrap** | "index the project into memory", "sync the memory graph" |
+| Retrieve context | `retrieve <q>` (recall, context) | **amg-retrieve** | "pull context on X from memory", "what does the memory hold on X" |
+| Consolidate memory | `consolidate` (maintain, compact) | **amg-consolidate** | "consolidate the memory", "wrap up and save to memory" |
+| Open the graph viewer | `view` (show graph, visualize) | `export_graph.py --open` | "open / show the memory graph", "visualize the memory" |
+| Capture a note | — | `notes.py add` | "remember (in memory) that …" |
 
 `on` only sets the `active` flag; **building the graph is `sync`** (the amg-bootstrap
-skill) — enabling alone does not build it. Treat synonyms as equivalent: "включи /
-активируй / запусти AMG" all mean enable; "построй / обнови / сверь граф" all mean sync.
+skill) — enabling alone does not build it. Treat synonyms as equivalent: "turn on /
+activate / start AMG" all mean enable; "build / refresh / reconcile the memory graph"
+all mean sync.
 
 **`automation` (config.yml, default `true`).** `true`: the SessionStart/SessionEnd hooks
 heal the store, fold weights, and refresh the digest automatically, and you run the loop

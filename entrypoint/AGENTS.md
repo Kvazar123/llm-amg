@@ -104,12 +104,16 @@ There are no hooks here, so **you** run each step at the right moment.
 
 ### Operations on request
 The same operations also run on a plain-language request — match intent and synonyms, not
-the exact word: "index / sync the project" → step 1; "gather context on X" → step 2; "wrap
-up / tidy memory" → step 3; "memory status" → `python
-.claude/skills/amg-bootstrap/scripts/lifecycle.py status .` (one screen, including the
-connectivity verdict); "enable / disable AMG" →
+the exact word, in any language. One guard: treat a phrase as a memory operation **only
+when it explicitly refers to this memory** (it names the memory, the memory graph, or
+AMG); a generic "show the graph" or "wrap up" about something else must NOT trigger one.
+Examples: "index the project into memory / sync the memory graph" → step 1; "gather
+context on X from memory" → step 2; "consolidate / tidy the memory" → step 3; "memory
+status" → `python .claude/skills/amg-bootstrap/scripts/lifecycle.py status .` (one
+screen, including the connectivity verdict); "enable / disable AMG" →
 `python .claude/skills/amg-bootstrap/scripts/lifecycle.py on` / `off .`.
-"open / show / visualize the graph" → render the read-only, offline 3D viewer and open it:
+"open / show / visualize the memory graph" → render the read-only, offline 3D viewer and
+open it:
 ```
 python .claude/skills/amg-retrieve/scripts/export_graph.py --store .claude/amg --open
 ```

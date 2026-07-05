@@ -11,7 +11,7 @@ description: >-
   tune it. Triggers: any task naming a function/module/subsystem/feature; "pull
   context for", "what's relevant to", "retrieve before we start". Also renders a
   read-only 3D graph viewer (export_graph.py) on request: "open / show / visualize the
-  graph".
+  memory graph".
 ---
 
 # AMG Retrieve
@@ -109,9 +109,8 @@ wins** over the summary (current code > a stale summary). A maintenance or CI sw
 stamp the verdict back into the graph with `--write`; the default run touches nothing.
 
 Verify the specific claims you are about to make — only the claims you actually use, not
-the whole pack. This is the behavioral half of the provenance/verification layer
-(roadmap Stage 13); the schema fields (`provenance`, `confidence`, `verification`) and
-the marking above carry the rest.
+the whole pack. This is the behavioral half of the trust layer; the schema fields
+(`provenance`, `confidence`, `verification`) and the marking above carry the rest.
 
 ## Measuring and tuning recall
 
@@ -149,13 +148,14 @@ python .claude/skills/amg-retrieve/scripts/export_graph.py --store .claude/amg -
 `--open` writes `.claude/amg/cache/graph.html` and opens it; omit it to just write the
 file. `--json [path]` instead writes the raw `{nodes, links, meta}` for external graph
 tooling (it is not needed by the viewer). Click a node for its full frontmatter and edges;
-color is by bucket (Stage 14 `disputed`/`rejected` highlighted, `superseded`/`stale`
-dimmed), size by degree (hubs read large), with filters (type/status/bucket), search
-(id/summary), a light/dark toggle, and — on a large graph — a hubs-first mode that expands
-on click. Tunables (quality, `large_graph_mode`, `large_graph_nodes`, raw 3d-force-graph
-`options`) live in `config.yml → viewer`. Read-only w.r.t. the graph (writes only
-`cache/graph.html`). Triggers: "open / show / visualize the graph" (in any language —
-match the meaning, not the words).
+color is by bucket (the arbitration verdicts `disputed`/`rejected` highlighted,
+`superseded`/`stale` dimmed), size by degree (hubs read large), with filters
+(type/status/bucket), search (id/summary), a light/dark toggle, and — on a large graph — a
+hubs-first mode that expands on click. Tunables (quality, `large_graph_mode`,
+`large_graph_nodes`, raw 3d-force-graph `options`) live in `config.yml → viewer`.
+Read-only w.r.t. the graph (writes only `cache/graph.html`). Triggers: "open / show /
+visualize the memory graph" (in any language — match the meaning, not the words, but only
+when the request explicitly refers to this memory / AMG).
 
 ## Reference
 - `scripts/retrieve.py` — the retriever (importable `retrieve(...)` + CLI).
@@ -163,7 +163,9 @@ match the meaning, not the words).
 - `scripts/embed.py` — OPTIONAL semantic seed enrichment (see below).
 - `scripts/eval_retrieval.py` — recall/precision/hop-recall vs lexical baseline.
 - `scripts/verify_claims.py` — verify a code claim against live source (file/symbol/hash);
-  read-only by default, `--write` stamps the verification block (Stage 13).
+  read-only by default, `--write` stamps the verification block.
+- `evals/cases.json` — your labeled eval set (template provided).
+- Subagent: `../../agents/amg-retriever.md`.
 
 ## Optional: embedding seed enrichment
 By default seeding is lexical (BM25). If an embedding backend is installed, retrieval
@@ -174,5 +176,3 @@ off vs on). Enable in `config.yml` under `retrieval.embeddings`; install a backe
 with `pip install model2vec` (light) or `pip install sentence-transformers`. With no
 backend, retrieval silently stays pure-BM25. Node vectors are cached and recomputed
 only when a node changes. Self-test: `scripts/selftest_embed.py`.
-- `evals/cases.json` — your labeled eval set (template provided).
-- Subagent: `../../agents/amg-retriever.md`.

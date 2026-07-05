@@ -4,7 +4,7 @@ inspect_graph.py - browse the AMG graph to see what's in it and pick gold_ids fo
 eval cases. Read-only; prints each node's id, type, and summary.
 
   python inspect_graph.py                          # all nodes, summaries truncated
-  python inspect_graph.py --grep роутинг           # only nodes whose id/summary matches
+  python inspect_graph.py --grep routing           # only nodes whose id/summary matches
   python inspect_graph.py --bucket doc             # only nodes/doc
   python inspect_graph.py --grep controller --full # full summaries
 

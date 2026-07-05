@@ -120,7 +120,7 @@ From install to memory's first answer is a couple of steps; no manual scripts �
 ```
 One screen: whether memory is active, graph size, queue, recent operations. Every operation is available through the single `/amg <verb>` command — or the same words in an ordinary request.
 
-**Work.** From here, **just ask the model questions about your project** — it assembles the right context from the graph itself (the strategic surround plus the specifics) and files conclusions as it goes. If you didn't choose to build during install, the graph builds in a new session before the first task (with automation on) or right away via `/amg sync` (the words "build / sync the graph").
+**Work.** From here, **just ask the model questions about your project** — it assembles the right context from the graph itself (the strategic surround plus the specifics) and files conclusions as it goes. If you didn't choose to build during install, the graph builds in a new session before the first task (with automation on) or right away via `/amg sync` (the words "build / sync the memory graph").
 
 ## Sources: mirror and absorb
 
@@ -149,7 +149,7 @@ How much memory does on its own is set by the `automation` key in the config (on
 - **automatic mode** (`automation: true`) — memory runs itself: the `SessionStart`/`SessionEnd` hooks (a Claude Code mechanism) deterministically heal the graph after crashes, fold weights, and dump the session transcript, while the model's loop gathers context before each task, files conclusions along the way, and runs consolidation at the end;
 - **manual mode** (`automation: false`) — memory does nothing on its own, only on a command or an explicit request.
 
-All control goes through one `/amg <verb>` command (and the same words in an ordinary request: the model matches intent and synonyms, not the exact verb):
+All control goes through one `/amg <verb>` command (and the same words in an ordinary request: the model matches intent and synonyms, not the exact verb; a verbal request counts as a memory operation only when it explicitly names the memory, the memory graph, or AMG):
 
 | Command | Action |
 |---|---|
@@ -168,7 +168,7 @@ Control verbs (`status`/`on`/`off`/`repair`) are run by a helper script; work ve
 
 ## 3D graph viewer
 
-You can open the memory's structure as a **self-contained, offline HTML page** with a 3D visualization — by command, the `amg-retrieve` skill, `/amg view`, or the words "open the graph":
+You can open the memory's structure as a **self-contained, offline HTML page** with a 3D visualization — by the command below, the `amg-retrieve` skill, `/amg view`, or the words "open the memory graph":
 
 ```bash
 python .claude/skills/amg-retrieve/scripts/export_graph.py --store .claude/amg --open

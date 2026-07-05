@@ -6,8 +6,7 @@
      the model drives the loop via skills + subagents, and lifecycle (heal at start,
      consolidate at end) is loop discipline, not hooks. The installer writes this for
      `--env codex` and renders the paths to the configured agent dir. NOTE: this mode is
-     not yet verified on a live Codex (a later roadmap stage); stability is not
-     guaranteed. -->
+     not yet verified on a live Codex; stability is not guaranteed. -->
 
 ## AMG — Associative Memory Graph
 
@@ -35,7 +34,10 @@ Check whether `.claude/amg/config.yml` exists with `active: true`.
 - **Present and active** → AMG is ON. Follow the operating loop below.
 
 ### Operations — skills + subagents, by intent
-Trigger by meaning and synonyms, not an exact command:
+Trigger by meaning and synonyms, not an exact command — in any language. One guard:
+treat a request as a memory operation **only when it explicitly refers to this memory**
+(it names the memory, the memory graph, or AMG); a generic "show the graph" or "wrap up"
+about something else must NOT trigger one.
 
 | Operation | Skill | Subagents (TOML in `.codex/agents`) |
 |---|---|---|

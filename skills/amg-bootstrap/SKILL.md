@@ -9,8 +9,9 @@ description: >-
   edited, or deleted. Building from empty and reconciling an existing graph are the
   SAME operation — always run this rather than hand-editing the graph. It is
   crash-safe and idempotent: running it again never duplicates or loses anything.
-  Triggers: "bootstrap the graph", "index this project", "the graph is stale", "I
-  added/changed/deleted files", "reconcile AMG", "build memory for this project".
+  Triggers: "bootstrap the memory graph", "index this project into memory", "the
+  memory graph is stale", "I added/changed/deleted files", "reconcile AMG", "build
+  memory for this project".
 ---
 
 # AMG Bootstrap / Reconcile
@@ -192,7 +193,7 @@ delegating per-unit reading to subagents.
 - **`eager`** (default) — derive every queued unit (steps 3–4 over the whole `queue.json`),
   then synthesize (step 5). This is the workflow above.
 - **`lazy`** — build the structural map now, defer leaf detail until a query needs it. Use
-  it only on a graph far larger than it is queried (THEORY §4.10); the default stays `eager`.
+  it only on a graph far larger than it is queried; the default stays `eager`.
 
 In **`lazy`** mode, after step 2 split the queue into a priority batch and a deferred
 remainder, and derive only the priority batch:

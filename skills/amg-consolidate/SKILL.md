@@ -7,8 +7,9 @@ description: >-
   at the END of a working session (before /clear), on a schedule, or when asked to
   "consolidate / clean up / compact memory", or when retrieval feels noisy. Memory
   is NOT compressed by default — compaction only triggers on branches over budget.
-  Crash-safe and idempotent. Triggers: "consolidate memory", "update weights", "file
-  what we decided", "the graph is getting noisy/large", "wrap up this session".
+  Crash-safe and idempotent. Triggers: "consolidate memory", "update the memory
+  weights", "file what we decided into memory", "the memory graph is getting
+  noisy/large", "wrap up this session and save the memory".
 ---
 
 # AMG Consolidate
