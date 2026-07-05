@@ -28,6 +28,9 @@ flowchart LR
 - **a human-readable canon** — the graph lives as plain markdown files: git, grep, and your editor work with no special tooling, and the memory can be diffed, versioned, and inspected by eye;
 - **crash safety** — a write-ahead journal and atomic transactions: an interruption at any point recovers by itself, and an interrupted build resumes where it stopped;
 - **a trust layer** — every fact knows its origin and confidence, a code claim is checked against the live source before it is answered, and contradictions are arbitrated by source reliability rather than silenced;
+- **selection into memory by value of information** — what gets promoted into long-term knowledge is decided by an auditable salience rubric (novelty, decisions and commitments, bridging, provenance), not a black box: capture stays cheap and broad as you work, selection happens later at consolidation, and the threshold sits on promotion, not deletion;
+- **experience transfer by analogy** — a recurring approach, fix, or mistake is generalized into a pattern node linked to its concrete cases: a new similar case surfaces not just the examples but the lesson itself — "we've solved something like this before, this way";
+- **dialogue is memory too** — decisions and conclusions from the conversation are captured as notes along the way, the session transcript is dumped automatically, and a digest of the key standing decisions and open questions loads into every session before the first retrieval;
 - **reproducible, economical building** — summaries written once restore verbatim from a cache, each unit's text is handed to the builders inside the assignment, and trivial units are summarized by code with no model;
 - **quality as a number, not a feeling** — recall and graph connectivity are measured by built-in metrics, and compaction passes an automatic recall guard;
 - **controlled, reversible forgetting** — memory is compressed only past a branch budget, with originals archived;
@@ -195,6 +198,29 @@ The base path runs on the Python standard library; anything missing is **skipped
 
 For **non-English projects** the engine picks a multilingual default model on its own — just install a backend and enable seeding.
 
+## What's implemented
+
+The memory mechanism is implemented in full — from the store to the trust layer:
+
+- **Store** — a transactional file core: atomic writes, a write-ahead journal, crash recovery, a single writer lock.
+- **Ingest** — a type classifier and a broad set of chunkers: code (Python natively, other languages via tree-sitter), Markdown/RST, plain text, JSON/YAML with recursion, NDJSON, CSV, logs, chat exports, PDF/DOCX/XLSX/PPTX; the `mirror` / `absorb` / `absorb_once` source policies.
+- **Graph building** — a deterministic edge backbone (calls resolved across files, containment and inheritance extracted by code), a global semantic linking pass across domains, an apply step resilient to malformed items, and an acceptance connectivity report; the derivation cache makes a rebuild verbatim and nearly free.
+- **Build economy and resilience** — each unit's text travels to the builders inside the work queue (sources are never re-read), trivial units are summarized by code with no model call, batches are bounded and written in checkpoint parts, an interrupted build resumes where it left off, and agents report status and progress honestly; the savings come from eliminating repeated work, never from thinning the meaning.
+- **Retrieval** — BM25 seeding + optional embeddings + Personalized PageRank + a tiered pack under a token budget.
+- **Consolidation** — weight folding, the salience rubric, staged compaction under an eval guard, safe note capture as you work.
+- **Trust layer and arbitration** — provenance and confidence on every fact; code claims checked against the live source, with unverified, stale, and contested nodes flagged in the pack; contradictions resolved by source reliability, freshness, and confidence rather than query frequency (non-destructive verdicts, a visible audit trail, intent-driven surfacing of retired and disputed facts); usage provenance accumulates as an honest substrate for weight learning, and the improved rule reinforces edges by the real task outcome, not blind co-activation.
+- **Lifecycle** — session hooks, the single `/amg` command, `automation` modes, an always-on digest; the session transcript auto-dumped with a write policy.
+- **Installation** — `install.py`: local and global, reinstall and uninstall, portability across the agent directory and environments (Claude Code / Codex / other AGENTS.md environments), two configuration layers.
+- **Performance** — a generated read-index under retrieval on large graphs, subagent model tiering, speed benchmarks.
+- **Advanced semantic layer** — project-local pattern nodes (architectural pattern, recurring fix, anti-pattern, migration recipe — transferring experience and analogies within the project) and optional lazy derivation for very large, sparsely-queried graphs (off by default, `derivation: eager`).
+- **A 3D graph viewer** and **team work** (a shared folder and an optional graph-in-git) — covered in their own sections above.
+
+Version 1.0 fixed a stable data schema and a working install; later releases are additive or come with a migration (under SemVer, breaking the data contract without a migration would be a MAJOR bump).
+
+## License
+
+AMG is licensed under the **PolyForm Strict License 1.0.0**: noncommercial use is free, but with **no modification, derivative works, or redistribution**; any **commercial** use, as well as any modification or derivative works, requires a separate license from the author (`reghost200@gmail.com`). The software is provided "as is" and used at your own risk. Full text and terms — [LICENSE](LICENSE).
+
 ## Documentation map
 
 - [Theory](docs/en/THEORY.md) — the rationale: memory, associative retrieval, plasticity.
@@ -202,15 +228,3 @@ For **non-English projects** the engine picks a multilingual default model on it
 - [Guide](docs/en/GUIDE.md) — how to use every capability.
 - [Install](INSTALL.md) — install with the installer (model-driven or by command), reinstall, uninstall.
 - [Roadmap](docs/en/architecture/11-roadmap.md) — what's implemented and what's ahead.
-
-## What's implemented and what's planned
-
-The base path is implemented and stabilized (roadmap stages 0–14): the transactional store, structure extraction with a classifier and a broad set of chunkers (code, Markdown/RST, text, JSON/YAML with recursion, NDJSON, CSV, logs, chat exports, PDF/DOCX/XLSX/PPTX), `mirror`/`absorb`/`absorb_once` reconciliation, retrieval (BM25 + embeddings + Personalized PageRank + a tiered pack), consolidation (weights, salience, compaction under an eval guard), safe note capture, the lifecycle layer (session hooks, `/amg` commands, `automation` modes, an always-on digest), session saving (an auto-dumped dialogue with a write policy), **packaging with an installer** (`install.py`: local/global, reinstall and uninstall, portability across the agent directory), **performance and scaling** (a generated read-index under retrieval for large graphs, subagent model tiering, benchmarks), a **trust layer** (provenance and confidence on every fact, `verify_claims` checking code claims against the live source and flagging unverified/stale/contradicted nodes in the pack, and usage provenance as an honest substrate for weight learning), and **epistemic contradiction arbitration** (conflicts are resolved by source reliability, freshness and confidence — not by query frequency: non-destructive verdicts `supersede`/`dispute`/`reject`/`keep_both`/`ask_user`, a visible audit trail, and intent-driven surfacing of retired/disputed facts; plus an improved weight-learning rule driven by the task outcome rather than blind co-activation). A **3D graph viewer** and **team work** (a shared folder and an optional graph-in-git) have been added — their own sections above. The advanced semantic layer added **project-local pattern nodes** (transferring experience and analogies within a project: architectural pattern, recurring fix, anti-pattern, migration recipe) and optional **lazy / on-demand derivation** for very large, sparsely-queried graphs (off by default, `derivation: eager`).
-
-Graph building is now correct, connected, and economical. Correctness and connectivity come from the deterministic edge backbone (calls resolved across files, containment and inheritance extracted by code), the global semantic linking pass across domains, an apply step resilient to malformed items, and the acceptance connectivity report; reproducibility comes from the derivation cache. Economy and resilience are built into the pipeline itself: each unit's text travels to the builders inside the work queue (sources are never re-read), trivial units are summarized by code with no model call, batches are bounded and written in checkpoint parts, an interrupted build resumes where it left off, and agents report status and progress honestly — the savings come from eliminating repeated work, never from thinning the meaning. Planned ([roadmap](docs/en/architecture/11-roadmap.md)): the English translation of the documentation; verifying non-Claude-Code environments.
-
-Version 1.0 fixes a stable data schema and a working install; later stages are additive or come with a migration (under SemVer, breaking the data contract without a migration would be a MAJOR bump).
-
-## License
-
-AMG is licensed under the **PolyForm Strict License 1.0.0**: noncommercial use is free, but with **no modification, derivative works, or redistribution**; any **commercial** use, as well as any modification or derivative works, requires a separate license from the author (`reghost200@gmail.com`). The software is provided "as is" and used at your own risk. Full text and terms — [LICENSE](LICENSE).
