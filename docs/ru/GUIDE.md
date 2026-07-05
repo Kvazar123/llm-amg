@@ -121,7 +121,7 @@ flowchart LR
   ```
   python .claude/skills/amg-bootstrap/scripts/notes.py add --type decision --summary "…" [--body "…"] [--tags "…"]
   ```
-  Типы: `note` / `decision` / `adr` / `open_question` / `plan`. По умолчанию заметка получает статус `captured` и в выдаче не прячется; отбор и повышение в долговременную память происходят на консолидации.
+  Типы: `note` / `decision` / `adr` / `open_question` / `plan`. По умолчанию заметка получает статус `captured` и в выдаче не прячется; отбор и повышение в долговременную память происходят на консолидации. Дополнительные флаги: `--kind user|model_inference` — чьё это утверждение (слово человека сразу считается проверенным; вывод модели остаётся непроверенным до подтверждения; по умолчанию `user` у `decision`/`adr`, иначе `model_inference`); `--confidence 0..1` — переопределить уверенность (умолчание зависит от типа); `--id <идентификатор>` — стабильный id для «живой» заметки, которую вы обновляете повторным захватом (без него id контентно-адресуемый, и дословный повтор не создаёт дубля); `--status active` — записать сразу активной, минуя `captured`; `--part-of` и `--edges` (JSON-списки `{topic,w}` / `{rel,to,w}`) — членство и связи прямо при захвате.
 - **В конце сессии (`SessionEnd`).** Хук детерминированно сворачивает журнал ко-активаций в веса (накопление `coact`; хеббовское обновление по умолчанию выключено — см. «Веса по умолчанию не обновляются» ниже) и обновляет дайджест. Хук также **выгружает стенограмму диалога** в каталог сессий (см. «Сессии» ниже) и записывает **провенанс использования** `work/usage.log` — какие узлы памяти были не просто извлечены, а реально использованы (их источник правился в сессии); это задел под честное обучение весов, консолидация его пока не трогает. Полную консолидацию с суждением — отбор ценных заметок в долговременную память и при необходимости компрессию раздутых веток (скилл `amg-consolidate`, субагент `amg-consolidator`) — ведёт модель: хук этого сделать не может. `SessionEnd` срабатывает на `/clear` и на выходе из среды (`exit`/logout — одинаково); при жёстком завершении (закрыли терминал, `kill`) — нет, и тогда это обслуживание просто догоняется на следующем старте (см. «Восстановление при сбоях»), а о залеченном сбое следующий старт дружелюбно сообщит.
 - **Дайджест в каждой сессии.** Поверх петли работает страховка от её главного промаха — «память есть, но к ней не обратились». Консолидация пишет маленький `digest.md` — 5–10 самых значимых решений и открытых вопросов, — а точка входа импортирует его в **каждую** сессию. Так ключевые решения и нерешённые вопросы видны сразу, ещё до запуска извлечения; и эта страховка работает независимо от хуков — её несёт сам всегда-загружаемый файл точки входа.
 
@@ -229,7 +229,9 @@ python .claude/skills/amg-bootstrap/scripts/reconcile.py bootstrap .
 | `python .claude/skills/amg-bootstrap/scripts/link_candidates.py .` | пачки кандидатов для глобальной линковки (`--hubs` — якоря хабов) |
 | `python .claude/skills/amg-bootstrap/scripts/extract_structure.py . --stats` | показать классификацию файлов и доступность извлекателей |
 | `python .claude/skills/amg-bootstrap/scripts/inspect_queue.py .` | сводка очереди обогащения (счётчики по category / поддереву / kind) и прогресс сборки в процентах |
-| `python .claude/skills/amg-bootstrap/scripts/partition_queue.py .` | разбить очередь на ограниченные партии для параллельных сборщиков (по поддеревьям, с капами по числу единиц и объёму) |
+| `python .claude/skills/amg-bootstrap/scripts/partition_queue.py .` | разбить очередь на ограниченные партии для параллельных сборщиков: группировка по поддеревьям (`--depth N` — сколько ведущих сегментов пути образуют партию, по умолчанию 2) с капами по числу единиц и объёму текста (из блока `builder` конфига либо флагами `--max-units N` / `--max-chars N`) |
+| `python .claude/skills/amg-bootstrap/scripts/partition_queue.py --priority [--usage] .` | режим ленивой деривации: отделить приоритетную партию (структурную карту — модули, классы, файлы) от отложенного остатка; `--usage` дополнительно поднимает в приоритет узлы, реально использованные по `work/usage.log` |
+| `python .claude/skills/amg-bootstrap/scripts/migrate_schema.py .` | одноразово привести граф, построенный старой версией схемы, к текущему канону (идемпотентно, одной транзакцией под блокировкой); сразу после неё стоит выполнить `reconcile.py bootstrap .` — он бесплатно добирает указатели `строка/квалификатор` по дрейфу |
 
 **Извлечение** (скилл `amg-retrieve`, скрипты в `.claude/skills/amg-retrieve/scripts/`):
 
@@ -237,9 +239,12 @@ python .claude/skills/amg-bootstrap/scripts/reconcile.py bootstrap .
 |---|---|
 | `python .claude/skills/amg-retrieve/scripts/retrieve.py "<запрос>" --store .claude/amg` | собрать пакет контекста (пишет `cache/pack.md`) |
 | `... retrieve.py "<запрос>" --top <N> --no-pack` | задать число строк ранжирования и не писать пакет на диск |
-| `python .claude/skills/amg-retrieve/scripts/verify_claims.py <id> --store .claude/amg` | проверить утверждение о коде по живому источнику (file/symbol/hash); read-only, опц. `--write`/`--code`/`--all` |
+| `... retrieve.py "<запрос>" --intent history` (или `--intent conflict`) | запрос о прошлом или о противоречиях: поднять обычно понижаемые снятые/спорные узлы (`conflict` дополнительно досевает конфликтную окрестность); намерение распознаёт модель по смыслу запроса на любом языке и передаёт этим флагом — списка ключевых слов в коде нет |
+| `python .claude/skills/amg-retrieve/scripts/verify_claims.py <id> --store .claude/amg` | проверить утверждение о коде по живому источнику (file/symbol/hash); read-only, опц. `--write`/`--code`/`--all`; `--by-commit` — дешёвая проверка свежести по истории git (см. «Командная работа») |
 | `python .claude/skills/amg-retrieve/scripts/eval_retrieval.py --make-demo <путь>` | построить размеченный демо-граф и измерить качество |
 | `... eval_retrieval.py --store .claude/amg --cases cases.json --out results.json` | измерить полноту/точность/hop-recall на своей разметке |
+| `... eval_retrieval.py --compare-embeddings <путь>` (или `--compare-embeddings --store ... --cases ...`) | сравнить выдачу с семантическим засевом и без него — на встроенном кросс-язычном демо либо на своей разметке |
+| `... eval_retrieval.py --pattern-demo <путь>` | построить размеченный демо-граф с узлами-паттернами и измерить их сторожевые метрики (полнота переноса, доля ложных аналогий, доля устаревших паттернов) |
 | `python .claude/skills/amg-retrieve/scripts/inspect_graph.py --grep <строка>` | просмотреть узлы (id, тип, сводка), выбрать `gold_ids` |
 | `python .claude/skills/amg-retrieve/scripts/export_graph.py --store .claude/amg --open` | открыть граф 3D-вьюером (самодостаточный офлайн-HTML; `--json` — выгрузка данных) |
 | `python .claude/skills/amg-retrieve/scripts/embed.py` | диагностика эмбеддингов: бэкенды, модель, кросс-язычность |
@@ -266,6 +271,8 @@ python .claude/skills/amg-bootstrap/scripts/reconcile.py bootstrap .
 | `python .claude/skills/amg-bootstrap/scripts/lifecycle.py status .` | отчёт о состоянии одним экраном (ручной аналог `/amg status`) |
 | `python .claude/skills/amg-bootstrap/scripts/lifecycle.py repair .` | `recover` + `verify --repair` по запросу (ручной аналог исцеления хуком `SessionStart`) |
 | `python .claude/skills/amg-bootstrap/scripts/lifecycle.py on` · `off .` | включить/выключить AMG (флаг `active`) |
+| `python .claude/skills/amg-bootstrap/scripts/lifecycle.py session-start .` | ручной аналог хука начала сессии: восстановить хранилище и обновить дайджест; печатает заметку только если залечил незавершённую запись, иначе молчит |
+| `python .claude/skills/amg-bootstrap/scripts/lifecycle.py session-end . [--transcript <путь>]` | ручной аналог хука конца сессии: свернуть журнал ко-активаций, обновить дайджест, выгрузить стенограмму и записать провенанс использования; `--transcript` подаёт путь к стенограмме там, где хука нет |
 
 Каждая автоматическая операция имеет такой ручной аналог: исцеление хука ↔ `lifecycle.py repair`, свёртка весов хука ↔ `consolidate.py weights`, дайджест ↔ `consolidate.py digest`.
 
