@@ -27,7 +27,7 @@ docs/ru/THEORY.md            theory and concept (read section by section)
 docs/ru/GUIDE.md             user guide
 docs/ru/architecture/01–11   architecture; 11-roadmap.md is the main working document
 docs/ru/architecture/12-install.md  installer architecture (engine/graph planes, env modes, rendering)
-docs/en/                     translations (Stage 18)
+docs/en/                     translations (Stage 21)
 amg/                         data from local runs; gitignored, never commit
 STATUS.md                    short work-state bridge between sessions
 VERSION                      current SemVer version (bumped only at releases)
@@ -117,7 +117,7 @@ Anglicism and calque rules (apply in both directions, including translation):
 3. **Adapt, don't translate literally,** compound term-names. Criterion: if the word-for-word translation sounds absurd, keep the English core or use the accepted Russian analogue. Example of the error: "routing cookbook" → «кулинарная книга роутинга» is wrong; «cookbook маршрутизации» / «cookbook роутинга» is right. Find and fix such cases everywhere.
 4. **Avoid calques** — word-for-word renderings that are grammatically correct but unnatural: "background writer" → «фоновый писатель» is wrong; «фоновая обработка очереди» / «фоновая запись» is natural. Criterion: if the term reads like a word-by-word gloss of the English original and a native Russian speaker would not say it — rephrase by meaning, not by words. Translate the IDEA, not the sequence of words.
 
-Important: do NOT "fix" correctly used anglicisms («имена методов могут быть в camelCase-нотации» is fine; «это сделано by design» is not). When translating Russian → English (Stage 18), all principles apply mirrored: native-level technical English, translating meanings rather than words; the goal is to lose not a single detail.
+Important: do NOT "fix" correctly used anglicisms («имена методов могут быть в camelCase-нотации» is fine; «это сделано by design» is not). When translating Russian → English (Stage 21), all principles apply mirrored: native-level technical English, translating meanings rather than words; the goal is to lose not a single detail.
 
 Diagrams:
 
@@ -148,7 +148,7 @@ All principles are mandatory not only when writing documentation from scratch, b
 
 - Talk to the user in the user's language — Russian by default in this project.
 - Code comments and docstrings — English only (rule 6.10).
-- Project documentation is Russian-first (`docs/ru`); English appears at Stage 18. This file and `entrypoint/CLAUDE.md` are English as part of the control layer.
+- Project documentation is Russian-first (`docs/ru`); English appears at Stage 21. This file and `entrypoint/CLAUDE.md` are English as part of the control layer.
 
 ## 10. Git, commits, and versioning
 
