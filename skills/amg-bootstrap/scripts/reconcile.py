@@ -29,14 +29,14 @@ Crucial safety rules (see ../references/consistency-model.md):
     the semantic re-derivation is committed. A crash mid-derivation loses nothing.
   * All writes go through graph_store transactions, so any interruption recovers.
 
-Deterministic edge resolution (stage 19, roadmap §4.2 / audits 1.40-1.42): every
+Deterministic edge resolution ("deterministic before the model"): every
 plan() builds cross-file symbol tables from the extracted units and resolves
 `calls`/`inherits` through each file's own imports (never by name coincidence),
 emits the `defines` containment backbone (module -> symbol, class -> method), and
 canonicalizes judgment-layer edge targets by unique path suffix — both on apply and
 in a whole-graph sweep, so a graph built before this pass heals on one bootstrap.
 
-Reproducibility (stage 19, audit 1.46): applied per-unit derivations are stored in
+Reproducibility: applied per-unit derivations are stored in
 a persistent cache under cache/derivations/, keyed by content_sha + the derivation
 contract version + working_language. A wipe-and-rebuild restores them verbatim —
 same content, same derivation, near-zero cost — instead of re-deriving differently
@@ -80,7 +80,7 @@ except ImportError:                       # pragma: no cover
 FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n?(.*)$", re.DOTALL)
 
 # Git merge-conflict markers (default + diff3 base) at line start. A conflicted node file
-# carries these literal lines after a markdown-level git merge (stage 16); its YAML no
+# carries these literal lines after a markdown-level git merge; its YAML no
 # longer parses, so load_nodes skips it (the graph keeps working) and find_conflict_markers
 # reports it so the user resolves it and re-bootstraps. The `=======` middle marker is
 # deliberately NOT matched — it collides with a setext heading underline; the open/base/
@@ -132,7 +132,7 @@ def load_nodes(store: gs.GraphStore) -> Dict[str, Dict[str, Any]]:
 
 def find_conflict_markers(store: gs.GraphStore) -> List[str]:
     """Scan nodes/*.md for git merge-conflict markers and return the conflicted files'
-    relpaths, sorted. Read-only (lock-free). After a markdown-level git merge (stage 16)
+    relpaths, sorted. Read-only (lock-free). After a markdown-level git merge
     a same-node conflict leaves these markers; load_nodes already skips such a file (its
     frontmatter no longer parses), so the graph keeps working — this is how status /
     repair / bootstrap SURFACE the conflict so the user resolves it and re-bootstraps."""
@@ -207,7 +207,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
         nodes = load_nodes(store)
         tx = store.transaction()
 
-        symbols = _build_symbols(units)    # cross-file resolver tables (stage 19)
+        symbols = _build_symbols(units)    # cross-file resolver tables
         default_lang = config.get("working_language", "en")
         commit = _git_commit(project_root)     # ingest-time provenance.commit (best-effort)
         text_cap = int(config.get("queue_text_max_chars", QUEUE_TEXT_MAX_CHARS) or 0)
@@ -230,8 +230,8 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
         pairs = _detect_moves(units, nodes)
         moves = {old["id"]: unit["id"] for old, unit in pairs}
 
-        # The post-diff id universe and its suffix index, for canonical-target repair
-        # (audit 1.42): every unit id plus every surviving non-unit node (hubs, notes,
+        # The post-diff id universe and its suffix index, for canonical-target repair:
+        # every unit id plus every surviving non-unit node (hubs, notes,
         # absorb orphans); purged mirrors and the moved-away old ids are excluded.
         deleted_ids = {nid for nid, node in nodes.items()
                        if nid not in units and nid not in moves
@@ -373,7 +373,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
                            or node.get("policy") != unit["policy"]
                            or node.get("type") != unit["kind"])
                 # Edge canon lag: structural extraction improved (the resolver,
-                # defines, inherits — stage 19) or an edge target's canonical id now
+                # defines, inherits) or an edge target's canonical id now
                 # exists. Re-extract + normalize and rewrite ONLY when the result
                 # differs, so an already-canonical graph stays a strict no-op
                 # (idempotency preserved) while a pre-resolver graph heals on one
@@ -428,7 +428,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
         # Canonical-target sweep over nodes with no unit this run (hubs, notes,
         # absorb orphans): their judgment edges may point at a target written
         # without its full path — re-bind when exactly one canonical id exists
-        # (audit 1.42). Unit-backed nodes were normalized in their branches above.
+        # (the path-suffix repair). Unit-backed nodes were normalized in their branches above.
         # Writes only on an actual change, so a canonical graph stays a no-op.
         for nid, node in nodes.items():
             if nid in units or nid in moves or nid in deleted_ids:
@@ -469,7 +469,7 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
     missing = [p for p, _ in resolve_sources(config) if not (project_root / p).exists()]
     if missing:                                           # 1.30: a typo'd path is visible in plan
         summary["missing_sources"] = missing
-    merge_conflicts = find_conflict_markers(store)        # stage 16: leftover git markers
+    merge_conflicts = find_conflict_markers(store)        # leftover git merge markers
     if merge_conflicts:
         summary["conflict_markers"] = merge_conflicts[:20]
     summary["queued_for_semantic"] = len(queue)
@@ -502,8 +502,8 @@ def _module_map(units: Dict[str, Dict[str, Any]]) -> Dict[str, str]:
 
 
 def _build_symbols(units: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    """Cross-file symbol tables for the deterministic edge resolver (stage 19,
-    roadmap §4.2 / audits 1.40-1.42): the module map (dotted name -> source path),
+    """Cross-file symbol tables for the deterministic edge resolver:
+    the module map (dotted name -> source path),
     per-file top-level definition names, per-file qualname sets, and per-file import
     bindings (local name -> dotted target, from the chunker). Resolution goes THROUGH
     a file's own imports — never by global name coincidence — because a wrong edge is
@@ -545,7 +545,7 @@ def _resolve_dotted(dotted: str, symbols: Dict[str, Any]) -> Optional[str]:
 def _resolve_symbol(unit: Dict[str, Any], name: str,
                     symbols: Dict[str, Any]) -> Optional[str]:
     """Resolve a called or inherited name from `unit`'s point of view to a canonical
-    unit id, or None (-> no edge at all; audit 1.40). Order: a bare name binds to a
+    unit id, or None (-> no edge at all — a wrong edge is worse than a dangling one). Order: a bare name binds to a
     same-file top-level definition, then to the file's import bindings; a same-file
     qualified reference (`Box.make`) binds directly; `self.X`/`cls.X` binds to a
     method of the owning class; any other dotted chain expands its head through the
@@ -578,19 +578,19 @@ def _resolve_symbol(unit: Dict[str, Any], name: str,
 
 
 def _structural_edges(unit: Dict[str, Any], symbols: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-    """Deterministic edges for one unit (stage 19 completes roadmap §4.2):
+    """Deterministic edges for one unit — everything syntax yields exactly, no model:
 
       * imports  : an in-project module resolves to its node id via the module map;
                    stdlib/third-party stay dotted names — legitimately dangling, they
                    record the import fact and retrieval simply drops them;
       * defines  : the containment backbone — module -> top-level symbol, class ->
-                   method (audit 1.41); targets exist by construction (w 1.0, like
+                   method; targets exist by construction (w 1.0, like
                    the primary part_of membership: containment is definitional);
-      * inherits : class -> base class, resolved like calls (audit 1.41; w 0.8 —
+      * inherits : class -> base class, resolved like calls (w 0.8 —
                    subclass-base coupling is tighter than a call);
       * calls    : resolved against the symbol tables (same file -> import bindings
                    -> module map) and emitted ONLY when the target unit exists —
-                   builtins and unresolvable receivers produce no edge (audit 1.40);
+                   builtins and unresolvable receivers produce no edge (no guessing);
       * follows  : chat/session adjacency (unchanged).
     """
     module_map: Dict[str, str] = (symbols or {}).get("module_map") or {}
@@ -629,7 +629,7 @@ def _structural_edges(unit: Dict[str, Any], symbols: Optional[Dict[str, Any]] = 
 
 def _build_suffix_index(ids: Set[str]) -> Dict[Tuple[str, str], List[Tuple[str, str]]]:
     """(category, qualifier) -> [(path, id)] over the known node ids, for canonical-id
-    repair (audit 1.42): a judgment-layer target written without its leading
+    repair: a judgment-layer target written without its leading
     directories (`code:core/foo.py::bar`) re-binds to the ONE node whose path ends
     with the written path on a '/' boundary. Ambiguity -> no repair."""
     out: Dict[Tuple[str, str], List[Tuple[str, str]]] = defaultdict(list)
@@ -677,7 +677,7 @@ def _repair_target(to: str, sfx: Dict[Tuple[str, str], List[Tuple[str, str]]]) -
 def _normalize_edges(edges: List[Dict[str, Any]], ids: Set[str],
                      sfx: Dict[Tuple[str, str], List[Tuple[str, str]]]) -> List[Dict[str, Any]]:
     """Re-bind edge targets that name no existing node to their canonical id when
-    exactly one candidate exists (path-suffix repair, audit 1.42). Unrepairable
+    exactly one candidate exists (path-suffix repair). Unrepairable
     targets stay as written — retrieval drops dangling edges, and `imports` to
     external modules are legitimately dangling. Returns the SAME list object when
     nothing changed (cheap no-op detection for callers); on a change the result is
@@ -893,14 +893,14 @@ def _now() -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Provenance, confidence & verification (Stage 13)
+# Provenance, confidence & verification (the trust layer)
 # --------------------------------------------------------------------------- #
 
 DEFAULT_CONFIDENCE = 0.7        # fallback when the builder emits a summary but no estimate
 
 
 def _git_commit(project_root: Path) -> Optional[str]:
-    """Best-effort short git commit at the source root, for provenance.commit (Stage 13).
+    """Best-effort short git commit at the source root, for provenance.commit.
     Returns None when git is absent, the dir is not a repo, or anything fails — the field
     is OPTIONAL, so a non-git project simply omits it (no hard dependency on git)."""
     try:
@@ -915,7 +915,7 @@ def _git_commit(project_root: Path) -> Optional[str]:
 
 
 def _git_branch(project_root: Path) -> Optional[str]:
-    """Best-effort current git branch at the source root (branch awareness, stage 16).
+    """Best-effort current git branch at the source root (team-mode branch awareness).
     Returns None when git is absent, the dir is not a repo, HEAD is detached (rev-parse
     yields 'HEAD'), or anything fails — OPTIONAL, like _git_commit (no hard git dependency)."""
     try:
@@ -932,7 +932,7 @@ def _git_branch(project_root: Path) -> Optional[str]:
 
 def _git_changed_since(project_root: Path, commit: str) -> Optional[set[str]]:
     """Best-effort: the set of source paths changed between `commit` and HEAD, via
-    `git diff --name-only --relative` (source-freshness-by-commit, stage 16). `--relative`
+    `git diff --name-only --relative` (source freshness by commit). `--relative`
     makes the paths relative to project_root, so they line up with a node's source_path
     even when project_root is a subdirectory of the repo. Returns None when git is absent,
     the commit no longer resolves, or anything fails — the signal is OPTIONAL and only
@@ -977,7 +977,7 @@ def _clamp01(x: Any, default: float = DEFAULT_CONFIDENCE) -> float:
 def _synth_provenance(item: Dict[str, Any]) -> Dict[str, Any]:
     """Provenance for a synthesized/created node (a hub/overview): kind `model_inference`
     — it is the model's own synthesis OVER other nodes, not a file projection — plus an
-    optional `derived_from` list, the upstream ids it was distilled from (Stage 13 task 3
+    optional `derived_from` list, the upstream ids it was distilled from (its
     'source ids'; the source pointer a synthesized node has no flat source_path for)."""
     prov: Dict[str, Any] = {"kind": "model_inference"}
     df = item.get("derived_from")
@@ -987,7 +987,7 @@ def _synth_provenance(item: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
-# Persistent derivation cache (stage 19, audit 1.46)
+# Persistent derivation cache (a rebuild restores judgments verbatim)
 # --------------------------------------------------------------------------- #
 
 # Version of the derivation contract (the item schema + the semantics the builder
@@ -1006,7 +1006,7 @@ def _cache_store(amg_root: Path, lang: str, per_sha: Dict[str, List[Dict[str, An
     """Persist applied per-unit derivation items keyed by their content_sha. The
     entry records the derivation contract version and the working language — a
     changed contract or summary language must miss, never silently return foreign
-    derivations (audit 1.46). Best-effort: the cache is an economy, not correctness."""
+    derivations. Best-effort: the cache is an economy, not correctness."""
     stored = 0
     for sha, its in per_sha.items():
         try:
@@ -1037,7 +1037,7 @@ def _cache_lookup(amg_root: Path, lang: str, sha: str) -> Optional[List[Dict[str
 
 
 def apply_cached(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
-    """Restore derivations for queued units from the persistent cache (audit 1.46).
+    """Restore derivations for queued units from the persistent cache.
 
     Reads work/queue.json, gathers the cached items of every unit whose content_sha
     hits (same derivation contract and working language), applies them through the
@@ -1095,7 +1095,7 @@ _SYNTH_PREFIX_RE = re.compile(r"^(hub|overview|pattern|note):((?:hub|overview|pa
 
 
 def _sanitize_item(item: Any) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """Per-item validation/normalization for apply (audit 1.43): repair what is
+    """Per-item validation/normalization for apply: repair what is
     mechanically repairable, skip what is not — one malformed item must never abort
     the batch. Returns (clean_item, None) or (None, reason).
 
@@ -1176,10 +1176,10 @@ def apply_derivation(project_root: Path, derivation_path: Path,
     item leaves a stale node stale, so reconcile keeps re-queueing it until a
     summary arrives.
 
-    Robust per item (audit 1.43): each item is sanitized (_sanitize_item) and
+    Robust per item: each item is sanitized (_sanitize_item) and
     applied under its own guard, so a malformed one is repaired or skipped
     (`skipped_invalid` + reasons) without aborting the batch; edge targets are
-    canonicalized against the existing node set (audit 1.42) before merging.
+    canonicalized against the existing node set before merging.
     """
     amg_root = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     store = gs.GraphStore(amg_root)
@@ -1191,7 +1191,7 @@ def apply_derivation(project_root: Path, derivation_path: Path,
     weights_cfg = config.get("weights") or {}
     renormalize = bool(weights_cfg.get("part_of_renormalize", True))
     default_w = float(weights_cfg.get("default_edge_weight", 0.5))
-    # default_confidence lives in the verification block (Stage 13); a top-level key is
+    # default_confidence lives in the verification block; a top-level key is
     # still honored for back-compat, then the constant.
     default_conf = _clamp01((config.get("verification") or {}).get(
         "default_confidence", config.get("default_confidence", DEFAULT_CONFIDENCE)))
@@ -1218,7 +1218,7 @@ def apply_derivation(project_root: Path, derivation_path: Path,
             if item is None:
                 _note_invalid(reason or "invalid item")
                 continue
-            # Cache the sanitized item BEFORE normalization (audit 1.46): targets are
+            # Cache the sanitized item BEFORE normalization: targets are
             # re-bound against whatever graph state a future restore sees, so the
             # cache stays a faithful record of what the model said (cleaned).
             cache_copy = (json.loads(json.dumps(item))
@@ -1275,7 +1275,7 @@ def apply_derivation(project_root: Path, derivation_path: Path,
                 if item.get("edges"):
                     node["edges"] = _merge_edges(node.get("edges", []), item["edges"],
                                                  default_w=default_w)
-                # Confidence estimate from the builder (Stage 13 task 3): an explicit value
+                # Confidence estimate from the builder: an explicit value
                 # wins; otherwise a node that just earned a summary takes the default once.
                 if "confidence" in item:
                     node["confidence"] = _clamp01(item["confidence"], default_conf)
@@ -1363,7 +1363,7 @@ def _merge_edges(existing: List[Dict[str, Any]], incoming: List[Dict[str, Any]],
 
 
 # --------------------------------------------------------------------------- #
-# Connectivity metrics: the build-acceptance gate (stage 19, audit 1.44)
+# Connectivity metrics: the build-acceptance gate (fragmentation must be visible)
 # --------------------------------------------------------------------------- #
 
 # Advisory thresholds for the acceptance verdict; overridable via the
@@ -1374,7 +1374,7 @@ GATE_DEFAULTS: Dict[str, Any] = {"min_largest_share": 0.9, "max_dangling_interna
 
 def graph_metrics(nodes: Dict[str, Dict[str, Any]],
                   gate_cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Connectivity / build-quality metrics over a loaded node set (audit 1.44).
+    """Connectivity / build-quality metrics over a loaded node set.
 
     Lives in the reconcile layer deliberately: graph_store is domain-blind, so
     fragmentation metrics belong where the data model is read; lifecycle.status
@@ -1386,7 +1386,7 @@ def graph_metrics(nodes: Dict[str, Dict[str, Any]],
     unresolved target is an internal miss the resolver could not bind (audits
     1.40/1.42). Deferred `stale` nodes are reported but never counted as defects —
     under lazy derivation an underived node is an expected state, not fragmentation
-    (roadmap §4.10); their structural backbone keeps them connected regardless.
+    (a deliberate deferral); their structural backbone keeps them connected regardless.
 
     The verdict (`gate`: ok | attention) compares against the `connectivity_gate`
     thresholds and is ADVISORY: a skeleton mid-build is legitimately unlinked, so
@@ -1440,7 +1440,7 @@ def graph_metrics(nodes: Dict[str, Dict[str, Any]],
     share = round(largest / len(ids), 4) if ids else 1.0
     isolated = sorted(nid for nid in ids if nid not in linked)
 
-    # Doc nodes with no outgoing `documents` edge (stage 19, task 6). Advisory: a
+    # Doc nodes with no outgoing `documents` edge. Advisory: a
     # chat/session turn or a plain note legitimately documents nothing; stale
     # (not-yet-derived) nodes are excluded — they could not have earned one yet.
     doc_undocumented = sorted(
@@ -1487,7 +1487,7 @@ def main(argv: List[str]) -> int:
         project_root = Path(args[1]).resolve() if len(args) > 1 else Path.cwd()
         amg_root = gs.resolve_amg_root(cli_root, project_root)
         summary = plan(project_root, amg_root)
-        # Restore cache hits automatically (audit 1.46): after this, the printed
+        # Restore cache hits automatically: after this, the printed
         # queued_for_semantic is the REAL model work left — a rebuild over unchanged
         # content derives nothing.
         if summary.get("queued_for_semantic"):
@@ -1517,7 +1517,7 @@ def main(argv: List[str]) -> int:
         return 0
 
     if cmd == "metrics":
-        # Read-only connectivity report (audit 1.44). The gate thresholds come from
+        # Read-only connectivity report. The gate thresholds come from
         # the local config read tolerantly — a diagnostic must not exit on a missing
         # or odd config the way extraction deliberately does.
         project_root = Path(args[1]).resolve() if len(args) > 1 else Path.cwd()

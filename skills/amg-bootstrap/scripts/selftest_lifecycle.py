@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-selftest_lifecycle.py — proves the Stage 8 control plane (lifecycle.py + the digest).
+selftest_lifecycle.py — proves the lifecycle control plane (lifecycle.py + the digest).
 
 Checks:
   1. digest   : write_digest selects active decisions + open questions (by salience),
@@ -174,7 +174,7 @@ def case_unclean_shutdown() -> None:
 
 
 def case_shared_folder_contention() -> None:
-    """Stage 16: on a SHARED FOLDER a live writer (possibly another machine) holds the
+    """On a SHARED FOLDER a live writer (possibly another machine) holds the
     lock; the host-aware rule no longer steals it. The automatic maintenance entry points
     must DEGRADE (skip), not crash. This holds in EVERY environment — they are plain
     function/script calls, so a hook-less or Codex env (no SessionStart/End hook) runs the
@@ -200,7 +200,7 @@ def case_shared_folder_contention() -> None:
 
 
 def case_merge_conflict_surfaced() -> None:
-    """Stage 16: a node carrying git merge markers is SURFACED by status (a conflicts list)
+    """A node carrying git merge markers is SURFACED by status (a conflicts list)
     and by repair (a note), so the user knows to resolve it — even though load_nodes skips
     it and the rest of the graph keeps working."""
     proj = setup_project()

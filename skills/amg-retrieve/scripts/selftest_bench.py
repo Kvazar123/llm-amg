@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-selftest_bench.py — smoke test for bench.py (roadmap Stage 12, task 9).
+selftest_bench.py — smoke test for bench.py.
 
 It is a benchmark tool, so there is no "correct timing" to assert; instead this
 proves the bench does not bitrot: the synthetic generator produces a graph the

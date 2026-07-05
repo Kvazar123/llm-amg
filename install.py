@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-install.py — AMG installer (Stage 10). The successor to sync_testbed.py.
+install.py — the AMG installer. The successor to sync_testbed.py.
 
 Deterministic and config-driven: the MODEL conducts the Q&A (see INSTALL.md) and calls
 this with the answers; the script does the file work — copy the engine, render the entry
@@ -42,7 +42,7 @@ CLI (the model fills these from the user's answers):
       [--project-only]   # add a project to an existing (global) install: local config only
   python install.py --target <proj> --uninstall [--scope global] [--purge-graph]
 
-Config layers (Stage 18, audit 1.37): a GLOBAL install also writes the machine-wide
+Config layers: a GLOBAL install also writes the machine-wide
 personal defaults to ~/<agent_dir>/amg/config.yml — the `models` tiering and the
 `retrieval.embeddings` block — and the project's LOCAL config then omits those blocks,
 inheriting them per key (the loaders deep-merge global -> local; the local file wins).
@@ -290,7 +290,7 @@ def _strip_top_block(text: str, key: str) -> str:
     """Remove a top-level key's line, its indented block, and the contiguous run of
     column-0 comment lines right above it (the template's banner). Used to keep a
     PERSONAL key out of a written local config so it inherits from the global
-    defaults layer instead (Stage 18, audit 1.37)."""
+    defaults layer instead."""
     lines = text.split("\n")
     out: List[str] = []
     i = 0
@@ -391,7 +391,7 @@ GLOBAL_CONFIG_HEADER = """\
 
 def write_global_config(engine_agent_dir: Path, overrides: Dict[str, str]) -> bool:
     """Create ~/<agent_dir>/amg/config.yml — the machine-wide PERSONAL defaults every
-    installed project's local config inherits per key (Stage 18, audit 1.37): the
+    installed project's local config inherits per key: the
     `models` tiering and the `retrieval.embeddings` block, with values from the
     shipped template plus any --set-global answers (dotted keys). Never clobbers an
     existing global config. Needs PyYAML (like the models render); returns True when
@@ -419,7 +419,7 @@ def write_global_config(engine_agent_dir: Path, overrides: Dict[str, str]) -> bo
 def _existing_config_summary(cfg_path: Path) -> str:
     """The key values of an existing config, one line — printed when a reinstall
     keeps it, so the install flow can show and confirm what is in force instead of
-    silently keeping unknown state (audit 1.49)."""
+    silently keeping unknown state."""
     if yaml is None or not cfg_path.exists():
         return ""
     try:
@@ -445,7 +445,7 @@ def write_config(dest_amg: Path, agent_dir: str, entrypoint: str,
     so resolution and the docs agree with the install. With strip_personal (a global-scope
     install that wrote the global defaults config), the PERSONAL blocks — `models` and
     `retrieval.embeddings` — are omitted so they inherit from the global layer instead of
-    shadowing it (Stage 18, audit 1.37). A dotted --set key (retrieval.embeddings.enabled)
+    shadowing it. A dotted --set key (retrieval.embeddings.enabled)
     lands on the nested key."""
     dest = dest_amg / "config.yml"
     if dest.exists():
@@ -472,7 +472,7 @@ def write_config(dest_amg: Path, agent_dir: str, entrypoint: str,
 
 
 # --------------------------------------------------------------------------- #
-# Model tiering: render config.yml `models` into agent frontmatter (audit 1.14)
+# Model tiering: render config.yml `models` into agent frontmatter
 #
 # config.yml `models` is the SINGLE SOURCE OF TRUTH for per-role model + reasoning
 # effort; install (and reinstall) renders it into the installed agent definitions, so
@@ -490,7 +490,7 @@ ROLE_AGENTS = {
     "discovery": ("amg-classifier", "amg-retriever"),
     # amg-linker is bulk confirmation over bounded candidate batches — the same
     # tier as the builder; its global reach comes from candidate nomination, not
-    # from model size (stage 19).
+    # from model size.
     "module_summary": ("amg-builder", "amg-linker"),
     "synthesis": ("amg-synth", "amg-consolidator"),
     # structural_extraction is deterministic — no model, no agent.
@@ -573,8 +573,8 @@ def render_agent_models(agents_dir: Path, models_cfg: dict, env: str) -> None:
 
 def _read_models(config_path: Path, agent_dir: str) -> dict:
     """The `models` block as the LOADERS see it: the machine-wide global config
-    (~/<agent_dir>/amg/config.yml, if any) deep-merged under the project's local one
-    (Stage 18, audit 1.37). Empty dict if nothing is readable or PyYAML is missing."""
+    (~/<agent_dir>/amg/config.yml, if any) deep-merged under the project's local one.
+    Empty dict if nothing is readable or PyYAML is missing."""
     if yaml is None:
         return {}
 
@@ -662,7 +662,7 @@ def place_engine(dest_agent_dir: Path, agent_dir: str, entrypoint: str, scope: s
 
     The shipped PROMPTS (each skill's SKILL.md and agents/*.md) carry `.claude`/`CLAUDE.md`
     as the Claude Code default and are RENDERED to the configured agent dir on copy, exactly
-    like the entry templates (audit 1.32). Copying them verbatim would leave `.claude/...`
+    like the entry templates. Copying them verbatim would leave `.claude/...`
     command paths that are wrong under any other agent dir, and relative script paths that
     are wrong for a global install. (References/*.md stay verbatim — they are docs; the
     docs-neutralization pass is the translation stage.)"""
@@ -800,7 +800,7 @@ def install(target: Path, scope: str, agent_dir: str, entrypoint: str,
                   "command are Claude-Code-only and were NOT written; the block drives the "
                   "loop with direct script calls (the digest is read, not @import-ed).")
 
-    # Config layers (Stage 18, audit 1.37). A GLOBAL install (and --project-only, which
+    # Config layers. A GLOBAL install (and --project-only, which
     # belongs to one) also maintains the machine-wide defaults config
     # ~/<agent_dir>/amg/config.yml — the PERSONAL layer (models tiering, embeddings)
     # every project's local config inherits per key. The local config then OMITS those
@@ -827,16 +827,16 @@ def install(target: Path, scope: str, agent_dir: str, entrypoint: str,
         summary = _existing_config_summary(cfg_path)
         if summary:
             # Show what stays in force, so the flow confirms instead of silently
-            # keeping unknown state (audit 1.49). To change: edit config.yml, or
+            # keeping unknown state. To change: edit config.yml, or
             # delete it and reinstall.
             print(f"          in force: {summary}")
             print("          (to change: edit config.yml directly, or delete it and reinstall)")
     seed_digest(graph_agent_dir / "amg")
 
-    # Render the models block (audit 1.14): Claude Code -> per-role model/effort into the
+    # Render the models block: Claude Code -> per-role model/effort into the
     # .md agent frontmatter; Codex -> TOML subagents (model + model_reasoning_effort); a
     # skill-less generic env runs one model, so tiering is inert there. The models are
-    # read as the loaders see them: global defaults under the local config (Stage 18).
+    # read as the loaders see them: global defaults under the local config.
     if not project_only and _env_kind(env) != "generic":
         if yaml is None:
             print("  models  skipped (PyYAML not importable; reinstall after pip install pyyaml)")
@@ -910,7 +910,7 @@ def uninstall(target: Path, agent_dir: str, entrypoint: str,
         print(f"  graph   purged {graph}")
     else:
         print(f"  graph   kept {graph} (pass --purge-graph to remove)")
-    # 5. the machine-wide defaults config (global layer, Stage 18) is the user's
+    # 5. the machine-wide defaults config (the global layer) is the user's
     # preference data, like the graph: kept, never auto-removed.
     gcfg = Path.home() / agent_dir / "amg" / "config.yml"
     if scope == "global" and gcfg.exists():

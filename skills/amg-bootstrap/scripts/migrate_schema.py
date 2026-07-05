@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-migrate_schema.py — one-shot, idempotent schema migration to the stage 1 canon.
+migrate_schema.py — one-shot, idempotent schema migration to the data-model canon.
 
-Brings graphs built before the data-model canon (roadmap, stage 1, task 7) to
-the current schema. Transforms, all schema-only (files stay in their buckets;
-the bucket question for consolidation-made nodes is deferred to stage 3):
+Brings graphs built before the data-model canon to
+the current schema. Transforms, all schema-only (files stay in their buckets):
 
-  * source_kind: derived  -> synthesized   (taxonomy normalized at stage 0)
+  * source_kind: derived  -> synthesized   (the normalized taxonomy)
   * type: derived         -> hub, or overview when the id tail contains
                              "overview" (both land in the strategic tier; the
                              distinction is reported so the user can adjust)
@@ -15,7 +14,7 @@ the bucket question for consolidation-made nodes is deferred to stage 3):
   * edges without origin  -> imports/calls -> structural (the only rels
                              extraction ever produced); edges owned by a
                              synthesized node -> synthesized; else semantic
-  * missing provenance    -> {kind} inferred from source_kind/id prefix (Stage 13)
+  * missing provenance    -> {kind} inferred from source_kind/id prefix
   * missing verification  -> {status: unverified, method: none} (conservative: a
                              migration must not fabricate a verification event)
 

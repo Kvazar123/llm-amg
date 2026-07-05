@@ -71,7 +71,7 @@ except ImportError:                                        # pragma: no cover
 FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n?(.*)$", re.DOTALL)
 WORD_RE = re.compile(r"\w+", re.UNICODE)   # Unicode: must match non-Latin scripts too
 
-# Outcome buckets for work/usage.log records (Stage 14). The improved Hebbian rule is
+# Outcome buckets for work/usage.log records. The improved Hebbian rule is
 # OUTCOME-GATED: it reinforces an edge only when both endpoints were USED in a session
 # with an ACCEPTED outcome (its source was edited and the work landed). That signal comes
 # from OUTSIDE the retrieval loop — what the human did with the node — so reinforcing by it
@@ -84,7 +84,7 @@ USAGE_REVERTED = {"reverted"}
 DEFAULTS = {
     "hebbian_rate": 0.10, "decay_rate": 0.02, "prune_below": 0.05,
     "part_of_renormalize": True, "default_edge_weight": 0.5,
-    # Hebbian weight updates are OFF by default until a measured uplift (roadmap task 14).
+    # Hebbian weight updates are OFF by default until a measured uplift on real usage.
     # The rule is OUTCOME-GATED + DISCRIMINATIVE — NOT the old blind co-activation rule,
     # which measurably HURT recall on a sparse graph (the "highways" effect, §8.1/§8.2):
     #   * reinforce an edge only when both endpoints were USED in an accepted session
@@ -145,12 +145,12 @@ GROUND_RELS = {"documents", "implements", "specifies"}
 # down to non-hub nodes recovers the branch. The walk stops at any other hub.
 HUB_DOWN_RELS = {"documents", "defines", "specifies", "implements", "contains"}
 
-# Relations whose two endpoints form a CONTRADICTION pair for the arbitration pass
-# (Stage 14). amg-synth emits them as judgment edges; arbitration compares the two
+# Relations whose two endpoints form a CONTRADICTION pair for the arbitration pass.
+# amg-synth emits them as judgment edges; arbitration compares the two
 # endpoints (source rank / freshness / confidence / verification) and issues a verdict.
 CONFLICT_RELS = {"contradicts", "supersedes"}
 
-# Arbitration verdict actions (Stage 14): NON-destructive status changes (+ a linking
+# Arbitration verdict actions: NON-destructive status changes (+ a linking
 # edge) that resolve a contradiction. Unlike COMPACTION_ACTIONS they archive/delete
 # nothing — a node keeps its history — so they need neither the compaction.enabled gate,
 # the protected-type guard, nor the eval gate. The judgment is the consolidator's; the
@@ -183,7 +183,7 @@ def _deep_merge_cfg(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any
 
 def _global_defaults_raw(local_raw: Dict[str, Any]) -> Dict[str, Any]:
     """The machine-wide defaults config (~/<agent_dir>/amg/config.yml, written by a
-    global install — Stage 18, audit 1.37) as a raw dict, or {}. Read ONLY when the
+    global install) as a raw dict, or {}. Read ONLY when the
     local config carries the installer-written `agent_dir` key (names the home layer
     AND marks the config installer-made; hand-made fixtures stay hermetic). Mirrors
     extract_structure._global_defaults_raw (kept dependency-free)."""
@@ -211,7 +211,7 @@ def load_config(amg_root: Path) -> Dict[str, Any]:
     raw: Dict[str, Any] = {}
     if f.exists():
         raw = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
-    # Config layering (Stage 18): global machine-wide defaults under the local config,
+    # Config layering: global machine-wide defaults under the local config,
     # local overrides per key.
     raw = _deep_merge_cfg(_global_defaults_raw(raw), raw)
     if raw:
@@ -281,7 +281,7 @@ def _usage_pairs(amg_root: Path) -> Tuple[Set[FrozenSet[str]], Set[FrozenSet[str
     session. This is the OUTCOME-GATED signal that drives the improved Hebbian rule — it
     comes from outside the retrieval loop (what the human did), so reinforcing by it does
     not self-confirm like the circular co-activation signal (§8.1 / THEORY §15.5). The
-    journal is written by lifecycle.session-end (Stage 13). `present` is True whenever the
+    journal is written by lifecycle.session-end. `present` is True whenever the
     log exists, so the caller can consume it after folding even if no record carried an
     actionable outcome."""
     path = amg_root / "work" / "usage.log"
@@ -349,7 +349,7 @@ def fold_weights(project_root: Path, amg_root: Optional[Path] = None) -> Dict[st
 
     # Touch w ONLY when the rule is on AND there is an OUTCOME signal to learn from.
     # Without usage a read-only period teaches nothing about usefulness, so weights stay
-    # frozen (idempotent re-run; audit 1.9). The reinforcement is outcome-gated +
+    # frozen (idempotent re-run). The reinforcement is outcome-gated +
     # discriminative (headroom (1-w)), the decay is exposure-gated — together they invert
     # the blind rule's highway effect: productive edges strengthen with diminishing
     # returns, surfaced-but-unused edges fade (§8.1/§8.2).
@@ -461,7 +461,7 @@ def _branch_members(nodes: Dict[str, Dict[str, Any]]) -> Dict[str, List[str]]:
       * downward: from the hub, following its containment-ish edges (HUB_DOWN_RELS)
         transitively to non-hub nodes (a hub documents a module, the module defines
         its functions). This makes branches computable when a leaf's primary
-        membership is the directory string rather than the hub node (audit 1.20).
+        membership is the directory string rather than the hub node.
 
     The downward walk stops at any other hub, so branches don't bleed together."""
     parent_topics: Dict[str, List[Any]] = {
@@ -639,7 +639,7 @@ def _node_arb_info(node: Dict[str, Any]) -> Dict[str, Any]:
 
 def _contradiction_candidates(nodes: Dict[str, Dict[str, Any]]
                               ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Detect contradictions for the arbitration pass (Stage 14):
+    """Detect contradictions for the arbitration pass:
 
       * pairs — node-vs-node conflicts: two nodes linked by a contradicts/supersedes edge
         (CONFLICT_RELS), each side with its comparison inputs (_node_arb_info);
@@ -720,7 +720,7 @@ def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, 
     episodic.sort(key=lambda x: float(x["salience"]))
 
     # contradiction candidates for the arbitration pass (detect only; the consolidator
-    # compares the laid-out inputs and issues the verdict — Stage 14)
+    # compares the laid-out inputs and issues the verdict)
     contradictions, source_contradicted = _contradiction_candidates(nodes)
 
     plan = {"generated": _now(), "n_nodes": len(nodes),
@@ -783,7 +783,7 @@ def _render_digest(decisions: List[Dict[str, Any]], questions: List[Dict[str, An
 def write_digest(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
     """Regenerate <amg_root>/digest.md from the graph: the top standing decisions and
     open questions by salience, as a small markdown block the entry point imports every
-    session (roadmap Stage 8). Deterministic and read-only over the graph — a single
+    session. Deterministic and read-only over the graph — a single
     atomic write of one file outside nodes/, so it needs no store lock."""
     amg = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     store = gs.GraphStore(amg)
@@ -842,7 +842,7 @@ def _gate_cases(amg: Path, cases_path: Any, project_root: Path, R: Any) -> List[
     if not cases_path:
         return []
     p = Path(cases_path)
-    if not p.is_absolute():                       # roadmap default is project-relative
+    if not p.is_absolute():                       # the default is project-relative
         p = project_root / cases_path
     if not p.exists():
         return []
@@ -1199,7 +1199,7 @@ def apply_actions(project_root: Path, actions_path: Path,
                     tx.write(mn["_path"], serialize(mn, mn["_body"]))
                 counts["introduce_subhub"] += 1
 
-            # --- arbitration verdicts (Stage 14): non-destructive status changes + a
+            # --- arbitration verdicts: non-destructive status changes + a
             # linking edge; no compaction gate / protection / eval gate applies ---
             elif kind == "supersede":
                 winner, loser = act.get("winner_id"), act.get("loser_id")
@@ -1243,7 +1243,7 @@ def apply_actions(project_root: Path, actions_path: Path,
 
         # Arbitration audit trail: append the verdicts to arbitration.md within THIS
         # transaction (atomic with the status/edge changes), so the basis of every memory
-        # verdict is durably visible — conflicts are never resolved silently (Stage 14 DoD).
+        # verdict is durably visible — conflicts are never resolved silently.
         if arb_audit:
             arb_rel = "arbitration.md"
             prior = (store.abspath(arb_rel).read_text(encoding="utf-8")
@@ -1277,7 +1277,7 @@ def _now() -> str:
 
 
 def _arb_line(action: str, subject: str, act: Dict[str, Any], extra: str = "") -> str:
-    """One human-readable arbitration audit line for arbitration.md (Stage 14): what was
+    """One human-readable arbitration audit line for arbitration.md: what was
     decided, on which nodes, the reason, and the sources compared — so the user can see
     the basis of a memory verdict (DoD: conflicts are not resolved silently)."""
     reason = " ".join(str(act.get("reason", "")).split()) or "(no reason given)"

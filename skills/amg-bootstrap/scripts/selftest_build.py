@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-selftest_build.py — stage 19 regression: the FULL build pipeline on a mini project
-with a deterministic STUB builder instead of the LLM (roadmap stage 19, task 9).
+selftest_build.py — regression: the FULL build pipeline on a mini project
+with a deterministic STUB builder instead of the LLM.
 Proves, without a single model call:
 
   1. skeleton   : bootstrap emits the deterministic backbone (defines / inherits)
@@ -11,17 +11,17 @@ Proves, without a single model call:
                   deliberately malformed items (swapped confidence/edges, missing
                   id, non-list part_of, a bare string) and non-canonical ids
                   (missing path prefix, doubled category prefix) — applies with
-                  per-item repair/skip and never aborts the batch (audit 1.43);
-                  a mis-prefixed target re-binds to the canonical id (audit 1.42).
+                  per-item repair/skip and never aborts the batch;
+                  a mis-prefixed target re-binds to the canonical id.
   3. metrics    : the connectivity gate reports ONE component, zero internal
                   dangling edges, zero isolated nodes and no undocumented doc
-                  nodes on the fully built graph (audit 1.44); external `imports`
+                  nodes on the fully built graph; external `imports`
                   are counted separately, not as defects.
   4. idempotency: a re-run bootstrap is a strict no-op (nothing re-queued, no
                   edge rewrites).
   5. cache      : a wipe-and-rebuild restores every per-unit derivation VERBATIM
                   from cache/derivations/ without a single "model" call (practical
-                  determinism, audit 1.46); a changed working_language misses the
+                  determinism); a changed working_language misses the
                   cache by key instead of returning foreign-language summaries.
   6. candidates : link_candidates nominates unlinked cross-domain pairs by summary
                   similarity (the lexical fallback path — no embedding backend
@@ -31,7 +31,7 @@ Proves, without a single model call:
 
 The fixture is hermetic: config.yml is mandatory (extraction exits without one)
 and the `agent_dir` key is deliberately ABSENT so the machine's global defaults
-config is never merged in (stage 18 layering rule).
+config is never merged in (the config layering rule).
 
 Run:  python selftest_build.py
 """
@@ -108,7 +108,7 @@ def stub_derivation(queue_units: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     unit (echoing its content_sha, like the real builder), cross-domain edges written
     the way a model plausibly writes them (a doc target WITHOUT its leading dirs), a
     data->code link, and a tail of deliberately malformed / non-canonical items that
-    exercise the per-item validation (audit 1.43)."""
+    exercise the per-item validation."""
     items: List[Dict[str, Any]] = []
     sha = {u["id"]: u["content_sha"] for u in queue_units}
     for u in queue_units:
@@ -118,7 +118,7 @@ def stub_derivation(queue_units: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             # rare shared tokens with Base.ping below -> a lexical link candidate
             item["summary"] = ("Guide covering Widget rendering and the heartbeat "
                                "health probe.")
-            # the mis-prefixed target the resolver must re-bind (audit 1.42)
+            # the mis-prefixed target the resolver must re-bind
             item["edges"] = [{"rel": "documents", "to": "code:pkg/core.py::Widget",
                               "w": 0.9}]
         if u["id"] == f"{CORE}::Base.ping":
@@ -277,7 +277,7 @@ def main() -> int:
         print("PASS  candidates: cross-domain pair nominated, linked pair excluded, "
               "hubs anchored to directories")
 
-        # 6. derivation cache: wipe the graph, rebuild, restore verbatim (audit 1.46)
+        # 6. derivation cache: wipe the graph, rebuild, restore verbatim
         summaries_before = {nid: n["summary"] for nid, n in
                             RC.load_nodes(gs.GraphStore(amg)).items()
                             if n.get("source_kind") == "derived_from_file"}

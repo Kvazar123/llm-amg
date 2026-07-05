@@ -1,11 +1,11 @@
-/* AMG graph — viewer glue (roadmap Stage 15).
+/* AMG graph — viewer glue.
  *
  * Vanilla JS over the vendored 3d-force-graph (global `ForceGraph3D`). Reads the graph
  * from the inlined <script id="amg-data"> JSON that export_graph.py wrote — never fetches
  * anything (works offline, from file://). READ-ONLY: it only renders; it writes nothing.
  *
  * Visual encoding (functional, dark theme):
- *   node color  — by bucket (code/doc/data/notes/_hubs); the Stage 14 arbitration
+ *   node color  — by bucket (code/doc/data/notes/_hubs); the arbitration
  *                 verdicts override so they POP regardless of bucket: superseded (grey),
  *                 disputed (amber), rejected (red); stale is dimmed.
  *   node size   — by degree (+ a boost for hub/overview), so hubs read large ("hubs first").

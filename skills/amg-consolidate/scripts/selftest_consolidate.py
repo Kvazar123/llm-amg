@@ -76,7 +76,7 @@ def gold_recall(proj, amg):
 # --------------------------------------------------------------------------- #
 
 def test_weights(proj):
-    """The improved rule (Stage 14). off (default): only accumulate coact, w untouched,
+    """The improved outcome-gated rule. off (default): only accumulate coact, w untouched,
     usage.log left intact. on: an edge CO-USED in an accepted session is REWARDED by the
     discriminative headroom rate*(1-w); an edge merely SURFACED (co-activation) but not
     used DECAYS (and prunes if it falls below threshold); an edge neither surfaced nor
@@ -318,7 +318,7 @@ def test_shorten_idempotent(proj):
 
 def test_merge_quality(proj):
     """merge folds edges (max w, summed coact), combines part_of, drops self-edges,
-    and dedups a neighbor's edges after redirect (task 9 + audit 1.22)."""
+    and dedups a neighbor's edges after redirect."""
     amg = proj / ".claude" / "amg"
     store = gs.GraphStore(amg)
     write_node(store, "notes:m/keep", "notes",
@@ -434,7 +434,7 @@ def test_branch_downward(proj):
 def test_contradiction_plan(proj):
     """make_plan surfaces contradiction PAIRS (contradicts/supersedes edges) with the
     per-side comparison inputs (incl. source rank), and SOURCE-CONTRADICTED nodes whose
-    live-source check failed — the detection half of arbitration (Stage 14)."""
+    live-source check failed — the detection half of arbitration."""
     amg = proj / ".claude" / "amg"
     store = gs.GraphStore(amg)
     write_node(store, "code:arb/new.py::f", "code",
@@ -462,7 +462,7 @@ def test_contradiction_plan(proj):
 
 
 def test_arbitration(proj):
-    """Arbitration verdicts (Stage 14): supersede / dispute / reject / keep_both_with_context
+    """Arbitration verdicts: supersede / dispute / reject / keep_both_with_context
     / ask_user set the right statuses + linking edges, write arbitration.md (with reasons),
     are non-destructive (nodes kept), and run regardless of the compaction gate."""
     amg = proj / ".claude" / "amg"
@@ -645,7 +645,7 @@ def test_hebbian_demo():
 
 
 def test_conflict_skip() -> None:
-    """Stage 16: a node file left with git merge-conflict markers must not crash
+    """A node file left with git merge-conflict markers must not crash
     consolidate.load_nodes — its YAML no longer parses, so it is skipped (the conflict is
     surfaced separately by reconcile.find_conflict_markers in status/repair/bootstrap)."""
     proj = Path(tempfile.mkdtemp(prefix="amg-cons-conflict-"))

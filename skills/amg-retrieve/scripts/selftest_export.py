@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-selftest_export.py — the read-only JSON graph export (roadmap Stage 15, Group 1).
+selftest_export.py — the read-only JSON graph export.
 
 Proves the exporter is a faithful, read-only projection of the graph:
   1. shape       : every node is exported with its FULL frontmatter (not retrieve's
@@ -54,7 +54,7 @@ def _build_fixture(root: Path) -> None:
         "  options:\n"
         "    linkOpacity: 0.7\n", encoding="utf-8")
 
-    # code: a function carrying the full Stage 13 trust layer + a VALID call, a DANGLING
+    # code: a function carrying the full trust layer + a VALID call, a DANGLING
     # call (target absent), and two part_of memberships (one hub id, one directory).
     _node(root, "code", "charge-0001",
           "id: code:src/billing.py::charge\n"
@@ -94,7 +94,7 @@ def _build_fixture(root: Path) -> None:
           "status: active\nsummary: Billing subsystem hub.\n",
           body="Billing groups card charging, retries and refunds. <x></script>\n")
 
-    # notes: an authored decision (user provenance) + Stage 14 arbitration verdicts.
+    # notes: an authored decision (user provenance) + arbitration verdicts.
     _node(root, "notes", "decision-0005",
           "id: note:use-stripe-ab12cd34\ntype: decision\nsource_kind: authored\n"
           "policy: authored\nstatus: captured\nconfidence: 0.85\n"

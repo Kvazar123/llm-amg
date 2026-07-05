@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-selftest_ignore.py — proves the ignore controls (Stage 10, task 10): what reaches the
+selftest_ignore.py — proves the ignore controls: what reaches the
 graph is controllable per intent, universal (no git needed), and never silently drops
 an explicitly chosen source.
 
@@ -14,7 +14,7 @@ Checks:
   3. respect_off: respect_gitignore: false ignores .gitignore entirely (git-independent,
                   fully config-driven).
   4. agent_dir  : the engine never indexes its own dir, even a custom one (.myagent),
-                  derived from the store location (roadmap 4.9) — no self-indexing.
+                  derived from the store location — no self-indexing.
   5. by_source  : --stats reports per-source file counts, so a source that yields 0
                   files (all filtered) or a missing path is visible, not silent.
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-selftest_verify.py — verify_claims.py: lightweight verification against live source (Stage 13).
+selftest_verify.py — verify_claims.py: lightweight verification against live source.
 
 Checks:
   1. verified    : an unchanged source-derived node verifies against its source (python
@@ -126,7 +126,7 @@ def case_write_persists() -> None:
 
 
 def case_freshness_by_commit() -> None:
-    """Stage 16 source-freshness-by-commit: verify_by_commit flags nodes whose source
+    """Source-freshness-by-commit: verify_by_commit flags nodes whose source
     changed between their ingest provenance.commit and HEAD — one git diff per distinct
     commit, no re-chunk. Best-effort: without git (or no provenance.commit) nothing is
     flagged. The structural/no-git path is hermetic; the positive path needs git on PATH."""

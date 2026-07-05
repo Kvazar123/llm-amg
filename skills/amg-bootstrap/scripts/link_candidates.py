@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-link_candidates.py — deterministic preparation for the GLOBAL semantic linking pass
-(stage 19, audit 1.45).
+link_candidates.py — deterministic preparation for the GLOBAL semantic linking pass.
 
 A per-batch builder cannot see across domains by construction, so cross-domain
 edges (doc <-> code, example <-> guide, ADR -> code) need a global pass. Its raw
@@ -19,8 +18,7 @@ material is prepared here, deterministically and without a model:
     over the whole graph — batch execution, global reach; not a mega-agent).
   * hub candidates  : --hubs writes work/hub-candidates.json — deterministic hub
     anchors from the directory structure (subtree sizes), so amg-synth names and
-    refines a STABLE taxonomy instead of inventing hub ids anew per rebuild
-    (audit 1.46).
+    refines a STABLE taxonomy instead of inventing hub ids anew per rebuild.
 
 Reads the summary layer through retrieve.load_nodes (the SQLite read-index — no
 nodes/*.md rescan). Read-only over the graph; writes only work/ files. Stale
@@ -244,7 +242,7 @@ def _hub_slug(topic: str) -> str:
 
 
 def hub_candidates(amg_root: Path) -> Dict[str, Any]:
-    """Deterministic hub anchors from the directory structure (audit 1.46): every
+    """Deterministic hub anchors from the directory structure: every
     source subtree with enough file-backed nodes suggests one stable hub id, so the
     synthesis names/refines a taxonomy that stays put across rebuilds instead of
     inventing new hub ids every run. Writes work/hub-candidates.json."""

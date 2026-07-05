@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-selftest_sessions.py — proves Stage 9 session capture end to end.
+selftest_sessions.py — proves session capture end to end.
 
 Checks:
   1. chunk+ignore : a dump under <store>/sessions is chunked into per-turn units even
                     though the store sits under the ignored agent dir AND .gitignore
-                    lists it (audit 1.18); a normal gitignored source file is still
+                    lists it; a normal gitignored source file is still
                     dropped (no regression).
   2. ingest       : those units land in the graph as ordinary doc nodes via reconcile.
   3. portability  : the sessions path DERIVES from the resolved store, so it works under

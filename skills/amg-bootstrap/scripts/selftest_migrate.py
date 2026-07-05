@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Selftest for migrate_schema.py: a pre-canon graph passes migration (stage 1 DoD).
+"""Selftest for migrate_schema.py: a pre-canon graph passes migration.
 
 Covers: source_kind derived -> synthesized; type derived -> hub/overview;
 tree-sitter grammar kinds -> canonical; edge-origin backfill per owner class;
@@ -77,7 +77,7 @@ def main() -> int:
         assert res["kinds_canonicalized"] == 1, res
         assert res["edges_origin_backfilled"] == 3, res    # hub edge + calls + documents
         # the 3 hand-written legacy nodes lack provenance/verification (the python mirror
-        # nodes got them at plan time); migrate backfills exactly those (Stage 13)
+        # nodes got them at plan time); migrate backfills exactly those
         assert res["provenance_backfilled"] == 3 and res["verification_backfilled"] == 3, res
         nodes = rc.load_nodes(store)
         assert nodes["hub:billing"]["type"] == "hub"

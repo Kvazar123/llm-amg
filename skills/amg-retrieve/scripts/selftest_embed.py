@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-selftest_embed.py - proves Stage 1.5 (embedding seed enrichment) works and is safe.
+selftest_embed.py - proves embedding seed enrichment works and is safe.
 
 Uses a STUB embedder (deterministic, no model download) so it runs anywhere. The stub
 maps any text mentioning a retry/failure concept -- in English OR Russian -- to the

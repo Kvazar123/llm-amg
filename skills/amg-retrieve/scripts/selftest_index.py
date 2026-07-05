@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-selftest_index.py — the disposable SQLite read-index (roadmap Stage 12, Group 2).
+selftest_index.py — the disposable SQLite read-index.
 
 Proves the index is a transparent accelerator, never a source of divergence:
   1. identity   : the index reproduces the scan byte-for-byte (same node dicts), and
@@ -105,16 +105,16 @@ def test_writer_upsert_keeps_fresh(tmp: Path) -> None:
     assert via is not None, "a writer's upsert must leave the index FRESH (not invalidated)"
     assert res["id"] in via, "the upserted note must be in the index"
     assert via[res["id"]]["summary"] == summary
-    # the Stage 13 trust fields a note carries survive the upsert into the index
+    # the trust fields a note carries survive the upsert into the index
     assert via[res["id"]]["confidence"] == 0.85, "confidence must round-trip via the index"
     assert via[res["id"]]["verification"]["method"] == "user", "verification must round-trip"
     assert via == R._scan_nodes(root), "upserted index must still equal a full scan"
     print("PASS  writer upsert keeps the index fresh and correct (notes.add_note)")
 
 
-def test_stage13_fields_roundtrip(tmp: Path) -> None:
+def test_trust_fields_roundtrip(tmp: Path) -> None:
     """confidence / verification / line_end survive the scan<->index round-trip WITH their
-    values (not just structurally) — the projection added in Stage 13. The bench graph
+    values (not just structurally) — the trust-layer projection. The bench graph
     has none of these, so a hand-written node exercises non-trivial values."""
     root = tmp / "g6"
     (root / "nodes" / "code").mkdir(parents=True)
@@ -127,7 +127,7 @@ def test_stage13_fields_roundtrip(tmp: Path) -> None:
     scanned = R._scan_nodes(root)
     assert IX.build(root, scanned, IX.signature(root)), "build must succeed"
     via = IX.read_if_fresh(root)
-    assert via == scanned, "index must reproduce the scan incl. Stage 13 fields"
+    assert via == scanned, "index must reproduce the scan incl. the trust fields"
     n = via["code:src/m.py::a"]
     assert n["confidence"] == 0.42 and n["line_end"] == 25, n
     assert n["verification"] == {"status": "contradicted", "method": "grep"}, n
@@ -148,7 +148,7 @@ def main() -> int:
         test_stale_then_rebuild(tmp)
         test_delete_and_corrupt_fall_back(tmp)
         test_writer_upsert_keeps_fresh(tmp)
-        test_stage13_fields_roundtrip(tmp)
+        test_trust_fields_roundtrip(tmp)
         print("\nALL INDEX CHECKS PASSED")
     finally:
         embed.get_embedder = orig

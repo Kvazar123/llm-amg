@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-selftest_queue.py — partition_queue + inspect_queue helpers (stage 12, tasks 5-6).
+selftest_queue.py — partition_queue + inspect_queue helpers.
 
 Checks the queue split groups units by subtree and round-trips them, and that the
 inspect summary counts categories / kinds / pre-extracted text correctly.
@@ -117,7 +117,7 @@ def test_caps(tmp: Path) -> None:
 
 
 def test_priority(tmp: Path) -> None:
-    """Lazy derivation (Stage 17): the priority split derives the structural MAP first
+    """Lazy derivation: the priority split derives the structural MAP first
     (module/class/package/file) and defers leaf detail; a used node (usage.log) is
     promoted into the priority batch on the background pass."""
     amg = tmp / "amg3"

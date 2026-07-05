@@ -3,10 +3,9 @@
 verify_claims.py — lightweight, READ-ONLY verification of AMG facts against live source.
 
 Confidently-wrong memory is worse than none: a summary written three refactors ago and
-served as fact makes the model answer convincingly and incorrectly (roadmap §4.3). This
+served as fact makes the model answer convincingly and incorrectly. This
 is the programmatic backbone of the "verify a code claim before you answer" rule
-(SKILL amg-retrieve, Stage 2), promoted to the full provenance/verification layer of
-Stage 13.
+(SKILL amg-retrieve), promoted to the full provenance/verification layer.
 
 For each source-derived node it re-chunks the CURRENT source file (reusing the exact
 ingest chunkers, so the content hash is computed identically) and compares:
@@ -34,7 +33,7 @@ CLI:
   --store is the graph root (default: resolve_amg_root); --project is the source root
   (default: cwd, where source_path is relative to).
   --by-commit: a cheap git-history triage instead of a content re-chunk — lists nodes
-  whose source changed between their ingest provenance.commit and HEAD (stage 16).
+  whose source changed between their ingest provenance.commit and HEAD.
 """
 from __future__ import annotations
 
@@ -65,7 +64,7 @@ _BUCKETS = ("code", "doc", "data", "notes", "_hubs")
 
 
 def _method_for(node: Dict[str, Any], unit: Optional[Dict[str, Any]]) -> str:
-    """The verification method to record (roadmap enum grep|ast|test|user|doc|none): a
+    """The verification method to record (grep|ast|test|user|doc|none): a
     Python code unit is parsed by ast; other code is matched at symbol level
     (grep-equivalent); a doc/data unit is a source-text match (doc)."""
     if node.get("type") in R.CODE_TYPES:
@@ -190,7 +189,7 @@ def verify(store_root: Path, project_root: Path, ids: Optional[List[str]] = None
 
 
 def verify_by_commit(store_root: Path, project_root: Path) -> Dict[str, Any]:
-    """Cheap staleness triage by git history (source-freshness-by-commit, stage 16): for
+    """Cheap staleness triage by git history (source freshness by commit): for
     each source-derived node carrying a provenance.commit, did its source file change
     between that commit and HEAD? One `git diff --name-only` per DISTINCT ingest commit
     (not per node, not a content re-chunk), so it scales. It COMPLEMENTS the authoritative
@@ -247,7 +246,7 @@ def main(argv: List[str]) -> int:
     ids = [a for a in args if not a.startswith("--")]
     store_root = Path(store_cli).resolve() if store_cli else gs.resolve_amg_root(start=proj)
 
-    if by_commit:                       # cheap git-history triage (stage 16), no re-chunk
+    if by_commit:                       # cheap git-history triage, no re-chunk
         bc = verify_by_commit(store_root, proj)
         if as_json:
             print(json.dumps(bc, ensure_ascii=False, indent=2))

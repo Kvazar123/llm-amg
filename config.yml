@@ -50,7 +50,7 @@ mirror_path:
 # absorb_once_path:
 #   - snapshots
 
-# Captured sessions (Stage 9). At SessionEnd (a Claude Code hook) the dialogue is
+# Captured sessions. At SessionEnd (a Claude Code hook) the dialogue is
 # dumped to <agent_dir>/amg/sessions/YYYY-MM-DD-HHMM.md — role markers, no raw model
 # thinking — and then ingested like any other source. The location is DERIVED from the
 # store root, so it is correct under any agent dir (.claude / .agents / ...) with no
@@ -156,7 +156,7 @@ models:
   synthesis:      {model: opus,   reasoning_effort: high}  # architecture, gaps, consolidation judgment
 
 # -----------------------------------------------------------------------------
-# Derivation strategy (Stage 17). How much of the semantic layer bootstrap builds
+# Derivation strategy. How much of the semantic layer bootstrap builds
 # up front:
 #   eager (default) : derive a summary + edges for EVERY queued unit at bootstrap.
 #   lazy            : derive only the structural MAP eagerly (module/class/package/file
@@ -249,7 +249,7 @@ retrieval:
     superseded: 0.2               # a retired claim must not compete as an active fact
     disputed: 0.5                 # an open contradiction (arbitration) — surfaced as conflict
     rejected: 0.1                 # a claim arbitration found false — pushed down hardest
-  # Optional semantic seed enrichment (Stage 1.5). Improves recall on paraphrased
+  # Optional semantic seed enrichment. Improves recall on paraphrased
   # queries by blending embedding similarity into the seed; the PPR spread is
   # unchanged. OPTIONAL: with no backend installed, retrieval stays pure-BM25.
   #   pip install model2vec            (light, CPU, recommended)  -- or --
@@ -277,7 +277,7 @@ weights:
   prune_below: 0.05
   part_of_renormalize: true
   # Hebbian weight updates are OFF until a measured uplift. The rule is OUTCOME-GATED +
-  # DISCRIMINATIVE (Stage 14), NOT blind co-activation (which measurably hurt recall —
+  # DISCRIMINATIVE, NOT blind co-activation (which measurably hurt recall —
   # the "highways" effect): it reinforces an edge only when both endpoints were USED in an
   # accepted session (work/usage.log, the non-circular signal) by the headroom rate*(1-w)
   # so a strong edge does not run to the ceiling, and FADES an edge merely surfaced in a
@@ -346,7 +346,7 @@ eval_gate:
   on_fail: reject               # reject | warn | revert (revert == reject here)
 
 # -----------------------------------------------------------------------------
-# Provenance & verification (Stage 13). The trust layer: every fact knows its origin
+# Provenance & verification. The trust layer: every fact knows its origin
 # (provenance.kind) and how sure it is (confidence), and a CODE claim is checked against
 # live source before it is answered. Confidently-wrong memory is worse than none, so an
 # unverified / stale / contradicted / low-confidence node is FLAGGED in the pack — never
@@ -362,7 +362,7 @@ verification:
   default_confidence: 0.7    # confidence for a derived summary the builder left unrated
 
 # -----------------------------------------------------------------------------
-# Graph viewer (Stage 15). `export_graph.py` renders the graph into ONE self-contained
+# Graph viewer. `export_graph.py` renders the graph into ONE self-contained
 # offline HTML (no server, no network, read-only). This block is a THIN friendly layer
 # over the vendored 3d-force-graph library:
 #   * the few AMG keys below have short, clear names and AMG meaning;

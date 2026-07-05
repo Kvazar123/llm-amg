@@ -2,7 +2,7 @@
 """
 index_store.py — a DISPOSABLE SQLite read-index for retrieve.load_nodes.
 
-Markdown under nodes/ is the canon (roadmap §4.1); this index is a generated,
+Markdown under nodes/ is the canon; this index is a generated,
 fully-rebuildable cache that exists only to make the per-query load fast on a large
 graph. Today load_nodes scans nodes/*.md and yaml.safe_loads every file — fine for a
 few thousand nodes, slow for tens of thousands. The index stores the already-parsed,

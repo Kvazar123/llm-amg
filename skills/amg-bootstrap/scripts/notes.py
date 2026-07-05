@@ -69,7 +69,7 @@ except (AttributeError, ValueError):
 # at consolidation (compaction.protect_types), the rest are episodic (episodic_types).
 NOTE_TYPES = ("note", "decision", "adr", "open_question", "plan")
 
-# Provenance kind an authored node carries (Stage 13). user = the human stated/confirmed
+# Provenance kind an authored node carries. user = the human stated/confirmed
 # it (ground truth, so verification is `user`); model_inference = the model's own
 # conclusion (unverified until checked). decision/adr default to user (settled
 # commitments), the rest to model_inference; --kind overrides.
@@ -145,7 +145,7 @@ def add_note(project_root: Path, ntype: str, summary: str, body: str = "",
     is preserved, `updated` is bumped, tags/part_of/edges accumulate (the same merge
     rules reconcile uses for derivation items). Returns {id, created, path, txid}.
 
-    Provenance (Stage 13): `kind` is the origin — user (the human stated it -> verified
+    Provenance: `kind` is the origin — user (the human stated it -> verified
     by `user`) or model_inference (the model's conclusion -> unverified); it defaults by
     type (decision/adr -> user, else model_inference). `confidence` defaults per type.
     """

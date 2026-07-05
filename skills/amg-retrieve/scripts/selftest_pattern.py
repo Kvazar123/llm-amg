@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-selftest_pattern.py — proves Stage 17 pattern nodes work and the task-5 guard metrics
+selftest_pattern.py — proves pattern nodes work and the guard metrics
 fire. Builds a labeled demo (an anti_pattern with correct instances + a planted false
 analogy, and a migration_recipe whose instances are all superseded) and checks:
 

@@ -91,7 +91,7 @@ on an unchanged repo does zero model work and produces zero changes.
   work/derived-*.json subagent output awaiting apply
   work/coactivation.log  Hebbian co-activation signal (best-effort, append-only)
   work/pack-log.jsonl    per-retrieval pack composition; session-scoped, consumed at
-                         session-end to attribute usage (Stage 13)
+                         session-end to attribute usage
   work/usage.log         usage provenance: nodes actually USED (their source was edited)
                          + a coarse outcome; substrate for the improved Hebbian rule
   journal/            write-ahead log; EMPTY when the store is at rest
@@ -186,7 +186,7 @@ pid/host/timestamp. **Reads are lock-free** and always safe, because each write 
 per file (§5): a reader sees a coherent old or new node, never a mixture.
 
 A lock is *reclaimed* only when it is **stale**, and staleness is **host-aware** so the
-model also holds on a SHARED FOLDER (stage 16). A pid-liveness probe is only meaningful on
+model also holds on a SHARED FOLDER. A pid-liveness probe is only meaningful on
 the SAME host — pid 1234 on another machine is unrelated to pid 1234 here — so only the
 same host may reclaim a dead-pid lock, while a lock held by ANOTHER host is reclaimed
 solely by the age threshold, never by a local pid probe. Without this rule a teammate's
@@ -231,7 +231,7 @@ it — `consolidate.py` and `reconcile.py` (the latter only when a diff actually
 the graph, so an unchanged re-run logs nothing and stays idempotent). Writing is still
 best-effort (any failure is swallowed): graph integrity rests on the journal, not on
 the audit log, so a missing audit line remains harmless. This implements the model "append as
-part of a committed transaction with de-dup by txid" (audit 1.15, done at Stage 12).
+part of a committed transaction with de-dup by txid".
 
 ## 12. What is *not* auto-recoverable, and the mitigations
 
@@ -244,7 +244,7 @@ commit after each consolidation is a restore point). If the graph is ever lost,
 structural nodes and edges are rebuilt by `reconcile bootstrap`; the earned
 summaries and semantic edges are restored from the latest snapshot or re-derived.
 
-**A git merge conflict** (stage 16, when the store is tracked in git) is the other
+**A git merge conflict** (when the store is tracked in git) is the other
 not-auto-recoverable state, handled the same way — detect, isolate, repair. A
 markdown-level merge of two branches leaves ordinary git conflict markers in any node
 edited on both sides. That node's frontmatter no longer parses, so every `load_nodes`

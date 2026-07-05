@@ -93,17 +93,17 @@ DEFAULTS = {
     # Per-status activation prior, applied AFTER PPR (re-ranking by node validity,
     # NOT a teleport gate). stale is NOT penalized — a just-changed node is often the
     # hottest; it is flagged in the pack instead. superseded is pushed down so a retired
-    # claim never competes as an active fact; disputed (an open contradiction, Stage 14
+    # claim never competes as an active fact; disputed (an open contradiction under
     # arbitration) sits in between and is surfaced as a conflict; rejected (a claim
     # arbitration found false) is pushed down hardest.
     "status_prior": {"active": 1.0, "stale": 1.0, "superseded": 0.2,
                      "disputed": 0.5, "rejected": 0.1},
-    # Optional semantic seed enrichment (Stage 1.5). enabled: auto|on|off;
+    # Optional semantic seed enrichment. enabled: auto|on|off;
     # blend: 0=pure BM25 .. 1=pure semantic. Falls back to BM25 if no backend.
     "embeddings": {"enabled": "auto", "backend": "auto", "model": "", "blend": 0.5},
 }
 
-# Stage 13 trust layer defaults (a TOP-LEVEL config block, surfaced in load_config —
+# Trust-layer defaults (a TOP-LEVEL config block, surfaced in load_config —
 # default_confidence is read at ingest by reconcile, the rest govern pack marking here).
 _VERIFICATION_DEFAULTS = {"enabled": True, "verify_code_claims": True,
                           "warn_on_unverified": True, "min_confidence_warn": 0.5}
@@ -112,7 +112,7 @@ _VERIFICATION_DEFAULTS = {"enabled": True, "verify_code_claims": True,
 TIER_OF_TYPE = {
     "hub": "strategic", "overview": "strategic",
     "decision": "strategic", "adr": "strategic",   # authored rulings: surface early
-    # pattern nodes (Stage 17): synthesized, project-local generalizations of experience
+    # pattern nodes: synthesized, project-local generalizations of experience
     # (architectural pattern / recurring fix / anti-pattern / migration recipe). Strategic:
     # surface the reusable pattern before its instances, like a hub.
     "architectural_pattern": "strategic", "recurring_fix": "strategic",
@@ -122,13 +122,13 @@ TIER_OF_TYPE = {
     "file": "operational", "method": "operational",
 }
 CODE_TYPES = {"module", "class", "function", "method", "file"}
-# Pattern nodes (Stage 17): synthesized, project-local generalizations of experience.
-# Instances link to a pattern via `exemplifies`; the eval guards false analogies (task 5).
+# Pattern nodes: synthesized, project-local generalizations of experience.
+# Instances link to a pattern via `exemplifies`; the eval guards false analogies.
 PATTERN_TYPES = {"architectural_pattern", "recurring_fix", "anti_pattern", "migration_recipe"}
 # Authored rulings carry their payload in the body (the rationale), so render it
 # inline whatever tier they land in — unlike a hub, whose body is a long overview.
 DOC_BODY_TYPES = {"decision", "adr"}
-# Pack trust flag text (Stage 13). The stale flag predates the layer and is
+# Pack trust flag text. The stale flag predates the layer and is
 # unconditional; the verification/confidence flags are gated by the verification config.
 # A flag NEVER downranks a node — it tells the model to confirm the claim against source
 # (verify_claims.py) before relying on it (a just-changed node is often the most relevant).
@@ -137,14 +137,14 @@ _STALE_TEXT = "stale: summary may lag — open the source to verify"
 
 def _trust_marks(node: Dict[str, Any], vcfg: Dict[str, Any]) -> str:
     """Compose the pack's trust annotation for a node from its lifecycle status and the
-    Stage 13 trust fields. Returns a `  ⟨…⟩` suffix or "". The stale flag is
+    trust-layer fields. Returns a `  ⟨…⟩` suffix or "". The stale flag is
     unconditional (backward-compatible); the rest fire only when verification.enabled, so
     turning the layer off restores the prior behavior exactly."""
     marks: List[str] = []
     status = node.get("status")
     if status == "stale":
         marks.append(_STALE_TEXT)
-    elif status == "disputed":            # an unresolved contradiction (Stage 14 arbitration)
+    elif status == "disputed":            # an unresolved contradiction (arbitration)
         marks.append("disputed: an unresolved contradiction — check the conflicting claim")
     elif status == "rejected":            # arbitration found this claim false
         marks.append("rejected: arbitration found this claim false")
@@ -176,9 +176,9 @@ def _default_store() -> Path:
     project's LOCAL graph under any preset environment (1.32) — then a bare amg/,
     accepted only when it is an INITIALIZED store (nodes/ + journal/). A candidate
     carrying the engine signature (skills/, agents/ or install.py inside) is the AMG
-    source checkout, never a store (audit 1.39); the HOME level is skipped —
-    ~/<agent_dir>/amg holds the machine-wide defaults config, not a project store
-    (Stage 18). Then the engine's own location (initialized stores only), then the
+    source checkout, never a store; the HOME level is skipped —
+    ~/<agent_dir>/amg holds the machine-wide defaults config, not a project store.
+    Then the engine's own location (initialized stores only), then the
     .claude default. The retriever subagent passes --store explicitly; this only
     backs a bare manual run."""
     def _checkout(c: Path) -> bool:
@@ -223,7 +223,7 @@ def _deep_merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
 
 def _global_defaults_raw(local_raw: Dict[str, Any]) -> Dict[str, Any]:
     """The machine-wide defaults config (~/<agent_dir>/amg/config.yml, written by a
-    global install — Stage 18, audit 1.37) as a raw dict, or {}. Read ONLY when the
+    global install) as a raw dict, or {}. Read ONLY when the
     local config carries the installer-written `agent_dir` key: it names the
     environment's home layer and marks the config as installer-made, so a minimal
     hand-made config (e.g. a test fixture) stays hermetic unless it opts in by adding
@@ -246,7 +246,7 @@ def load_config(store_root: Path) -> Dict[str, Any]:
     raw: Dict[str, Any] = {}
     if f.exists():
         raw = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
-    # Config layering (Stage 18): global machine-wide defaults under the local config,
+    # Config layering: global machine-wide defaults under the local config,
     # local overrides per key.
     raw = _deep_merge(_global_defaults_raw(raw), raw)
     cfg = _deep_merge(DEFAULTS, (raw.get("retrieval") or {}))
@@ -254,9 +254,9 @@ def load_config(store_root: Path) -> Dict[str, Any]:
     # selection can default to a multilingual model for non-English projects.
     cfg["working_language"] = raw.get("working_language", "en")
     # weights.default_edge_weight is the fallback weight for an edge with no explicit
-    # w (audit 1.23); read it here so build_adjacency does not hardcode 0.5.
+    # w; read it here so build_adjacency does not hardcode 0.5.
     cfg["default_edge_weight"] = float((raw.get("weights") or {}).get("default_edge_weight", 0.5))
-    # Stage 13 trust layer is a TOP-LEVEL block (it governs ingest + pack marking), so
+    # The trust layer is a TOP-LEVEL block (it governs ingest + pack marking), so
     # surface it into the retrieval cfg the renderer reads, merged over its defaults.
     cfg["verification"] = {**_VERIFICATION_DEFAULTS, **(raw.get("verification") or {})}
     return cfg
@@ -298,7 +298,7 @@ def _node_from_meta(meta: Dict[str, Any], body: str, relpath: str
         "source_path": meta.get("source_path"), "lineno": meta.get("lineno"),
         "line_end": meta.get("line_end"),
         "summary": meta.get("summary", ""), "status": meta.get("status"),
-        # Stage 13 trust fields read by pack marking / verify_claims (provenance itself
+        # Trust fields read by pack marking / verify_claims (provenance itself
         # is NOT projected — retrieve never needs the origin kind, only confidence and
         # the verification verdict).
         "confidence": meta.get("confidence"),
@@ -334,7 +334,7 @@ def load_nodes(store_root: Path) -> Dict[str, Dict[str, Any]]:
     (its stored signature matches a cheap stat-walk of nodes/). Otherwise scan
     nodes/*.md and best-effort rebuild the index for next time. The index is a cache,
     NEVER the source of truth: any mismatch, corruption, or error degrades to the
-    scan, never to a wrong result (roadmap §4.1; the scan fallback is unconditional).
+    scan, never to a wrong result (markdown stays the canon; the scan fallback is unconditional).
     The signature is taken BEFORE the scan, so an index built from a scan that raced a
     concurrent write is tagged with the pre-scan state and simply fails the next
     freshness check (rebuild) rather than ever being trusted stale."""
@@ -485,7 +485,7 @@ def personalized_pagerank(teleport: Dict[str, float],
 
 
 # --------------------------------------------------------------------------- #
-# Query intent (Stage 14): history/audit and conflict surfacing
+# Query intent: history/audit and conflict surfacing
 #
 # Intent is recognized by the MODEL — the retriever subagent reads the query in ANY
 # language and passes an explicit flag — and the code only APPLIES it (meaning is the
@@ -615,7 +615,7 @@ def assemble_pack(activation: Dict[str, float], nodes: Dict[str, Dict[str, Any]]
 
 def _code_pointer(node: Dict[str, Any]) -> str:
     """`path:line` for a code node, widened to `path:start-end` when line_end is known and
-    differs (Stage 13 line range), so the model can open the exact slice."""
+    differs, so the model can open the exact slice."""
     sp, ln, le = node.get("source_path"), node.get("lineno"), node.get("line_end")
     if le and ln and le != ln:
         return f"{sp}:{ln}-{le}"
@@ -677,7 +677,7 @@ def retrieve(store_root: os.PathLike[str] | str, query: str,
     rel = bm25.scores(query)
     floor = cfg.get("seed_floor", 0.0)
 
-    # Optional semantic seed enrichment (Stage 1.5): blend embedding similarity into
+    # Optional semantic seed enrichment: blend embedding similarity into
     # the teleport vector ONLY. The PPR spread below is unchanged, so multi-hop is
     # preserved and the embedding effect is isolated/measurable. Pure BM25 if no model.
     seed = rel
@@ -695,7 +695,7 @@ def retrieve(store_root: os.PathLike[str] | str, query: str,
                 for nid in all_ids}
     teleport = {nid: seed.get(nid, 0.0) + floor for nid in all_ids}
 
-    # Query intent (Stage 14), supplied by the caller (the model recognized it — any
+    # Query intent, supplied by the caller (the model recognized it — any
     # language; the code only applies it). A conflict intent ("show contradictions") seeds
     # the conflict subgraph: conflict nodes get teleport mass (so PPR flows through the
     # conflict region), still on top of the query seed — a topical conflict query stays
@@ -725,7 +725,7 @@ def retrieve(store_root: os.PathLike[str] | str, query: str,
         _log_coactivation(store_root, query, tiers, adj)
         _log_pack(store_root, query, tiers, nodes)
 
-    # Lazy derivation (Stage 17 phase B): activated nodes still awaiting a summary
+    # Lazy derivation, the first-touch half: activated nodes still awaiting a summary
     # (status stale) so the amg-retrieve skill can derive them synchronously BEFORE the
     # answer (first touch is never empty). Harmless under eager — normally empty. Pack
     # order strategic..periphery, so the most prominent stale node comes first.
@@ -776,7 +776,7 @@ def _log_pack(store_root: Path, query: str, tiers: Dict[str, List[str]],
     """Append-only record of WHAT WAS IN THE PACK (id + source_path) to
     work/pack-log.jsonl. Session-end (lifecycle) intersects this with the files actually
     edited in the session to derive the USAGE provenance (usage.log) — the non-circular
-    signal for Stage 13 task 9 / the improved Hebbian rule (Stage 14). It is kept SEPARATE
+    signal for the improved (outcome-gated) Hebbian rule. It is kept SEPARATE
     from coactivation.log: that is blind pack co-membership (circular, §8.1); this is the
     surface a real outcome can be attributed to. Lock-free, best-effort."""
     inpack = (tiers.get("strategic", []) + tiers.get("tactical", [])
@@ -831,7 +831,7 @@ def main(argv: List[str]) -> int:
     print("\n--- ranked (top {}) ---".format(top))
     for nid, a in res["ranked"][:top]:
         print(f"{a:8.4f}  {nid}")
-    if res.get("stale_in_pack"):           # lazy derivation (Stage 17 phase B): derive these first
+    if res.get("stale_in_pack"):           # lazy derivation: derive these first
         print("\n--- stale in pack (lazy: derive before relying) ---")
         for nid in res["stale_in_pack"]:
             print(f"  {nid}")

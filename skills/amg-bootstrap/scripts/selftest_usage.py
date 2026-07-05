@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-selftest_usage.py — usage provenance (Stage 13, task 9): retrieve's pack log crossed with
+selftest_usage.py — usage provenance: retrieve's pack log crossed with
 the session's edited files -> work/usage.log, kept SEPARATE from coactivation.log.
 
 Checks:
@@ -117,7 +117,7 @@ def case_usage_and_consume(proj: Path) -> None:
 def case_separation(proj: Path) -> None:
     """usage.log is a different file from coactivation.log, and the weight fold here (with
     apply_hebbian OFF, the default) leaves usage.log intact — the rule reads/consumes it
-    only when enabled, so the substrate accrues until then (Stage 14)."""
+    only when enabled, so the substrate accrues until then."""
     amg = amg_of(proj)
     usage = amg / "work" / "usage.log"
     assert usage.exists(), "precondition: usage.log written by the prior case"

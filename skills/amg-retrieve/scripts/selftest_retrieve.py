@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-selftest_retrieve.py - regression for Stage 2 retrieval stabilization.
+selftest_retrieve.py - regression for retrieval stabilization.
 
 Headless and deterministic: embeddings are forced off (stubbed to None), so every
 check is pure BM25 + PPR with no model download. Covers:
@@ -13,7 +13,7 @@ check is pure BM25 + PPR with no model download. Covers:
   4. config merge   : config.yml overlays defaults KEY-BY-KEY (an incomplete
                       relation_priors / status_prior / token_budget keeps the rest).
   5. inspect bucket : --bucket filters by the real on-disk directory (notes/_hubs
-                      too), not a guessed id prefix (roadmap 1.26).
+                      too), not a guessed id prefix.
   6. explain        : --explain attributes a multi-hop node's activation to the
                       incoming edge that carried the mass (grounds explainability).
 
@@ -91,14 +91,14 @@ def test_stale_is_flagged(tmp: Path) -> None:
     res = R.retrieve(store, "background sync reconcile state",
                      write_pack=False, log_coactivation=False)
     assert R._STALE_TEXT in res["pack"], "stale node must be flagged in the pack"
-    # lazy derivation (Stage 17 phase B): the activated stale node is EXPOSED so the
+    # lazy derivation: the activated stale node is EXPOSED so the
     # amg-retrieve skill can derive it synchronously before the answer
     assert res["stale_in_pack"] == ["doc:guide.md::sync"], res.get("stale_in_pack")
     print("PASS  stale node flagged in pack + exposed in stale_in_pack")
 
 
 def test_trust_marks(tmp: Path) -> None:
-    """Stage 13 pack marking: an unverified code node, a contradicted one, and a
+    """Pack trust marking: an unverified code node, a contradicted one, and a
     low-confidence one are each flagged (so the model confirms before relying), and a
     code pointer renders the line RANGE when line_end is known. Marks never downrank —
     they are annotations."""
@@ -205,7 +205,7 @@ def test_explain(tmp: Path) -> None:
 
 
 def test_intent_and_conflict(tmp: Path) -> None:
-    """Stage 14 surfacing, driven by a caller-supplied intent flag (the model recognizes
+    """Intent-driven surfacing, by a caller-supplied intent flag (the model recognizes
     intent in any language; the code only applies it):
       (a) status prior: disputed/rejected get their multipliers, and `lift` neutralizes
           ALL retired downranks;

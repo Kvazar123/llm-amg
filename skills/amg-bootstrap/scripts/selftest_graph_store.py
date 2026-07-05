@@ -127,7 +127,7 @@ def case_lock_reentry():
 def case_lock_cross_host():
     """A LIVE lock held by ANOTHER host must NOT be stolen by a local pid probe — on a
     shared folder pid N on another machine is unrelated to pid N here. It is reclaimed
-    only by the age threshold, never by liveness (stage 16). The single-host path is
+    only by the age threshold, never by liveness. The single-host path is
     unchanged (case_lock_reentry / case_unclean_shutdown cover it)."""
     store = fresh_store()
     foreign = gs.socket.gethostname() + "-foreign"          # guaranteed != this host
@@ -176,8 +176,8 @@ def case_documented_layout():
 
 def case_action_log():
     """append_log writes actions.log transactionally, de-dups by txid, and rotates
-    when bounded — so a long-lived graph never rewrites an unbounded file (audit
-    1.15); a plain flat log, no markdown markup (audit 1.36), and a legacy log.md
+    when bounded — so a long-lived graph never rewrites an unbounded file);
+    a plain flat log, no markdown markup, and a legacy log.md
     is adopted on the first write with its `## ` prefixes stripped."""
     store = fresh_store()
     log = store.root / "actions.log"

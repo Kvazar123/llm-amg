@@ -114,11 +114,11 @@ def atomic_delete(path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Store-root resolution (roadmap 4.9: agent dir is a parameter, not `.claude`)
+# Store-root resolution (the agent dir is a parameter, not `.claude`)
 # --------------------------------------------------------------------------- #
 
 # Entries that mark an amg/-named directory as the AMG SOURCE CHECKOUT (the engine
-# repo, or the engine unpacked into/next to a project), never a store (audit 1.39).
+# repo, or the engine unpacked into/next to a project), never a store.
 _ENGINE_MARKERS = ("skills", "agents", "install.py")
 
 
@@ -127,7 +127,7 @@ def _looks_like_engine_checkout(amg_dir: Path) -> bool:
     rather than a store: its config.yml sits next to skills/, agents/ or install.py.
     Deliberately independent of nodes/+journal/: plan() calls init() unconditionally,
     so a single mis-resolved run "initializes" a checkout — an initialized-store test
-    alone would then pass and keep hijacking every later run (audit 1.39)."""
+    alone would then pass and keep hijacking every later run."""
     return any((amg_dir / m).exists() for m in _ENGINE_MARKERS)
 
 
@@ -150,9 +150,9 @@ def resolve_amg_root(cli_root: os.PathLike[str] | str | None = None,
          store (nodes/ + journal/ — e.g. the cwd sits inside the agent dir). Any
          candidate carrying the engine signature (skills/, agents/ or install.py
          inside) is the AMG source checkout, not a store, and is skipped — even
-         when a stray run already created nodes/+journal/ in it (audit 1.39). The
+         when a stray run already created nodes/+journal/ in it. The
          HOME level itself is skipped: ~/<agent_dir>/amg holds the machine-wide
-         DEFAULTS config layer (Stage 18, audit 1.37), not a project store;
+         DEFAULTS config layer, not a project store;
       4. the engine's own location (scripts live at
          <agent_dir>/skills/amg-bootstrap/scripts -> <agent_dir>/amg), only if that
          amg/ is an initialized store — covers the dev layout and a local install
@@ -237,7 +237,7 @@ class GraphStore:
              wait_seconds: float = 0.0) -> Iterator["GraphStore"]:
         """Acquire the single-writer lock. Reclaims a STALE lock — a dead pid on THIS
         host, or any lock older than stale_seconds. A live lock held by ANOTHER host (a
-        shared folder, stage 16) is reclaimed only by age, never by a local pid probe."""
+        shared folder) is reclaimed only by age, never by a local pid probe."""
         self.root.mkdir(parents=True, exist_ok=True)
         deadline = time.time() + wait_seconds
         acquired = False

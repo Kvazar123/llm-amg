@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-selftest_stage2.py - verifies Stage 2 (PDF/DOCX/XLSX text extraction).
+selftest_stage2.py - verifies optional-format extraction (PDF/DOCX/XLSX/PPTX + tree-sitter).
 
 For each format, if a library that can WRITE a sample is installed, it generates a
 tiny file with known content and checks the extractor produces the expected units
@@ -108,7 +108,7 @@ def main() -> int:
     else:
         print("SKIP  xlsx (need: pip install openpyxl)")
 
-    # ---- PPTX (python-pptx reads and writes; Stage 11) ----------------------
+    # ---- PPTX (python-pptx reads and writes) --------------------------------
     if _have("pptx"):
         from pptx import Presentation
         prs = Presentation()
@@ -126,7 +126,7 @@ def main() -> int:
     else:
         print("SKIP  pptx (need: pip install python-pptx)")
 
-    # ---- tree-sitter (canonical kinds for non-Python code; stage 1, task 8) --
+    # ---- tree-sitter (canonical kinds for non-Python code) ------------------
     if _have("tree_sitter_language_pack"):
         p = tmp / "app.js"
         p.write_text("function foo(a) {\n  return bar(a);\n}\n\n"
@@ -137,7 +137,7 @@ def main() -> int:
         kinds = {u["qualname"]: u["kind"] for u in units if u["qualname"]}
         assert kinds.get("foo") == "function" and kinds.get("Baz") == "class", kinds
         assert all(u["kind"] in ("module", "function", "class") for u in units), units
-        # Stage 13: line_end is the unit's real end line (multi-line span), not lineno
+        # line_end is the unit's real end line (multi-line span), not lineno
         spans = {u["qualname"]: (u["lineno"], u["line_end"]) for u in units if u["qualname"]}
         assert spans["foo"] == (1, 3), spans                # function foo spans lines 1-3
         assert spans["Baz"][1] > spans["Baz"][0], spans     # class Baz spans several lines

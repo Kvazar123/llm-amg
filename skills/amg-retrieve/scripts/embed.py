@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-embed.py - OPTIONAL semantic seed enrichment for AMG retrieval (Stage 1.5).
+embed.py - OPTIONAL semantic seed enrichment for AMG retrieval.
 
 Lexical seeding (BM25) misses paraphrases: ask "how are payment failures handled"
 when the code says "retry on gateway error" and the word overlap is near zero, so the

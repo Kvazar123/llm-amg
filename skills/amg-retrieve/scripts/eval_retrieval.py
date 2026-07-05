@@ -375,7 +375,7 @@ def build_hebbian_demo(root: Path) -> List[Dict[str, Any]]:
 
 
 # --------------------------------------------------------------------------- #
-# Pattern nodes (Stage 17, task 5): labeled demo + the three guard metrics
+# Pattern nodes: labeled demo + the three guard metrics
 # --------------------------------------------------------------------------- #
 
 def build_pattern_demo(root: Path) -> Dict[str, Any]:
@@ -441,7 +441,7 @@ def build_pattern_demo(root: Path) -> Dict[str, Any]:
 
 def pattern_metrics(store_root: Path, labels: Dict[str, Any],
                     cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """The three pattern-node guard metrics (Stage 17 task 5), over the graph + labels:
+    """The three pattern-node guard metrics, over the graph + labels:
 
       transfer_recall    : for each labeled instance, query its context and measure recall
                            of {its pattern + the sibling instances} in the assembled pack —

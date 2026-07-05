@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-selftest_notes.py — proves the Stage 5 safe note-capture API (notes.py).
+selftest_notes.py — proves the safe note-capture API (notes.py).
 
 Checks:
   1. fields    : each authored type (note/decision/adr/open_question/plan) is written
@@ -176,7 +176,7 @@ def case_retrieval(proj: Path) -> None:
 
 
 def case_provenance(proj: Path) -> None:
-    """Stage 13: an authored decision/adr is the human's word (provenance.kind=user,
+    """An authored decision/adr is the human's word (provenance.kind=user,
     verification verified/user); a note/open_question/plan is the model's inference
     (model_inference, unverified). confidence defaults per type; --kind/--confidence
     override."""

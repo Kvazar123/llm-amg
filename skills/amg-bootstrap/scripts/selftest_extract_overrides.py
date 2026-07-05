@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-selftest_extract_overrides.py — proves the amg-classifier integration (Stage 6,
-tasks 1-3, audit 1.13): the classifier's verdict is made effective in code.
+selftest_extract_overrides.py — proves the amg-classifier integration: the classifier's verdict is made effective in code.
 
 Checks:
   1. route    : _route_override maps (category, language) onto the right chunker —

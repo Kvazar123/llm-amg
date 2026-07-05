@@ -1,6 +1,6 @@
 # Vendored viewer assets
 
-The 3D graph viewer (roadmap Stage 15) is **self-contained and offline**: it never
+The 3D graph viewer is **self-contained and offline**: it never
 fetches anything at view time. `export_graph.py` inlines all three files below into a
 single HTML, so the output opens by double-click in a browser — no server, no network,
 nothing leaves the machine (the memory graph can hold sensitive project knowledge).

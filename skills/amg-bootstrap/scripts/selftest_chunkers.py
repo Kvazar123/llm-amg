@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-selftest_chunkers.py — Stage 11 structural chunkers, all stdlib-only (no optional libs):
+selftest_chunkers.py — the structural chunkers, all stdlib-only (no optional libs):
 ndjson, csv/tsv, log, rst. PPTX (optional python-pptx) lives in selftest_stage2.py with
 the other binary-document extractors.
 

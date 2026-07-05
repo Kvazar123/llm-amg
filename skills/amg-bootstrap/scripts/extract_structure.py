@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-extract_structure.py - deterministic source -> structural units. (Stage 1: unified input)
+extract_structure.py - deterministic source -> structural units (the unified input step).
 
 The graph engine is domain-blind: it stores nodes/edges/text and does not care whether
 a unit came from code, prose, or data. Only THIS file is type-aware. It is the "sensory
@@ -132,7 +132,7 @@ def _deep_merge_cfg(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any
 
 def _global_defaults_raw(local_raw: Dict[str, Any]) -> Dict[str, Any]:
     """The machine-wide defaults config (~/<agent_dir>/amg/config.yml, written by a
-    global install — Stage 18, audit 1.37) as a raw dict, or {}. Read ONLY when the
+    global install) as a raw dict, or {}. Read ONLY when the
     local config carries the installer-written `agent_dir` key: it both names the
     environment's home layer (.claude / .agents / custom) and marks the config as
     installer-made — a minimal hand-made config (e.g. a test fixture) stays hermetic
@@ -152,10 +152,9 @@ def _global_defaults_raw(local_raw: Dict[str, Any]) -> Dict[str, Any]:
 
 def load_config(amg_root: Path) -> Dict[str, Any]:
     """The store's config as a raw dict: the machine-wide global defaults (if any)
-    deep-merged under the local config.yml — local overrides per key (Stage 18,
-    audit 1.37). A MISSING local config means AMG is not installed for the resolved
+    deep-merged under the local config.yml — local overrides per key. A MISSING local config means AMG is not installed for the resolved
     root — exit with a diagnostic that NAMES that root (the first symptom of a
-    store-resolution miss, audit 1.50) instead of an unhandled FileNotFoundError.
+    store-resolution miss) instead of an unhandled FileNotFoundError.
     Unlike the tolerant loaders (retrieve/consolidate/lifecycle read tunables and can
     fall back to defaults), extraction without a config would silently ingest nothing
     ("added: 0") — the masked failure this stage removes."""
@@ -199,7 +198,7 @@ def resolve_sources(config: Dict[str, Any]) -> List[Tuple[str, str]]:
 
 def detect_policy_conflicts(units: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Unit ids produced under MORE THAN ONE policy — a file that falls under two source
-    roots of different intent (e.g. mirror_path: . and absorb_path: data; audit 1.29).
+    roots of different intent (e.g. mirror_path: . and absorb_path: data).
     The dedup in reconcile.plan keeps the LAST source in resolve_sources order
     (mirror -> absorb -> absorb_once), so the most-preserving policy wins; this surfaces
     the overlap so the choice is never silent. Returns [{id, policies:[...]}], sorted."""
@@ -262,7 +261,7 @@ def _excludes_for_policy(config: Dict[str, Any], policy: str) -> List[str]:
 
 def _effective_ignore_dirs(amg_root: Optional[Path]) -> Set[str]:
     """DEFAULT_IGNORE_DIRS plus the RESOLVED agent dir, so the engine never indexes its
-    own directory whatever it is named (.claude / .agents / custom; roadmap 4.9). The
+    own directory whatever it is named (.claude / .agents / custom). The
     name is derived from the store location <agent_dir>/amg, which is authoritative —
     independent of the (advisory) `agent_dir` config key."""
     dirs = set(DEFAULT_IGNORE_DIRS)
@@ -358,7 +357,7 @@ _OVERRIDE_CATEGORIES = {"code", "doc", "data"}
 
 
 def load_overrides(amg_root: Optional[Path]) -> Dict[str, Dict[str, Any]]:
-    """Read the amg-classifier category overrides for ambiguous files (audit 1.13).
+    """Read the amg-classifier category overrides for ambiguous files.
 
     Format: { "<rel/path>": {"category": code|doc|data, "language": <grammar|null>} }.
     The bootstrap workflow writes this to work/classification-overrides.json after the
@@ -425,7 +424,7 @@ def _dotted_chain(expr: ast.AST) -> Optional[str]:
     Name/Attribute expression. None when the head is not a plain name (a call result,
     subscript, literal): such a receiver is not deterministically resolvable, so the
     reconcile resolver could never bind it — it is dropped at extraction rather than
-    recorded as a bare attribute that would only ever make a dangling edge (audit 1.40)."""
+    recorded as a bare attribute that would only ever make a dangling edge."""
     parts: List[str] = []
     while isinstance(expr, ast.Attribute):
         parts.append(expr.attr)
@@ -503,7 +502,7 @@ def _python_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
                     bases = [b for b in (_dotted_chain(x) for x in child.bases) if b]
                     if bases:
                         unit["bases"] = bases
-                # the containment backbone (audit 1.41): module defines its top-level
+                # the containment backbone: module defines its top-level
                 # symbols, a class defines its methods -> `defines` edges in reconcile
                 container.setdefault("defines", []).append(qual)
                 units.append(unit)
@@ -516,7 +515,7 @@ def _python_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
 
 # tree-sitter node-type families (vary by grammar; matched broadly), mapped to
 # the canonical node types so non-Python code gets the same retrieval tiers and
-# path:line pointers as Python (roadmap 1.25; stage 1, task 8). Type-level
+# path:line pointers as Python. Type-level
 # containers (struct/impl/trait/interface/enum) canonicalize to `class`.
 _TS_DEF = {
     "function_definition": "function", "function_declaration": "function",
@@ -669,7 +668,7 @@ def _treesitter_units(path: Path, rel: str, policy: str, lang: str) -> Optional[
                         if bs:
                             unit["bases"] = bs
                     # containment backbone: the enclosing def (or the module unit)
-                    # defines this symbol — mirrors the Python chunker (audit 1.41)
+                    # defines this symbol — mirrors the Python chunker
                     (parent if parent is not None else units[0]) \
                         .setdefault("defines", []).append(nm)
                     units.append(unit)
@@ -912,8 +911,8 @@ def _data_units(path: Path, rel: str, policy: str, max_depth: int = 4,
                 recurse_min: int = 2048, cap: int = 500) -> List[Dict[str, Any]]:
     """JSON/YAML records. Each top-level entry is one record, EXCEPT a large nested
     container (serialized JSON over `recurse_min`, holding nested structure) is split
-    into sub-records by key path so deep structure is not lost (recursive chunker,
-    Stage 11). A small or flat value keeps the original one-record-per-entry shape and
+    into sub-records by key path so deep structure is not lost (recursive chunker).
+    A small or flat value keeps the original one-record-per-entry shape and
     hash, so ordinary data files are unchanged. Total units per file are capped at
     `cap` (json_max_nodes); `max_depth` bounds recursion. A scalar root or parse error
     falls back to one file unit."""
@@ -1014,7 +1013,7 @@ def _csv_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
              "lang": "csv", "content_sha": _sha(desc), "text": desc}]
 
 
-# --- captured sessions (Stage 9) ---------------------------------------------
+# --- captured sessions -------------------------------------------------------
 # The dump writer (lifecycle.py) and this chunker SHARE the role markers below — the
 # format contract; lifecycle imports these helpers so the two never drift apart.
 _SESSION_ROLE_RE = re.compile(r"^=== (Human|Assistant) ===\s*$")
@@ -1060,11 +1059,11 @@ def _session_units(path: Path, rel: str, policy: str) -> List[Dict[str, Any]]:
     return units or [_file_unit(rel, "doc", policy, text, "session")]
 
 
-# --- external chat exports (Stage 11) ----------------------------------------
+# --- external chat exports ---------------------------------------------------
 # A structured chat log (JSON array / a {messages: [...]} object / NDJSON) of message
 # objects -> one episodic `section` per message, with role/time/thread folded into the
 # unit text (so the builder summarizes WITH attribution) and a weak `follows` edge to
-# the previous turn IN THE SAME THREAD (conversation adjacency: roadmap 4.2). This is the
+# the previous turn IN THE SAME THREAD (conversation adjacency). This is the
 # common OpenAI/Anthropic `messages` shape and tolerant synonyms; our own flat dump
 # (=== Human === markers) is handled by _session_units, reached via _has_role_markers.
 _CHAT_ROLE_KEYS = ("role", "author", "speaker", "from", "sender", "name")
@@ -1343,7 +1342,7 @@ CHUNKERS: Dict[str, Callable[..., Any]] = {"python": _python_units, "treesitter"
 
 
 # --------------------------------------------------------------------------- #
-# Captured sessions as a source (Stage 9)
+# Captured sessions as a source
 # --------------------------------------------------------------------------- #
 
 def session_dir(project_root: Path, config: Dict[str, Any], amg_root: Optional[Path]) -> Optional[Path]:
@@ -1362,7 +1361,7 @@ def _iter_session_files(base: Path) -> Iterable[Path]:
     """Yield files under the sessions dir, filtering only junk BELOW it. The dir lives
     inside the store (under the ignored agent dir), so — unlike iter_source_files — its
     prefix is NOT subject to DEFAULT_IGNORE_DIRS / .gitignore: it is an opted-in
-    AMG-internal source. Without this, iter would silently drop every dump (audit 1.18)."""
+    AMG-internal source. Without this, iter would silently drop every dump."""
     if not base.exists():
         return
     for p in base.rglob("*"):

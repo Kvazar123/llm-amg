@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-export_graph.py — export the AMG graph to JSON for visual inspection (roadmap Stage 15).
+export_graph.py — export the AMG graph to JSON for visual inspection.
 
 READ-ONLY with respect to the graph: it scans nodes/*.md and emits a {meta, nodes,
 links} document. Its only write is the output file (default under cache/, which is
@@ -9,7 +9,7 @@ disposable and rebuildable) — never a node, edge, or journal entry.
 Unlike retrieve.load_nodes (which projects only the fields BM25/PPR need and drops
 source_kind / policy / provenance / lang / tags / qualname / created / updated), the
 export carries the FULL frontmatter of every node, because the viewer's side panel
-shows it (Stage 15, task 4: "show frontmatter"). The cost — a one-shot full scan
+shows it. The cost — a one-shot full scan
 instead of the disposable read-index — is irrelevant for an on-demand inspection tool
 (the index exists to speed the PER-QUERY load, not a single export).
 
@@ -30,7 +30,7 @@ What it carries (from the data model, 02-data-model.md):
     (cluster key — the heaviest part_of topic, else the bucket), degree (incident
     links), body, and the full `frontmatter` dict (source_path/lineno/line_end,
     source_kind, policy, confidence, provenance, verification, part_of, edges, lang,
-    tags, created/updated, qualname, ...). Stage 14 statuses disputed/rejected ride
+    tags, created/updated, qualname, ...). The arbitration statuses disputed/rejected ride
     along for the viewer to surface.
   * links: one per typed edge whose TARGET node exists (a dangling edge — an external
     import or an unresolved cross-file call — is dropped, exactly as retrieve does),

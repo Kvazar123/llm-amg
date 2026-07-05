@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-selftest_reconcile.py — proves the Stage 0 reconcile guarantees (tasks 1–2).
+selftest_reconcile.py — proves the core reconcile guarantees.
 
 Checks:
   1. fields   : created nodes carry lineno/qualname in frontmatter (lang stays the
@@ -42,14 +42,14 @@ Checks:
                 after a stray run created nodes/+journal/ in it); the installed
                 preset store next to it wins; the home agent dir (the global
                 defaults config layer) is not a store; retrieve._default_store
-                mirrors the same rules (Stage 18, audits 1.39/1.37).
+                mirrors the same rules.
  16. missing  : a missing config.yml exits with an "AMG is not installed"
-                diagnostic naming the resolved root (audit 1.50), no traceback.
- 17. resolver : stage 19 (audits 1.40/1.41) — the deterministic resolver emits the
+                diagnostic naming the resolved root, no traceback.
+ 17. resolver : the deterministic resolver emits the
                 defines backbone and inherits edges, binds cross-file calls through
                 the file's own imports, and emits NO edge for builtins/unresolvable
                 receivers (nothing dangles).
- 18. repair   : stage 19 (audit 1.42) — a judgment edge whose target was written
+ 18. repair   : a judgment edge whose target was written
                 without its leading directories re-binds to the unique canonical id
                 (at apply and by the bootstrap sweep); an ambiguous suffix stays
                 untouched; a second bootstrap is a strict no-op (idempotent sweep).
@@ -287,7 +287,7 @@ def case_multi_item_part_of(proj: Path) -> None:
     work = proj / ".claude" / "amg" / "work"
     out = work / "derived-po.json"
     # A create item plus two update items on the SAME node in one derivation:
-    # memberships must accumulate, not overwrite each other (audit 1.6).
+    # memberships must accumulate, not overwrite each other.
     out.write_text(json.dumps([
         {"id": "hub:po", "type": "hub", "summary": "membership testbed"},
         {"id": "hub:po", "part_of": [{"topic": "hub:a", "w": 0.6}]},
@@ -434,7 +434,7 @@ def case_root_resolution(proj: Path) -> None:
     finally:
         shutil.rmtree(ag, ignore_errors=True)
     # 4/5. with no config anywhere up from a bare dir: the engine's own amg/
-    # wins IF it is an initialized store (dev layout; Stage 18 tightened the mere
+    # wins IF it is an initialized store (dev layout; the resolver tightened the mere
     # is_dir test), else the default <start>/.claude — assert whichever state this
     # environment is in (assumes no AMG config in the temp dir's ancestors).
     bare = Path(tempfile.mkdtemp(prefix="amg-bare-"))
@@ -451,11 +451,11 @@ def case_root_resolution(proj: Path) -> None:
 
 
 def case_store_resolution_vetoes() -> None:
-    """Stage 18 (audit 1.39): an amg/-named ENGINE CHECKOUT never resolves as the
+    """An amg/-named ENGINE CHECKOUT never resolves as the
     store — neither alone (falls through to the default) nor when a stray run already
     'initialized' it (nodes/+journal/ inside a checkout), and a real installed store
     next to it wins via the preset probe. The home agent dir (the machine-wide
-    defaults config layer, audit 1.37) is not a store either."""
+    defaults config layer) is not a store either."""
     proj = Path(tempfile.mkdtemp(prefix="amg-veto-"))
     engine_amg = Path(gs.__file__).resolve().parents[3] / "amg"
     fallback_ok = (gs._initialized_store(engine_amg)
@@ -516,7 +516,7 @@ def case_store_resolution_vetoes() -> None:
 
 
 def case_default_store_mirror() -> None:
-    """retrieve._default_store mirrors the Stage 18 resolver rules: the checkout is
+    """retrieve._default_store mirrors the resolver rules: the checkout is
     vetoed and the installed preset store is found from the project cwd."""
     sys.path.insert(0, str(HERE.parents[1] / "amg-retrieve" / "scripts"))
     import retrieve as RT
@@ -538,7 +538,7 @@ def case_default_store_mirror() -> None:
 
 
 def case_uninstalled_diagnostic() -> None:
-    """audit 1.50: extract_structure.load_config on a MISSING config.yml exits with a
+    """extract_structure.load_config on a MISSING config.yml exits with a
     diagnostic naming the resolved root, instead of a FileNotFoundError traceback."""
     empty = Path(tempfile.mkdtemp(prefix="amg-nocfg-"))
     try:
@@ -555,7 +555,7 @@ def case_uninstalled_diagnostic() -> None:
 
 
 def case_absorb_once() -> None:
-    """absorb_once (Stage 11): ingested once, then FROZEN — a later source change is not
+    """absorb_once: ingested once, then FROZEN — a later source change is not
     re-derived (no requeue, no drift) and deletion never purges it, unlike absorb which
     re-derives on change."""
     proj = Path(tempfile.mkdtemp(prefix="amg-once-"))
@@ -651,7 +651,7 @@ def case_resume_freshness() -> None:
 
 
 def case_provenance_and_confidence() -> None:
-    """Stage 13: ingest stamps provenance.kind + verification(unverified) + line_end on
+    """Ingest stamps provenance.kind + verification(unverified) + line_end on
     source-derived nodes; a content change voids a prior verification (back to
     unverified); the builder's confidence estimate is applied, and a summary that lands
     without one takes the default; a synthesized hub gets kind model_inference +
@@ -710,13 +710,13 @@ def case_provenance_and_confidence() -> None:
         assert h["provenance"]["derived_from"] == ["code:src/m.py::a"], h["provenance"]
         assert h["verification"]["status"] == "unverified", h
         print("PASS  provenance: ingest stamps kind/verification/line_end; change voids "
-              "verification; confidence applied (Stage 13)")
+              "verification; confidence applied")
     finally:
         shutil.rmtree(proj, ignore_errors=True)
 
 
 def case_resolver_backbone() -> None:
-    """Stage 19 (audits 1.40/1.41): defines backbone, inherits, resolver-bound calls;
+    """Defines backbone, inherits, resolver-bound calls;
     builtins and external attribute chains produce NO edge at all."""
     proj = Path(tempfile.mkdtemp(prefix="amg-resolve-"))
     try:
@@ -777,7 +777,7 @@ def case_resolver_backbone() -> None:
 
 
 def case_prefix_repair_sweep() -> None:
-    """Stage 19 (audit 1.42): canonical-id repair by unique path suffix — at apply
+    """Canonical-id repair by unique path suffix — at apply
     for judgment edges, and by the bootstrap sweep for nodes written earlier; an
     ambiguous suffix is never repaired; the sweep is idempotent (second run no-op)."""
     proj = Path(tempfile.mkdtemp(prefix="amg-repair-"))
@@ -833,7 +833,7 @@ def case_prefix_repair_sweep() -> None:
 
 
 def case_merge_conflict_resilience() -> None:
-    """Stage 16: a node file left with git merge-conflict markers must NOT crash the read
+    """A node file left with git merge-conflict markers must NOT crash the read
     paths (its YAML no longer parses) — every load_nodes skips it — and find_conflict_markers
     surfaces it so status/repair/bootstrap can flag it for the user."""
     sys.path.insert(0, str(HERE.parents[1] / "amg-retrieve" / "scripts"))

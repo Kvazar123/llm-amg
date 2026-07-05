@@ -20,7 +20,7 @@ work on an interruption. Caps come from the `builder` config block (or the flags
 CLI:
   python partition_queue.py [<project_root>] [--root <agent_dir>] [--depth N]
         [--max-units N] [--max-chars N]
-  python partition_queue.py --priority [--usage] [<project_root>]   # lazy derivation (Stage 17):
+  python partition_queue.py --priority [--usage] [<project_root>]   # lazy derivation:
         # split the queue into a PRIORITY batch (derive now) and a DEFERRED remainder.
 
 `--depth` (default 2) is how many leading path segments form a batch key: depth 2
@@ -52,7 +52,7 @@ BUILDER_DEFAULTS: Dict[str, Any] = {"batch_units": 40, "batch_max_chars": 120000
 # pointer): the builder will read about this much of the source itself.
 _NO_TEXT_NOMINAL_CHARS = 2000
 
-# Lazy derivation (Stage 17, §4.10). The PRIORITY subset derived eagerly under
+# Lazy derivation. The PRIORITY subset derived eagerly under
 # `derivation: lazy` is the structural MAP — file/container-level units (module/class/
 # package, and the whole-file fallback). Leaf detail (function/method/section/record/
 # block/page/sheet) is deferred until a query activates it (phase B). These kinds mirror
@@ -216,7 +216,7 @@ def main(argv: List[str]) -> int:
     use_usage = "--usage" in args
     if use_usage:
         args.remove("--usage")
-    if "--priority" in args:                 # lazy derivation (Stage 17): map first, detail later
+    if "--priority" in args:                 # lazy derivation: map first, detail later
         args.remove("--priority")
         project_root = Path(args[0]).resolve() if args else Path.cwd()
         amg_root = gs.resolve_amg_root(cli_root, project_root)

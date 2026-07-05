@@ -4,7 +4,7 @@ bench.py — performance ruler for AMG at scale. Read-only with respect to any g
 it measures; it never mutates the nodes of a store you point it at.
 
 Purpose: turn "is the graph still fast at N nodes?" into a number, and make the
-speed-up from the generated read-index (roadmap Stage 12, Group 2) a measured
+speed-up from the generated read-index a measured
 before/after — run this BEFORE the index for a baseline, then again after.
 
 It times the hot paths the index targets, all over existing engine modules:

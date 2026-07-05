@@ -14,10 +14,10 @@ active and `automation: on` (turning automation off leaves only the manual comma
   session-end   : fold the co-activation log into weights (deterministic; with
                   apply_hebbian off this only ACCUMULATES coact, never mutating
                   conductance), refresh the digest, dump the session transcript to
-                  <store>/sessions (Stage 9; from the hook's stdin payload), and record
+                  <store>/sessions (from the hook's stdin payload), and record
                   USAGE provenance (work/usage.log: pack nodes whose source the session
-                  edited, with a coarse outcome — Stage 13, the non-circular substrate
-                  for Stage 14's Hebbian rule). The JUDGMENT half of consolidation — the
+                  edited, with a coarse outcome — the non-circular substrate
+                  for the outcome-gated Hebbian rule). The JUDGMENT half of consolidation — the
                   amg-consolidator subagent + apply — stays model-driven: a hook cannot
                   run a subagent, so it lives in the activation loop, not here.
 
@@ -117,10 +117,10 @@ def _heal(amg: Path) -> Dict[str, Any]:
     A read-only probe runs FIRST, before the lock: lock() steals a stale lock on
     acquisition and recover() empties the journal, so by the time we hold the lock the
     evidence of an unclean shutdown is already gone. The probe is what lets
-    session-start / repair report that they healed one (Stage 9, task 9).
+    session-start / repair report that they healed one.
 
     On a SHARED FOLDER a live writer (possibly on another machine) may legitimately hold
-    the lock; the host-aware staleness rule (graph_store, stage 16) no longer steals it.
+    the lock; the host-aware staleness rule (graph_store) no longer steals it.
     Rather than crash the session, skip this heal cycle — healing is idempotent and runs
     on the next start/repair once the lock frees."""
     store = gs.GraphStore(amg)
@@ -138,8 +138,8 @@ def _heal(amg: Path) -> Dict[str, Any]:
 
 
 def format_heal_note(healed: Dict[str, Any]) -> Optional[str]:
-    """A friendly one-liner when a prior unclean shutdown was just healed (Stage 9,
-    task 9), else None — so a clean session-start stays silent (no per-session noise).
+    """A friendly one-liner when a prior unclean shutdown was just healed, else
+    None — so a clean session-start stays silent (no per-session noise).
     A hard kill (closed terminal, killed process) skips SessionEnd, so the store
     self-heals on the next start; this surfaces that it happened, in plain words."""
     recovered = healed.get("recovered") or []
@@ -157,7 +157,7 @@ def format_heal_note(healed: Dict[str, Any]) -> Optional[str]:
 
 
 # --------------------------------------------------------------------------- #
-# Session transcript dump (Stage 9)
+# Session transcript dump
 #
 # Claude Code's SessionEnd hook pipes JSON on stdin with the path to the session
 # .jsonl; we render it to <store>/sessions as a role-marked markdown dump (the same
@@ -176,8 +176,8 @@ _WRAPPER_PREFIXES = ("<local-command", "<command-name", "<command-message",
                      "<command-args", "<command-contents", "<bash-input",
                      "<bash-stdout", "<bash-stderr", "<task-notification")
 
-# Tool calls that EDIT a file; their input names the path -> usage attribution (Stage 13,
-# task 9). A few non-Claude-Code synonyms are tolerated for portability.
+# Tool calls that EDIT a file; their input names the path -> usage attribution.
+# A few non-Claude-Code synonyms are tolerated for portability.
 _EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit",
                "create_file", "edit_file", "apply_patch", "update_file"}
 _EDIT_PATH_KEYS = ("file_path", "path", "notebook_path")
@@ -326,12 +326,12 @@ def _dump_session(project_root: Path, amg: Path, cfg: Dict[str, Any],
 
 def _record_usage(project_root: Path, amg: Path, edited_raw: List[str],
                   reason: Optional[str]) -> Dict[str, Any]:
-    """USAGE provenance (Stage 13, task 9). Cross the files edited this session (from the
+    """USAGE provenance. Cross the files edited this session (from the
     transcript's edit/write tool calls) with the nodes the retrieval packs pointed at
     (work/pack-log.jsonl, written by retrieve) and append the USED nodes + a coarse outcome
     to work/usage.log. `used` is the non-circular signal — a node whose source was actually
     EDITED, not merely retrieved — so it is kept SEPARATE from the blind coactivation.log.
-    The improved Hebbian rule (consolidate.fold_weights, Stage 14) reinforces co-used edges
+    The improved Hebbian rule (consolidate.fold_weights) reinforces co-used edges
     from this log when apply_hebbian is on (consuming it); with the default off it accrues.
     The pack log is session-scoped, so it is consumed (cleared) here.
 
@@ -436,7 +436,7 @@ def session_end(project_root: Path, amg: Path, transcript_path: Optional[str] = 
         weights = co.fold_weights(project_root, amg)
     except gs.StoreLockError as exc:         # shared folder: another writer holds the lock
         # Weight folding is idempotent and only accrues coact — skip this cycle rather
-        # than crash session-end; the next end/consolidate folds it (stage 16).
+        # than crash session-end; the next end/consolidate folds it.
         weights = {"skipped": "another writer holds the lock", "lock_note": str(exc)}
     digest = co.write_digest(project_root, amg)
     return {"action": "session-end", "weights": weights, "digest": digest,
@@ -543,7 +543,7 @@ def status(project_root: Path, amg: Path) -> Dict[str, Any]:
     for n in nodes.values():
         by_status[str(n.get("status") or "active")] += 1
     problems = store.verify(repair=False)    # read-only: report, do not mutate
-    # Connectivity gate (stage 19, audit 1.44): fragmentation must be visible here,
+    # Connectivity gate: fragmentation must be visible here,
     # not only in the 3D viewer. Computed over the already-loaded nodes (cheap).
     gate_cfg = cfg.get("connectivity_gate") if isinstance(cfg.get("connectivity_gate"), dict) else {}
     metrics = rc.graph_metrics(nodes, gate_cfg)
@@ -551,14 +551,14 @@ def status(project_root: Path, amg: Path) -> Dict[str, Any]:
         "active": _is_active(cfg),
         "automation": _automation_on(cfg),
         "graph_root": str(amg),
-        "branch": rc._git_branch(project_root),   # git awareness (stage 16); None without git
+        "branch": rc._git_branch(project_root),   # git awareness; None without git
         "commit": rc._git_commit(project_root),
         "nodes": len(nodes),
         "stale": by_status.get("stale", 0),
         "by_status": dict(by_status),
         "pending_transactions": problems.get("pending_transactions", []),
         "stale_lock": problems.get("stale_lock", []),
-        "conflicts": rc.find_conflict_markers(store),   # git merge markers in nodes (stage 16)
+        "conflicts": rc.find_conflict_markers(store),   # git merge markers in nodes
         "queue_size": _queue_size(amg),
         "last_pack": _mtime(amg / "cache" / "pack.md"),
         "last_consolidation": _last_consolidation(amg),
