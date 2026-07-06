@@ -1,12 +1,12 @@
 # 12 — The installer (`install.py`)
 
-This document describes the **internals of the installer** `install.py`: how the engine gets into a project, how the templates are rendered per environment, how the activation block is injected into the entry point, and why reinstall and uninstall are safe. This is the "how it is built" view; "how to use it" (the install sequence, the user-facing flags, step-by-step reinstall/uninstall) — in the root [INSTALL.md](../../INSTALL.md). There is no duplication between them: here — the mechanisms and invariants, there — the recipes.
+This document describes the **internals of the installer** `install.py`: how the engine gets into a project, how the templates are rendered per environment, how the activation block is injected into the entry point, and why reinstall and uninstall are safe. This is the "how it is built" view; "how to use it" (the install sequence, the user-facing flags, step-by-step reinstall/uninstall) — in the root [INSTALL.md](../../../INSTALL.md). There is no duplication between them: here — the mechanisms and invariants, there — the recipes.
 
 > **On path names.** `.claude` (the agent directory) and `CLAUDE.md` (the entry point) are the Claude Code defaults; the installer substitutes the configured names (e.g. `.agents` / `AGENTS.md`). In the repository templates these names are written as `.claude`/`CLAUDE.md` and serve as **placeholders** the installer replaces.
 
 ## What the installer does
 
-`install.py` is a deterministic, parameter-driven script: the model runs the dialogue per [INSTALL.md](../../INSTALL.md) and calls it with the answers, while the script does the file work. Step by step it places the engine, renders the entry-point templates and the **engine prompts themselves** for the chosen agent directory, injects the activation block between the markers, merges `settings.json`, writes the **global personal-defaults config** under a global install, writes the local `config.yml`, renders the `models` block into the subagent definitions, seeds an empty `digest.md`, optionally installs dependencies, and verifies the store. It does **not build** the graph — activation remains the user's choice, and the structural build is driven by the loop or `/amg sync` (the `--build` flag is the explicit exception).
+`install.py` is a deterministic, parameter-driven script: the model runs the dialogue per [INSTALL.md](../../../INSTALL.md) and calls it with the answers, while the script does the file work. Step by step it places the engine, renders the entry-point templates and the **engine prompts themselves** for the chosen agent directory, injects the activation block between the markers, merges `settings.json`, writes the **global personal-defaults config** under a global install, writes the local `config.yml`, renders the `models` block into the subagent definitions, seeds an empty `digest.md`, optionally installs dependencies, and verifies the store. It does **not build** the graph — activation remains the user's choice, and the structural build is driven by the loop or `/amg sync` (the `--build` flag is the explicit exception).
 
 The installer is run **from the AMG checkout directory**, which can live anywhere — preferably outside the project being installed: the engine is copied into the agent directory (`REPO = Path(__file__).parent` — the sources are taken from the script's own location), and after the install the checkout is not needed. A checkout inside the project is not dangerous — store resolution tells it apart from an installed store by the engine signature (see "How the engine finds the graph") — but it is not needed either: it only clutters the project.
 
@@ -120,7 +120,7 @@ python install.py --target <project> [--scope local|global]
 python install.py --target <project> --uninstall [--scope global] [--purge-graph]
 ```
 
-Each flag's purpose and the scenarios — in [INSTALL.md](../../INSTALL.md).
+Each flag's purpose and the scenarios — in [INSTALL.md](../../../INSTALL.md).
 
 ## Next
 
@@ -128,4 +128,4 @@ Each flag's purpose and the scenarios — in [INSTALL.md](../../INSTALL.md).
 - [08 — Subagents and skills](./08-agents-skills.md) — what gets installed (the skills, subagents, block, loop) and cross-environment portability.
 - [09 — Configuration reference](./09-config.md) — the `config.yml` keys, the `models` block, `agent_dir`/`entrypoint`.
 - [03 — Storage and transactions](./03-storage.md) — graph-root resolution (`resolve_amg_root`).
-- [INSTALL.md](../../INSTALL.md) — how to use the installer (manual and model-driven install, reinstall, uninstall).
+- [INSTALL.md](../../../INSTALL.md) — how to use the installer (manual and model-driven install, reinstall, uninstall).

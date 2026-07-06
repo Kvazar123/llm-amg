@@ -26,7 +26,7 @@ Unpack AMG into any folder **outside the project** and, in a session inside your
 2. **Environment, agent directory, entry point?** *(default: Claude Code, `.claude` / `CLAUDE.md`.)* For OpenAI Codex — `--env codex` (skills + TOML subagents, preset `.agents` / `AGENTS.md`); for other environments that read `AGENTS.md` (Qwen Coder and the like) — `--env generic` (a portable skill-less block). Details — "Other environments" below.
 3. **Mirrors (`mirror_path`)?** — offer the survey's proposal. What you edit (code, maintained documentation): the graph is kept equal to it — a change updates the node, a deletion purges it.
 4. **Absorb (`absorb_path` / `absorb_once_path`)?** — offer the survey's proposal. One-shot material (logs, dumps, exported dialogues): deleting the source does not erase the knowledge. If a snapshot must never re-sync even when the original changes, name it frozen — it goes to `absorb_once_path` (flag `--absorb-once`). Absorb is optional — mirrors alone are fine; but **at least one source (`mirror_path` or `absorb_path`) is required** (if everything is empty, ask again).
-5. **What to ignore?** — offer the survey's proposal. Glob patterns on top of the built-in defaults and `.gitignore` (written to `exclude`; for finer control there are `mirror_exclude` / `absorb_exclude` and the `respect_gitignore` switch — see [09-config](docs/ru/architecture/09-config.md)).
+5. **What to ignore?** — offer the survey's proposal. Glob patterns on top of the built-in defaults and `.gitignore` (written to `exclude`; for finer control there are `mirror_exclude` / `absorb_exclude` and the `respect_gitignore` switch — see [09-config](docs/en/architecture/09-config.md)).
 6. **Working language (`working_language`)? — KEY.** *(default: by the project.)* The language of summaries and notes. Summaries and the derivation cache are **keyed by this language**: changing it later re-summarizes nothing by itself (only new and changed units get the new language — the graph drifts bilingual), and a clean switch means re-deriving the whole semantic layer at full model cost. Decide it now. For non-English projects the installer recommends a multilingual embedding model.
 7. **Embeddings? — KEY.** Light `model2vec` (default), `sentence-transformers`, a custom model, or off. On consent the flow installs the backend and **enables seeding** — `--set retrieval.embeddings.enabled=auto` (the config template conservatively ships `off`; `auto` turns semantic seeding on as soon as a backend is installed and is harmless without one). Seeding itself heals later (vectors are re-encoded on demand), but the **build-time linking pass nominates cross-domain candidates by these vectors**: building without embeddings and enabling them afterwards means re-running `/amg sync` to gain the links it missed. Decide before the first build. For Cyrillic and other non-English languages a multilingual model is picked automatically (see "Optional dependencies").
 8. **Automation (`automation`)?** *(default: `true`.)* With `false` the system acts only on `/amg …` commands or an explicit request.
@@ -85,7 +85,7 @@ Inheritance is switched on by the `agent_dir` key of the local config (the insta
 - or say **`/amg sync`** in the current session (in words: "build / sync the memory graph");
 - or install with `--build` in the first place (the structural skeleton is ready the moment the install finishes).
 
-From here just work: glance at **`/amg status`** (one screen of state, and a tour of the `/amg` commands at the same time), then **ask the model any question about the project** — it assembles context from the graph itself. Manual build/retrieve commands from older instructions are no longer needed: the activation loop drives everything (see the [guide](docs/ru/GUIDE.md)).
+From here just work: glance at **`/amg status`** (one screen of state, and a tour of the `/amg` commands at the same time), then **ask the model any question about the project** — it assembles context from the graph itself. Manual build/retrieve commands from older instructions are no longer needed: the activation loop drives everything (see the [guide](docs/en/GUIDE.md)).
 
 ## Cheap to change later vs decide before building
 
@@ -121,7 +121,7 @@ The base path runs on the Python standard library (Python code is parsed with `a
 | `text` | PDF / DOCX / XLSX extraction | `pypdf` `python-docx` `openpyxl` |
 | `treesitter` | code in other languages (functions + call edges) | `tree-sitter` `tree-sitter-language-pack` |
 
-The heavy embedding transformers — `pip install sentence-transformers` (an optional upgrade, sized with `--compare-embeddings`). **Non-English** projects need a multilingual model — the engine picks one by default; details in the [guide](docs/ru/GUIDE.md). Install everything at once: `pip install -r requirements.txt`.
+The heavy embedding transformers — `pip install sentence-transformers` (an optional upgrade, sized with `--compare-embeddings`). **Non-English** projects need a multilingual model — the engine picks one by default; details in the [guide](docs/en/GUIDE.md). Install everything at once: `pip install -r requirements.txt`.
 
 ## Other environments (not Claude Code)
 
