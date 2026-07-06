@@ -216,28 +216,49 @@ def detect_policy_conflicts(units: List[Dict[str, Any]]) -> List[Dict[str, Any]]
 # --------------------------------------------------------------------------- #
 
 def load_gitignore(project_root: Path) -> List[str]:
+    """Ordered .gitignore rules, negations ('!') included — read as a plain file, no
+    git needed. File order is preserved because matching is last-match-wins
+    (_gitignored): a later '!pattern' re-includes what an earlier rule excluded, and
+    a later exclude overrides an earlier re-include, the way git reads the file."""
     f = project_root / ".gitignore"
     if not f.exists():
         return []
     pats = []
     for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
-        if line and not line.startswith("#") and not line.startswith("!"):
-            pats.append(line.rstrip("/"))
+        if not line or line.startswith("#"):
+            continue
+        neg = line.startswith("!")
+        body = (line[1:] if neg else line).strip().rstrip("/")
+        if body:
+            pats.append(("!" + body) if neg else body)
     return pats
 
 
-def _gitignored(rel: str, patterns: List[str]) -> bool:
+def _pattern_hits(rel: str, pat: str) -> bool:
+    """One pattern against one relative path: the whole path, the basename, a bare
+    directory name anywhere in the path, or anything under a directory pattern."""
     base = rel.split("/")[-1]
-    segs = rel.split("/")
+    if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(base, pat):
+        return True
+    if pat in rel.split("/"):                 # a directory name anywhere in the path
+        return True
+    return fnmatch.fnmatch(rel, pat + "/*")
+
+
+def _gitignored(rel: str, patterns: List[str]) -> bool:
+    """Ordered, last-match-wins, with '!' re-includes — the .gitignore contract: a path
+    is ignored when the LAST rule matching it is an exclude. Without '!' rules this is
+    boolean-equal to a plain any-match, so existing configs behave identically. One
+    deliberate simplification remains: a '!' rule re-includes even under an excluded
+    parent directory (git would not) — the forgiving reading, because silently losing
+    opted-back material is the worse failure for a memory."""
+    verdict = False
     for pat in patterns:
-        if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(base, pat):
-            return True
-        if pat in segs:                       # a directory name anywhere in the path
-            return True
-        if fnmatch.fnmatch(rel, pat + "/*"):
-            return True
-    return False
+        neg = pat.startswith("!")
+        if _pattern_hits(rel, pat[1:] if neg else pat):
+            verdict = not neg
+    return verdict
 
 
 def _norm_globs(vals: Any) -> List[str]:

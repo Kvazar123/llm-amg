@@ -4,6 +4,24 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [1.11.2] — 2026-07-06
+
+The stage-21 preparation release: everything before the translation itself is done, so the stage's remaining scope is exactly the per-file reconcile-then-translate protocol now spelled out in the roadmap. PATCH: one behavior fix (gitignore `!` support — strictly more forgiving), the rest is prompts and docs.
+
+### Fixed
+- **`.gitignore` negation rules honored** (audit 1.53): `load_gitignore` keeps `!` rules in file order and `_gitignored` matches last-rule-wins, so `logs/` + `!logs/keep.md` brings the opted-back file into the graph and a later exclude overrides an earlier re-include; without `!` rules behavior is boolean-identical to before. One documented simplification: a `!` rule re-includes even under an excluded parent (more forgiving than git). Regression: `selftest_ignore.test_gitignore_negation`.
+- **Model-driven install flow made imperative** (audit 1.54, found on a live dogfood install where the model asked 4 of the 12 questions): INSTALL.md now requires surveying the project first (propose which top-level folders to mirror / absorb / exclude, presented with questions 3–5) and asking every question one by one; the working language and embeddings are marked KEY with the real cost of changing them after a build; a new "Cheap to change later vs decide before building" section covers what applies on the next run, what needs a re-sync (embeddings → linking), a reinstall (`models` tiering), or a decision up front (`working_language` — summaries and the derivation cache are keyed by it).
+- **Language-universal control layer** (audits 1.33–1.35 closed): the Russian verbal-intent examples in `entrypoint/CLAUDE.md` became English; all three activation blocks, the GUIDE/READMEs/INSTALL synonym tables, and the SKILL triggers now fire a memory operation only when the request explicitly names the memory / the memory graph / AMG (viewer triggers included); a code sweep confirmed no other hardwired language assumptions (the `--grep` docstring example neutralized).
+
+### Changed
+- **INSTALL.md is English now** (it is control plane — the model executes it on "install AMG per …"); the Russian mirror is the root `INSTALL_RU.md` (mirroring the README_RU.md pattern), every Russian doc link re-pointed; both files and the dev `CLAUDE.md` carry a scope guard for the checkout-unpacked-inside-a-project case (during an install the dev rulebook is ignored; INSTALL.md alone applies).
+- **No roadmap references left in shipped code** (the stage-21 sweep, rule (в)/(г) tightened): ~247 `(Stage N)` / `(audit 1.NN)` / roadmap attributions across the engine scripts, selftests, viewer assets, `consistency-model.md`, `install.py`, and the `config.yml` template replaced with meaning-based wording or dropped; stale pre-renumbering stage pointers in CLAUDE.md and this changelog re-pointed (translation → 21, environments → 22).
+- **Front pages restructured:** the documentation map is the last section of both READMEs (after License); "What's implemented" is a scannable capability list with no "planned" tail; three differentiators added (salience-driven selection, pattern-node analogy transfer, dialogue as memory); the model-driven install paragraphs state what is asked and which two answers to settle before the first build.
+- **GUIDE completeness pass:** every scripted operation appears in the manual-commands tables with its real flags (`--intent`, the `partition_queue` and `notes.py` flag sets, `migrate_schema.py`, `--pattern-demo`, `--compare-embeddings`, `--by-commit`, `lifecycle session-start` / `session-end [--transcript]`); the 09-config reference verified against both the template and the code-read keys (legacy `sources:` form documented).
+
+### Added
+- `docs/en/glossary.md` — the ru→en terminology glossary (~190 pairs by domain) that every translated file follows; a working reference, deliberately unlinked from the docs (mentioned only in the roadmap).
+
 ## [1.11.1] — 2026-07-05
 
 A standalone fix release driven by the user's final review (audits §1.36 + §1.52 closed; a full prompt-consistency audit; README restructure). PATCH: no schema, config, or interface changes beyond the audit-log filename (the legacy file is adopted automatically).

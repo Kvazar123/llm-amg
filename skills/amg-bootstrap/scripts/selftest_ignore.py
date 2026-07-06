@@ -176,6 +176,33 @@ def test_overlap_warns():
         shutil.rmtree(proj, ignore_errors=True)
 
 
+def test_gitignore_negation():
+    """A '!' re-include rule works and order decides: 'logs/' + '!logs/keep.md' brings
+    keep.md back, while a re-include overridden by a LATER exclude stays ignored
+    (last matching rule wins, the way git reads the file)."""
+    proj = Path(tempfile.mkdtemp(prefix="amg-ign8-"))
+    try:
+        amg = proj / ".claude" / "amg"
+        amg.mkdir(parents=True)
+        amg.joinpath("config.yml").write_text(
+            "active: true\nworking_language: en\nmirror_path: ['.']\n", encoding="utf-8")
+        (proj / ".gitignore").write_text(
+            "logs/\n!logs/keep.md\n!tmp/back.md\ntmp/\n", encoding="utf-8")
+        _mk(proj, "logs/app.log")                        # excluded by logs/
+        _mk(proj, "logs/keep.md", "# keep\n\ntext\n")    # re-included by !logs/keep.md
+        _mk(proj, "tmp/back.md", "# back\n\ntext\n")     # '!' BEFORE tmp/ -> later exclude wins
+        _mk(proj, "src/keep.py", "def f():\n    return 1\n")
+        cfg = ES.load_config(amg)
+        got = _paths(ES.extract(proj, cfg, amg))
+        assert "logs/keep.md" in got, ("a '!' rule must re-include", got)
+        assert "logs/app.log" not in got, got
+        assert "tmp/back.md" not in got, ("a later exclude overrides an earlier '!'", got)
+        assert "src/keep.py" in got, got
+        print("PASS  ignore: .gitignore '!' re-includes; last matching rule wins")
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+
 def test_missing_in_plan():
     """1.30: a non-existent source path is reported by plan (not just --stats), so a typo
     in mirror_path does not masquerade as 'graph built, added: 0'."""
@@ -201,5 +228,6 @@ if __name__ == "__main__":
     test_agent_dir_not_indexed()
     test_by_source_stats()
     test_overlap_warns()
+    test_gitignore_negation()
     test_missing_in_plan()
     print("\nALL IGNORE CHECKS PASSED")
