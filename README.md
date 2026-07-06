@@ -76,7 +76,7 @@ python3 -m pip install -r requirements.txt     # everything optional at once (if
 
 > **install AMG per `<path-to-AMG>/INSTALL.md`**
 
-The model reads the instructions, asks a few questions (local/global; agent directory and entry point; mirror and absorb paths; working language; embeddings; automation; what to ignore; whether to activate memory), shows the existing settings on a reinstall — and calls the installer for you.
+The model reads the instructions, surveys the project and proposes a folder classification (what to mirror, what to absorb, what to exclude), asks the full question list one by one (local/global; environment; mirror and absorb paths; excludes; working language; embeddings; automation; session policy; budgets; dependencies; activation), shows the existing settings on a reinstall — and calls the installer for you. Two questions are key and worth deciding before the first build: the **working language** (a later change re-summarizes nothing by itself — summaries and the cache are keyed by language) and **embeddings** (the build-time linking pass finds cross-domain links by their vectors). Everything else is safe to adjust in `config.yml` at any time — changes apply on the next run; see [INSTALL.md](INSTALL.md), "Cheap to change later vs decide before building".
 
 *By command.* If you'd rather set everything yourself (run from the AMG folder):
 ```bash

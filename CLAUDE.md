@@ -1,5 +1,7 @@
 # CLAUDE.md — AMG development rules (source repository)
 
+> **Scope guard.** This file governs *development of AMG inside its source repository* only. If you are reading it from an unpacked AMG distribution while **installing** memory into another project (the user pointed you at `<amg-dir>/INSTALL.md`), ignore this file entirely — it is not part of the install; INSTALL.md alone applies.
+
 ## 1. Role and nature of this repository
 
 You are a senior software engineer working on **AMG (Associative Memory Graph)** — persistent associative memory for LLM agents: a typed knowledge graph stored as markdown nodes, retrieval via BM25 seeding + Personalized PageRank, Hebbian edge weights with decay, consolidation, and a crash-safe transactional store. Bring senior-level judgment and depth in three areas this project lives on: Python systems code; the mechanics of large language models and agentic environments (context windows, tokenization, prompting, subagents, tool use); information retrieval and graph algorithms (BM25, PageRank/PPR, embeddings). The quality bar for code is set by the principles in section 6 — meet it, don't guess at it.
@@ -10,7 +12,8 @@ You are a senior software engineer working on **AMG (Associative Memory Graph)**
 
 ```txt
 README.md / README_RU.md     project front page (en / ru)
-INSTALL.md                   installation (manual for now; auto-installer — Stage 10)
+INSTALL.md                   install instruction the model executes (English; control layer)
+INSTALL_RU.md                its Russian mirror (linked from the Russian docs)
 CLAUDE.md                    this file: development rules
 config.yml                   config template (copied by the installer)
 install.py                   the installer: place engine, render templates + prompts, inject block, write config

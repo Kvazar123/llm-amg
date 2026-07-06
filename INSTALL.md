@@ -1,133 +1,150 @@
-# Установка AMG
+# Installing AMG
 
-AMG ставится **силами модели** (вы даёте ей путь к этому файлу, она задаёт вопросы и всё настраивает — раздел 1) или **вручную** командой установщика (раздел 2). В обоих случаях работу делает один скрипт — `install.py`: он копирует движок, рендерит блок активации и хуки под вашу среду, пишет `config.yml` и проверяет хранилище. Требуется Python 3.
+AMG is installed **by the model** (you give it the path to this file; it asks the questions and sets everything up — section 1) or **manually** with the installer command (section 2). Either way one script does the work — `install.py`: it copies the engine, renders the activation block and hooks for your environment, writes `config.yml`, and verifies the store. Python 3 is required.
 
-**Откуда ставить: исходный каталог AMG держите вне проекта.** Установщик запускается из распакованного каталога AMG и целится в проект флагом `--target`, поэтому сам каталог может лежать где угодно — в домашней папке, в общем каталоге инструментов, где удобно. Класть его **внутрь** устанавливаемого проекта не нужно и не стоит: россыпь файлов движка захламляет корень проекта, а пользы не даёт — движок всё равно копируется в каталог агента. Перепутать исходный каталог с хранилищем памяти система не может: разрешение хранилища отличает их по содержимому и папку с исходниками AMG никогда не принимает за граф. После установки исходный каталог больше не нужен — его можно удалить.
+Русское зеркало этой инструкции — [INSTALL_RU.md](INSTALL_RU.md); исполняемый оригинал, который читает модель, — этот файл.
 
-**Граф всегда локальный.** Он лежит в `<проект>/.claude/amg/` даже при глобальной установке движка, потому что память относится к конкретному проекту; общего графа между проектами нет.
+**Install from outside the project: keep the unpacked AMG folder out of the target project.** The installer runs from the unpacked AMG folder and points at the project with `--target`, so the folder itself may live anywhere — the home directory, a shared tools folder, wherever convenient. Do not put it **inside** the project being installed: a scatter of engine files clutters the project root for no benefit (the engine is copied into the agent directory anyway). Store resolution can never mistake the source folder for the memory store — it recognizes the folder by its content and never treats an AMG checkout as a graph. After the install the source folder is no longer needed and may be deleted.
 
-**Что куда ставится.** *Управляющая плоскость* (движок) — каталоги `skills/` и `agents/`, блок активации в точке входа, хуки `settings.json` и команда `commands/amg.md`. *Контентная плоскость* (сам граф) создаётся в `<проект>/.claude/amg/`. Имена `.claude` (каталог агента) и `CLAUDE.md` (точка входа) — умолчания **Claude Code**; в иной среде (например, OpenAI Codex) подставляются её имена, скажем `.agents` / `AGENTS.md` (см. «Другие среды» ниже).
+**The folder's own `CLAUDE.md` is not part of the install.** The unpacked AMG folder carries a `CLAUDE.md` with development rules for AMG's own source code. If it ends up in your context (say, the folder was unpacked inside the project against the advice above), ignore it entirely: during an install, this file — INSTALL.md — is the only instruction that applies.
 
-## Раздел 1. Установка силами модели
+**The graph is always local.** It lives in `<project>/.claude/amg/` even when the engine is installed globally, because memory belongs to a specific project; there is no shared graph across projects.
 
-Распакуйте AMG в любой каталог **вне проекта** и в сессии внутри проекта скажите модели: **«установи AMG по `<путь-к-AMG>/INSTALL.md`»** (например, `~/tools/amg/INSTALL.md`). Модель прочитает этот файл, задаст вопросы (с краткой справкой к каждому), затем вызовет `install.py` из того же каталога с вашими ответами.
+**What goes where.** The *control plane* (the engine) is the `skills/` and `agents/` directories, the activation block in the entry point, the `settings.json` hooks, and the `commands/amg.md` command. The *content plane* (the graph itself) is created in `<project>/.claude/amg/`. The names `.claude` (agent directory) and `CLAUDE.md` (entry point) are the **Claude Code** defaults; another environment substitutes its own names, say `.agents` / `AGENTS.md` (see "Other environments" below).
 
-**Если память уже установлена** (в проекте есть `<каталог агента>/amg/config.yml`), модель сначала показывает действующие значения конфигурации и спрашивает, что оставить, а что изменить: установщик существующий конфиг **не перезаписывает** (и сам печатает его значения строкой `in force:`), поэтому изменения модель вносит правкой `config.yml`, а не повторными ответами. Вопросы свежей установки:
+## Section 1. Model-driven install
 
-1. **Локально или глобально?** *(по умолчанию — локально.)* Локально — движок в одном проекте (`<проект>/.claude/`); глобально — движок один на все проекты (`~/.claude/`), но **граф всё равно у каждого проекта свой**. Глобальная установка дополнительно заводит **глобальный конфиг личных умолчаний** — см. «Локально и глобально» ниже.
-2. **Среда, каталог агента и точка входа?** *(по умолчанию Claude Code, `.claude` / `CLAUDE.md`.)* Для OpenAI Codex — `--env codex` (скиллы + TOML-субагенты, пресет `.agents` / `AGENTS.md`); для прочих сред, читающих `AGENTS.md` (Qwen Coder и др.), — `--env generic` (переносимый блок без скиллов). Подробности — «Другие среды» ниже.
-3. **Зеркала (`mirror_path`)?** То, что вы редактируете (код, поддерживаемая документация): граф держится равным — изменение обновляет узел, удаление вычищает.
-4. **Впитывание (`absorb_path` / `absorb_once_path`)?** Разовый материал (логи, дампы, экспортированные диалоги): удаление источника знание не стирает. Если снимок не должен пересинхронизироваться даже при правке оригинала — назовите его в ответе замороженным, он уйдёт в `absorb_once_path` (флаг `--absorb-once`). Впитывание необязательно — можно вести только зеркала; но **хотя бы один источник (`mirror_path` или `absorb_path`) обязателен** (если всё пусто — переспросит).
-5. **Что игнорировать?** Глоб-шаблоны сверх встроенных умолчаний и `.gitignore` (пишутся в `exclude`; для тонкой настройки есть `mirror_exclude` / `absorb_exclude` и переключатель `respect_gitignore` — см. [09-config](docs/ru/architecture/09-config.md)).
-6. **Рабочий язык (`working_language`)?** *(по умолчанию по проекту.)* Язык сводок и заметок; для не-английских проектов установщик рекомендует многоязычную модель эмбеддингов.
-7. **Эмбеддинги?** Лёгкий `model2vec` (по умолчанию), `sentence-transformers`, своя модель или выключить. При согласии поток ставит бэкенд и **включает засев** — `--set retrieval.embeddings.enabled=auto` (шаблон конфигурации консервативно несёт `off`; `auto` включает семантический засев, как только бэкенд установлен, и безвреден без него). Для кириллицы многоязычная модель берётся автоматически (см. «Опциональные зависимости»).
-8. **Автоматика (`automation`)?** *(по умолчанию `true`.)* При `false` система действует только по командам `/amg …` или явной просьбе.
-9. **Политика сессий (`session_policy`)?** *(по умолчанию `absorb`.)* Для ценных диалогов — `mirror` (сохраняются все детали).
-10. **Бюджеты ярусов?** *(по умолчанию 4000 / 10000 / 24000 токенов.)* Потолок выдачи на запрос.
-11. **Опциональные зависимости?** Какие группы поставить (см. «Опциональные зависимости»).
-12. **Активировать память после установки?** Установщик **не активирует молча**. При согласии пишет `active: true`. Отдельно можно **сразу построить граф** (`--build`) — иначе он построится при первой задаче в новой сессии или по `/amg sync` (см. «После установки»).
+Unpack AMG into any folder **outside the project** and, in a session inside your project, tell the model: **"install AMG per `<path-to-AMG>/INSTALL.md`"** (for example, `~/tools/amg/INSTALL.md`). The model reads this file, surveys the project, asks the questions below (each with a short note), then runs `install.py` from that same folder with your answers.
 
-**Пустые ответы берут значения по умолчанию**, кроме источников (нужен хотя бы один `mirror_path`/`absorb_path`) — их установщик переспросит. После ответов модель запускает `install.py`, который размещает движок, рендерит блок и хуки, пишет `config.yml`, ставит выбранные зависимости и прогоняет `verify --repair`. Граф при этом **не строится сам** — это решает шаг активации. Исходный каталог AMG после установки можно удалить.
+**Survey the project before asking about sources.** List the project's top-level folders (and the notable file kinds in them) and **propose a classification**: which folders look like sources to mirror (code, documentation the user maintains), which look like one-shot material to absorb (chat logs, data dumps, third-party documents), and which deserve extra excludes (generated code, vendored assets — beyond the built-in ignore list). Present the proposal together with questions 3–5, so the user confirms or corrects a concrete list instead of recalling paths from memory.
 
-## Раздел 2. Ручная установка (CLI установщика)
+**Ask every question, one by one.** Do not skip questions and do not collapse them into a single message. An empty answer takes the stated default — but the question must still be asked: silently defaulting the KEY items is how a graph gets built in the wrong language or without embeddings. Questions 6 and 7 are marked **KEY**: their answers are expensive to change after the graph is built (see "Cheap to change later vs decide before building").
 
-Тот же `install.py` запускается напрямую — модель не нужна. Из исходного каталога AMG (лежит где угодно вне проекта; после установки не нужен):
+**If memory is already installed** (the project has `<agent dir>/amg/config.yml`), the model first shows the values in force and asks what to keep and what to change: the installer **never overwrites** an existing config (and prints its values itself on the `in force:` line), so changes are made by editing `config.yml`, not by re-answering. Fresh-install questions:
+
+1. **Local or global?** *(default: local.)* Local — the engine inside one project (`<project>/.claude/`); global — one engine for all projects (`~/.claude/`), while **each project still keeps its own graph**. A global install additionally sets up the **global personal-defaults config** — see "Local and global" below.
+2. **Environment, agent directory, entry point?** *(default: Claude Code, `.claude` / `CLAUDE.md`.)* For OpenAI Codex — `--env codex` (skills + TOML subagents, preset `.agents` / `AGENTS.md`); for other environments that read `AGENTS.md` (Qwen Coder and the like) — `--env generic` (a portable skill-less block). Details — "Other environments" below.
+3. **Mirrors (`mirror_path`)?** — offer the survey's proposal. What you edit (code, maintained documentation): the graph is kept equal to it — a change updates the node, a deletion purges it.
+4. **Absorb (`absorb_path` / `absorb_once_path`)?** — offer the survey's proposal. One-shot material (logs, dumps, exported dialogues): deleting the source does not erase the knowledge. If a snapshot must never re-sync even when the original changes, name it frozen — it goes to `absorb_once_path` (flag `--absorb-once`). Absorb is optional — mirrors alone are fine; but **at least one source (`mirror_path` or `absorb_path`) is required** (if everything is empty, ask again).
+5. **What to ignore?** — offer the survey's proposal. Glob patterns on top of the built-in defaults and `.gitignore` (written to `exclude`; for finer control there are `mirror_exclude` / `absorb_exclude` and the `respect_gitignore` switch — see [09-config](docs/ru/architecture/09-config.md)).
+6. **Working language (`working_language`)? — KEY.** *(default: by the project.)* The language of summaries and notes. Summaries and the derivation cache are **keyed by this language**: changing it later re-summarizes nothing by itself (only new and changed units get the new language — the graph drifts bilingual), and a clean switch means re-deriving the whole semantic layer at full model cost. Decide it now. For non-English projects the installer recommends a multilingual embedding model.
+7. **Embeddings? — KEY.** Light `model2vec` (default), `sentence-transformers`, a custom model, or off. On consent the flow installs the backend and **enables seeding** — `--set retrieval.embeddings.enabled=auto` (the config template conservatively ships `off`; `auto` turns semantic seeding on as soon as a backend is installed and is harmless without one). Seeding itself heals later (vectors are re-encoded on demand), but the **build-time linking pass nominates cross-domain candidates by these vectors**: building without embeddings and enabling them afterwards means re-running `/amg sync` to gain the links it missed. Decide before the first build. For Cyrillic and other non-English languages a multilingual model is picked automatically (see "Optional dependencies").
+8. **Automation (`automation`)?** *(default: `true`.)* With `false` the system acts only on `/amg …` commands or an explicit request.
+9. **Session policy (`session_policy`)?** *(default: `absorb`.)* For valuable dialogues — `mirror` (every detail stays retrievable).
+10. **Tier budgets?** *(default: 4000 / 10000 / 24000 tokens.)* The per-query output ceiling.
+11. **Optional dependencies?** Which groups to install (see "Optional dependencies").
+12. **Activate memory after the install?** The installer **never activates silently**. On consent it writes `active: true`. Separately you may **build the graph right away** (`--build`) — otherwise it is built before the first task of a new session or via `/amg sync` (see "After the install").
+
+**Empty answers take the defaults**, except the sources (at least one `mirror_path`/`absorb_path` is needed) — those the installer re-asks. After the answers the model runs `install.py`, which places the engine, renders the block and hooks, writes `config.yml`, installs the chosen dependencies, and runs `verify --repair`. The graph is **not built by itself** — that is the activation step's decision. The AMG source folder may be deleted after the install.
+
+## Section 2. Manual install (the installer CLI)
+
+The same `install.py` runs directly — no model needed. From the AMG source folder (kept anywhere outside the project; disposable after the install):
 
 ```bash
-# локально, активна, со сборкой графа сразу:
-python install.py --target /путь/к/проекту --scope local \
+# local, active, with the graph built right away:
+python install.py --target /path/to/project --scope local \
     --mirror src,doc --absorb logs --set active=true --set working_language=ru \
     --set retrieval.embeddings.enabled=auto \
     --deps base,embeddings --build
 
-# глобально (движок в ~/.claude, граф у проекта локальный):
-python install.py --target /путь/к/проекту --scope global --mirror src
+# global (the engine in ~/.claude, each project's graph stays local):
+python install.py --target /path/to/project --scope global --mirror src
 ```
 
-Ключевые флаги: `--scope local|global`; `--env claude-code|codex|generic` (среда — см. «Другие среды»); `--agent-dir` / `--entrypoint` (умолчания `.claude` / `CLAUDE.md`; для Codex и generic — `.agents` / `AGENTS.md`); `--mirror` / `--absorb` / `--absorb-once` / `--exclude` (списки через запятую); `--set ключ=значение` (повторяемый: `active`, `working_language`, `automation`, `session_policy`, `respect_gitignore`; ключ с точками задаёт вложенное значение — `retrieval.embeddings.enabled=auto`); `--set-global ключ=значение` (то же, но в **глобальный** конфиг личных умолчаний — действует при `--scope global` / `--project-only`); `--deps` (группы зависимостей); `--build` (построить структурный граф сразу); `--no-verify` (пропустить проверку хранилища). Полный список — `python install.py --help`.
+Key flags: `--scope local|global`; `--env claude-code|codex|generic` (the environment — see "Other environments"); `--agent-dir` / `--entrypoint` (defaults `.claude` / `CLAUDE.md`; for Codex and generic — `.agents` / `AGENTS.md`); `--mirror` / `--absorb` / `--absorb-once` / `--exclude` (comma-separated lists); `--set key=value` (repeatable: `active`, `working_language`, `automation`, `session_policy`, `respect_gitignore`; a dotted key sets a nested value — `retrieval.embeddings.enabled=auto`); `--set-global key=value` (the same, but into the **global** personal-defaults config — effective with `--scope global` / `--project-only`); `--deps` (dependency groups); `--build` (build the structural graph immediately); `--no-verify` (skip the store check). The full list — `python install.py --help`.
 
-**Полностью вручную (без запуска скриптов).** В среде, где скрипты не запускаются, движок ставится копированием: скопировать `skills/` и `agents/` в `<каталог агента>/`, дописать содержимое `entrypoint/CLAUDE.md` в точку входа между маркерами `<!-- AMG:BEGIN -->` / `<!-- AMG:END -->`, создать `<каталог агента>/amg/config.yml` (минимум — `active`, `working_language`, `mirror_path`/`absorb_path`) и при наличии хуков скопировать `entrypoint/settings.json` и `entrypoint/commands/amg.md`. Это и есть то, что `install.py` делает за вас.
+**Fully by hand (no scripts).** In an environment where scripts cannot run, the engine is installed by copying: copy `skills/` and `agents/` into `<agent dir>/`, append the contents of `entrypoint/CLAUDE.md` into the entry point between the `<!-- AMG:BEGIN -->` / `<!-- AMG:END -->` markers, create `<agent dir>/amg/config.yml` (at minimum — `active`, `working_language`, `mirror_path`/`absorb_path`), and, if the environment has hooks, copy `entrypoint/settings.json` and `entrypoint/commands/amg.md`. That is exactly what `install.py` does for you.
 
-## Локально и глобально
+## Local and global
 
-| | Локально | Глобально |
+| | Local | Global |
 |---|---|---|
-| Движок (`skills/`, `agents/`) | `<проект>/.claude/` | `~/.claude/` (один на все проекты) |
-| Блок активации | `<проект>/CLAUDE.md` | `~/.claude/CLAUDE.md`, с **абсолютным** путём к движку |
-| Граф, `config.yml` | `<проект>/.claude/amg/` | **тоже** `<проект>/.claude/amg/` — всегда локально |
+| Engine (`skills/`, `agents/`) | `<project>/.claude/` | `~/.claude/` (one for all projects) |
+| Activation block | `<project>/CLAUDE.md` | `~/.claude/CLAUDE.md`, with an **absolute** engine path |
+| Graph, `config.yml` | `<project>/.claude/amg/` | **also** `<project>/.claude/amg/` — always local |
 
-При глобальной установке движок ставится один раз, а каждый новый проект подключается **только локальным конфигом** — без повторного копирования движка:
+With a global install the engine is placed once, and every new project is connected **by its local config alone** — no engine copying:
 
 ```bash
-python install.py --target /путь/к/новому-проекту --project-only --mirror src
+python install.py --target /path/to/new-project --project-only --mirror src
 ```
 
-**Два слоя конфигурации.** Глобальная установка заводит рядом с движком **глобальный конфиг личных умолчаний** — `~/<каталог агента>/amg/config.yml`. Система читает сперва его, затем локальный конфиг проекта: локальный **переопределяет по отдельным ключам**, недостающее наследуется из глобального. Слои разведены по принадлежности настроек:
+**Two configuration layers.** A global install sets up, next to the engine, the **global personal-defaults config** — `~/<agent dir>/amg/config.yml`. The system reads it first, then the project's local config: the local one **overrides per key**, whatever is missing is inherited. The layers are split by what a setting belongs to:
 
-- **глобальный слой — личное одной машины:** блок `models` (сила модели по ролям) и блок `retrieval.embeddings` (бэкенд и включение семантического засева). Эти предпочтения не должны навязываться команде через git, поэтому при глобальной установке локальный конфиг пишется **без** них — они наследуются;
-- **локальный слой — проектное:** `active`, источники (`mirror_path` и остальные), `working_language`, `automation`, бюджеты, веса, компрессия. Локальный `config.yml` — часть канона проекта (при «графе в git» его коммитят), и команда получает одинаковые проектные настройки.
+- **the global layer — one machine's personal preferences:** the `models` block (model tiering per role) and the `retrieval.embeddings` block (the backend and whether semantic seeding is on). These should not be forced on a team through git, so with a global install the local config is written **without** them — they are inherited;
+- **the local layer — the project's own:** `active`, the sources (`mirror_path` and the rest), `working_language`, `automation`, budgets, weights, compaction. The local `config.yml` is part of the project's canon (with "the graph in git" it is committed), and the team gets identical project settings.
 
-Наследование включается ключом `agent_dir` в локальном конфиге (установщик пишет его всегда): он и называет домашний каталог среды, и помечает конфиг как установленный; минимальный рукописный конфиг без этого ключа глобальный слой не читает. Каталог `~/<каталог агента>/amg/` при этом — только носитель конфига, **не хранилище**: графы в нём не создаются, и разрешение store его не выбирает.
+Inheritance is switched on by the `agent_dir` key of the local config (the installer always writes it): it both names the environment's home directory and marks the config as installed; a minimal hand-written config without that key does not read the global layer. The `~/<agent dir>/amg/` directory is a config carrier only, **not a store**: no graphs are created there, and store resolution never picks it.
 
-## После установки: активация и первый запрос
+## After the install: activation and the first request
 
-**`/amg on` ≠ построение графа.** Активация лишь поднимает флаг `active`; **строит граф `sync`** или петля активации. Поэтому после установки с активацией:
+**`/amg on` ≠ building the graph.** Activation only raises the `active` flag; **the graph is built by `sync`** or by the activation loop. So after an install with activation:
 
-- либо **начните новую сессию** — петля сама сведёт граф перед первой задачей (при `automation: true`);
-- либо в текущей сессии скажите **`/amg sync`** (или словами: «построй / синхронизируй граф памяти»);
-- либо установите сразу с `--build` (структурный скелет готов уже в момент установки).
+- either **start a new session** — the loop reconciles the graph before the first task (with `automation: true`);
+- or say **`/amg sync`** in the current session (in words: "build / sync the memory graph");
+- or install with `--build` in the first place (the structural skeleton is ready the moment the install finishes).
 
-Дальше работайте как обычно: загляните в **`/amg status`** (увидите состояние одним экраном и заодно команды `/amg`), а затем **просто задавайте модели любой вопрос по проекту** — она сама соберёт контекст из графа. Ручные команды сборки/извлечения из прежних инструкций больше не нужны: всё ведёт петля активации (см. [руководство](docs/ru/GUIDE.md)).
+From here just work: glance at **`/amg status`** (one screen of state, and a tour of the `/amg` commands at the same time), then **ask the model any question about the project** — it assembles context from the graph itself. Manual build/retrieve commands from older instructions are no longer needed: the activation loop drives everything (see the [guide](docs/ru/GUIDE.md)).
 
-## Переустановка
+## Cheap to change later vs decide before building
 
-Переустановка безопасна и идемпотентна: `install.py` обновляет **только** скиллы и агенты `amg-*` (ваши прочие скиллы в общем `~/.claude` не трогаются), заменяет блок **только между маркерами** (ваши инструкции выше остаются), сливает хуки в `settings.json`, **не затирая** ваши, и **не перезаписывает** уже существующий `config.yml` проекта. Локальные графы при глобальной переустановке не затрагиваются. Чтобы перенастроить конфиг — отредактируйте `config.yml` или удалите его и поставьте заново.
+Everything in `config.yml` may be edited at any time: nothing watches the file live — every operation reads it afresh, so a change takes effect on the **next run** (the next `/amg sync`, retrieval, or a new session's loop). What differs is the cost of changing your mind:
 
-## Удаление
+- **Cheap — applies on the next run:** adding mirror/absorb paths (the new content is simply ingested and derived at the normal incremental cost), excludes, `automation`, `session_policy`, tier budgets and other retrieval knobs, weights and compaction settings. Removing a mirror path purges its nodes on the next reconciliation — by design, the graph mirrors the sources.
+- **Embeddings (`retrieval.embeddings`) — better decided before the first build.** Enabling them later is safe for seeding (node vectors are cached and re-encoded on demand), but the build-time linking pass nominates cross-domain candidates by these vectors: after enabling, re-run `/amg sync` so linking re-nominates what the lexical fallback missed.
+- **`working_language` — decide before building.** Summaries and the derivation cache are keyed by the language; a later change re-summarizes nothing by itself (the graph drifts bilingual) and a clean switch costs a full re-derivation of the semantic layer.
+- **`models` tiering — takes effect via reinstall.** The installer renders the block into the subagent definitions, so after editing it run the install again (a reinstall is safe and idempotent); already-written summaries stay as they are until their source changes.
+
+## Reinstall
+
+A reinstall is safe and idempotent: `install.py` updates **only** the `amg-*` skills and agents (your other skills in a shared `~/.claude` are untouched), replaces the block **only between the markers** (your instructions above it stay), merges hooks into `settings.json` **without clobbering** yours, and **never overwrites** an existing project `config.yml`. Local graphs are untouched by a global reinstall. To reconfigure — edit `config.yml`, or delete it and install afresh.
+
+## Uninstall
 
 ```bash
-python install.py --target /путь/к/проекту --uninstall                 # локально
-python install.py --target /путь/к/проекту --uninstall --scope global  # глобальный движок
-python install.py --target /путь/к/проекту --uninstall --purge-graph   # ещё и удалить граф
+python install.py --target /path/to/project --uninstall                 # local
+python install.py --target /path/to/project --uninstall --scope global  # the global engine
+python install.py --target /path/to/project --uninstall --purge-graph   # remove the graph too
 ```
 
-Удаление снимает блок между маркерами (ваш текст выше — цел), убирает скиллы/агенты `amg-*` и AMG-хуки из `settings.json` (чужие хуки целы). **Граф сохраняется**, пока не указан `--purge-graph` — память не теряется по неосторожности.
+Uninstalling strips the block between the markers (your text above it stays), removes the `amg-*` skills/agents and the AMG hooks from `settings.json` (other hooks stay). **The graph is kept** unless `--purge-graph` is passed — memory is not lost by accident.
 
-## Опциональные зависимости
+## Optional dependencies
 
-Базовая функциональность работает на стандартной библиотеке Python (Python-код разбирается через `ast` без зависимостей); недостающее **мягко пропускается**. Группы (файл `requirements.txt`; установщик ставит их по `--deps`):
+The base path runs on the Python standard library (Python code is parsed with `ast`, no dependencies); anything missing is **skipped gracefully**. Groups (the `requirements.txt` file; the installer installs them per `--deps`):
 
-| Группа | Что даёт | Пакеты |
+| Group | What it gives | Packages |
 |---|---|---|
-| `base` | обязательная | `pyyaml` |
-| `embeddings` | семантический засев (лёгкий, многоязычный) | `model2vec` |
-| `text` | извлечение PDF / DOCX / XLSX | `pypdf` `python-docx` `openpyxl` |
-| `treesitter` | код прочих языков (функции + рёбра вызовов) | `tree-sitter` `tree-sitter-language-pack` |
+| `base` | mandatory | `pyyaml` |
+| `embeddings` | semantic seeding (light, multilingual) | `model2vec` |
+| `text` | PDF / DOCX / XLSX extraction | `pypdf` `python-docx` `openpyxl` |
+| `treesitter` | code in other languages (functions + call edges) | `tree-sitter` `tree-sitter-language-pack` |
 
-Тяжёлые трансформеры эмбеддингов — `pip install sentence-transformers` (опциональный апгрейд под измерение `--compare-embeddings`). Для **не-английских** проектов нужна многоязычная модель — движок выбирает её по умолчанию; детали — в [руководстве](docs/ru/GUIDE.md). Поставить всё разом: `pip install -r requirements.txt`.
+The heavy embedding transformers — `pip install sentence-transformers` (an optional upgrade, sized with `--compare-embeddings`). **Non-English** projects need a multilingual model — the engine picks one by default; details in the [guide](docs/ru/GUIDE.md). Install everything at once: `pip install -r requirements.txt`.
 
-## Другие среды (не Claude Code)
+## Other environments (not Claude Code)
 
-Память не привязана к Claude Code. Скрипты движка — обычный Python, сами резолвящие корень графа, поэтому работают в любой среде. Различается лишь управляющий слой, и его выбирает флаг **`--env`**:
+Memory is not tied to Claude Code. The engine scripts are plain Python that resolve the graph root themselves, so they work in any environment. Only the control layer differs, and the **`--env`** flag picks it:
 
-- **`--env claude-code`** (умолчание) — блок активации со скиллами, хуки `SessionStart`/`SessionEnd` в `settings.json` и слэш-команда `/amg`.
-- **`--env codex`** — OpenAI Codex, среда **со** скиллами и субагентами: скиллы кладутся в `.agents/skills`, субагенты рендерятся как **TOML в `.codex/agents`** (с `model` / `model_reasoning_effort` из блока `models`), вливается skill-aware блок из шаблона `entrypoint/AGENTS.codex.md`; Claude-хуки и команда `/amg` не пишутся — их роль берёт петля активации. Каталог агента и точка входа по умолчанию — `.agents` / `AGENTS.md`.
-- **`--env generic`** — для прочих сред, читающих `AGENTS.md` (Qwen Coder и другие, без скиллов): установщик вливает **переносимый блок без скиллов** из шаблона `entrypoint/AGENTS.md` и **не пишет** хуки и команду (это механизмы именно Claude Code, в иной среде их может не быть). Та же петля памяти ведётся **прямыми вызовами скриптов**, а промпты `agents/*.md` модель читает как инструкцию (не запускает изолированно). Типовая команда:
+- **`--env claude-code`** (default) — the activation block with skills, the `SessionStart`/`SessionEnd` hooks in `settings.json`, and the `/amg` slash command.
+- **`--env codex`** — OpenAI Codex, an environment **with** skills and subagents: skills go to `.agents/skills`, subagents are rendered as **TOML in `.codex/agents`** (with `model` / `model_reasoning_effort` from the `models` block), and the skill-aware block from the `entrypoint/AGENTS.codex.md` template is injected; Claude hooks and the `/amg` command are not written — their role falls to the activation loop. The default agent directory and entry point are `.agents` / `AGENTS.md`.
+- **`--env generic`** — for other environments that read `AGENTS.md` (Qwen Coder and others, no skills): the installer injects a **portable skill-less block** from the `entrypoint/AGENTS.md` template and writes **no** hooks or command (those are Claude Code mechanisms an environment may not have). The same memory loop runs by **direct script calls**, and the model reads the `agents/*.md` prompts as guidance (not as spawned agents). Typical command:
   ```bash
-  python install.py --target /путь/к/проекту --env generic \
+  python install.py --target /path/to/project --env generic \
       --agent-dir .agents --entrypoint AGENTS.md --mirror src
   ```
 
-Имена `.claude` / `CLAUDE.md` — умолчания Claude Code; для иных сред — их имена (пресет `.agents` / `AGENTS.md`). Базовая работоспособность памяти от среды не зависит, набор удобств (хуки, слэш-команды, изолированные субагенты) — зависит.
+The names `.claude` / `CLAUDE.md` are the Claude Code defaults; other environments use their own (preset `.agents` / `AGENTS.md`). The baseline capability of the memory does not depend on the environment; the set of conveniences (hooks, slash commands, isolated subagents) does.
 
-> ⚠️ **ПРОВЕРЕНО ТОЛЬКО В CLAUDE CODE.** Режимы `codex` и `generic` спроектированы под свои среды, но их работоспособность и стабильность в Codex / Qwen Coder и других **пока не подтверждены** — все тесты проводились в Claude Code. Проверка этих сред — отдельный этап дорожной карты, идущий после этапов надёжной сборки.
+> ⚠️ **TESTED ON CLAUDE CODE ONLY.** The `codex` and `generic` modes are designed for their environments, but their behavior and stability on Codex / Qwen Coder and others are **not yet confirmed** — all testing so far was on Claude Code. Verifying those environments is a separate roadmap stage that follows the build-reliability stages.
 
-## Проверка после установки
+## Checking after the install
 
-Установщик в конце сам прогоняет `verify --repair` (целостность хранилища). Дополнительно, из корня проекта, можно убедиться, что всё на месте:
+The installer itself finishes with `verify --repair` (store integrity). Additionally, from the project root, you can confirm everything is in place:
 
 ```
 python .claude/skills/amg-bootstrap/scripts/extract_structure.py . --stats
 ```
 
-`--stats` покажет, что попадёт в граф **по каждому источнику** (если у источника `files: 0` или `found: false` — он пуст или путь не найден), что ещё неоднозначно по типу и каких опциональных библиотек не хватает.
+`--stats` shows what will enter the graph **per source** (a source with `files: 0` or `found: false` is empty or its path was not found), what is still ambiguous by type, and which optional libraries are missing.
