@@ -74,7 +74,7 @@ flowchart LR
 | `python inspect_graph.py --bucket <doc\|code\|data\|notes\|_hubs>` | только узлы бакета (по реальному каталогу файла узла `nodes/<бакет>/`) |
 | `python inspect_graph.py --grep <строка> --full` | полные сводки |
 
-Путь хранилища задаётся `--store` (по умолчанию вычисляется относительно скрипта).
+Путь хранилища задаётся `--store`; по умолчанию он разрешается восходящим поиском от текущего каталога (`retrieve._default_store` — зеркало `resolve_amg_root`, см. [Хранилище](./03-storage.md)).
 
 ## `bench.py` — скорость на масштабе
 
