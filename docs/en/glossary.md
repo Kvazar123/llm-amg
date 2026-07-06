@@ -55,6 +55,8 @@ Rules of use:
 | сводка | summary | |
 | дистиллят | distillate | what absorb keeps |
 | канон / канонический | canon / canonical | markdown as the source of truth |
+| правило сохранности | the preservation rule | which nodes survive the source diff |
+| заработанный след / заработанные поля | earned trace / earned fields | summary, edges, weights that follow content on a move |
 
 ## Retrieval
 

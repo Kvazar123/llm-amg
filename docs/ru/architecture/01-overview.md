@@ -52,20 +52,22 @@ flowchart TD
 | Извлечение структуры | `extract_structure.py` | классификация типа файла и нарезка на единицы | `<путь>` · `--stats` |
 | Сверка | `reconcile.py` | диф графа с источником, очередь на обогащение, применение; кэш дериваций и метрики связности | `bootstrap` · `plan` · `apply` · `apply-cached` · `metrics` |
 | Захват заметок | `notes.py` | безопасная запись авторских узлов (решение / вывод / план / открытый вопрос) через транзакцию | `add` |
-| Нарезка очереди | `partition_queue.py` | делит `work/queue.json` на ограниченные партии для параллельных сборщиков: группировка по поддеревьям + капы по числу единиц и объёму текста | `[<root>]` · `--depth` · `--max-units` · `--max-chars` |
+| Нарезка очереди | `partition_queue.py` | делит `work/queue.json` на ограниченные партии для параллельных сборщиков: группировка по поддеревьям + капы по числу единиц и объёму текста | `[<root>]` · `--depth` · `--max-units` · `--max-chars` · `--priority` |
 | Сводка очереди | `inspect_queue.py` | счётчики очереди (category / поддерево / kind / с текстом) + прогресс сборки в процентах | `[<root>]` |
 | Кандидаты линковки | `link_candidates.py` | пачки кандидатов кросс-доменных рёбер (близость сводок) и якоря хабов для глобальной линковки | `[<root>]` · `--hubs` |
 | Извлечение из графа | `retrieve.py` | засев → PPR → сборка пакета по ярусам | `"<запрос>"` · `--store` |
 | Семантический засев | `embed.py` | опциональное обогащение засева эмбеддингами; диагностика | одиночный запуск (диагностика) |
 | Read-индекс | `index_store.py` | производный SQLite-кэш под `load_nodes` (автоматический, одноразовый, пересобираемый) | — (внутренний) |
 | Верификация | `verify_claims.py` | сверка утверждения о коде с живым источником (file/symbol/hash) перед ответом; read-only, опц. `--write` | `<id>` · `--store` · `--write` |
-| Консолидация | `consolidate.py` | свёртка весов, значимость, компрессия веток | `weights` · `plan` · `apply` |
+| Консолидация | `consolidate.py` | свёртка весов, значимость, компрессия веток, генерация дайджеста | `weights` · `plan` · `digest` · `apply` |
+| Жизненный цикл | `lifecycle.py` | тонкий оркестратор: хук-точки сессий (восстановление, свёртка весов, дайджест, выгрузка стенограммы) и управляющие операции `/amg`; графовой логики не дублирует — зовёт `graph_store` и `consolidate` | `session-start` · `session-end` · `status` · `on` · `off` · `repair` |
+| Миграция схемы | `migrate_schema.py` | одноразовое приведение старого графа к текущему канону схемы (`source_kind`, грамматические `type`, `origin` рёбер, поля слоя доверия) | `[<root>]` |
 | Измерение | `eval_retrieval.py` | recall / precision / hop-recall против лексической базы | `--make-demo` · `--cases` |
 | Бенчмарк | `bench.py` | скорость на масштабе: scan vs index, `retrieve`/`eval`/bootstrap | `--make-bench` · `--store` |
 | Просмотр | `inspect_graph.py` | список узлов (id, тип, сводка) для разметки и контроля | `--grep` · `--bucket` |
 | Визуализация | `export_graph.py` | экспорт графа в JSON и самодостаточный 3D-вьюер; read-only | `--open` · `--json` |
 
-Ключевые модули сопровождаются самотестом (`selftest_*.py`), проверяющим их инварианты: `graph_store`, `reconcile`, `retrieve`, `embed`, `consolidate`, `notes`, `migrate_schema`, `index_store` (`selftest_index`), `verify_claims` (`selftest_verify`), провенанс использования (`selftest_usage`), `bench` (`selftest_bench`), экспорт графа (`selftest_export`) и хелперы очереди (`selftest_queue`), а извлечение структуры — через `selftest_extract_overrides`, `selftest_stage2` и `selftest_chunkers`. У `eval_retrieval.py` и `inspect_graph.py` собственного самотеста нет — они косвенно прогоняются через `selftest_retrieve`/`selftest_consolidate`. Самотесты не входят в рабочий поток и запускаются вручную при изменениях.
+Ключевые модули сопровождаются самотестом (`selftest_*.py`), проверяющим их инварианты: `graph_store`, `reconcile`, `retrieve`, `embed`, `consolidate`, `notes`, `migrate_schema`, `lifecycle`, `index_store` (`selftest_index`), `verify_claims` (`selftest_verify`), провенанс использования (`selftest_usage`), `bench` (`selftest_bench`), экспорт графа (`selftest_export`), хелперы очереди (`selftest_queue`), конвейер сборки (`selftest_build`), правила игнорирования (`selftest_ignore`), сохранение сессий (`selftest_sessions`) и узлы-паттерны (`selftest_pattern`); извлечение структуры прогоняется через `selftest_extract_overrides`, `selftest_stage2` и `selftest_chunkers`. У `eval_retrieval.py` и `inspect_graph.py` собственного самотеста нет — они косвенно прогоняются через `selftest_retrieve`/`selftest_consolidate`. Самотесты не входят в рабочий поток и запускаются вручную при изменениях.
 
 Оркестрация описана в разделе [Субагенты и скиллы](./08-agents-skills.md): `CLAUDE.md` задаёт петлю активации (что делать в начале, по ходу и в конце сессии), скиллы — это процедуры (построить, извлечь, консолидировать), субагенты — исполнители семантической работы в изолированном контексте.
 
@@ -87,10 +89,12 @@ skills/                          скиллы — процедуры (когда
   amg-bootstrap/
     SKILL.md
     references/consistency-model.md     формальная модель согласованности
-    scripts/  extract_structure.py · graph_store.py · reconcile.py · notes.py · selftest_*.py
+    scripts/  extract_structure.py · graph_store.py · reconcile.py · notes.py · lifecycle.py ·
+              link_candidates.py · partition_queue.py · inspect_queue.py · migrate_schema.py · selftest_*.py
   amg-retrieve/
     SKILL.md
-    scripts/  retrieve.py · embed.py · verify_claims.py · eval_retrieval.py · inspect_graph.py · export_graph.py · index_store.py · selftest_*.py
+    scripts/  retrieve.py · embed.py · verify_claims.py · eval_retrieval.py · inspect_graph.py ·
+              export_graph.py · index_store.py · bench.py · viewer/ (ассеты 3D-вьюера) · selftest_*.py
   amg-consolidate/
     SKILL.md
     scripts/  consolidate.py · selftest_*.py
@@ -105,9 +109,9 @@ docs/                            документация (ru / en)
 
 | Скилл | Запускает скрипты | Вызывает субагентов |
 |---|---|---|
-| `amg-bootstrap` | `graph_store.py`, `extract_structure.py`, `reconcile.py`, `link_candidates.py` | `amg-classifier`, `amg-builder`, `amg-synth`, `amg-linker` |
-| `amg-retrieve` | `retrieve.py`, `embed.py`, `verify_claims.py`, `eval_retrieval.py` | `amg-retriever` |
-| `amg-consolidate` | `consolidate.py` | `amg-consolidator` |
+| `amg-bootstrap` | `graph_store.py`, `extract_structure.py`, `reconcile.py`, `partition_queue.py`, `inspect_queue.py`, `link_candidates.py` | `amg-classifier`, `amg-builder`, `amg-synth`, `amg-linker` |
+| `amg-retrieve` | `retrieve.py`, `embed.py`, `verify_claims.py`, `eval_retrieval.py`, `export_graph.py` | `amg-retriever` |
+| `amg-consolidate` | `consolidate.py`, `notes.py` (захват выводов) | `amg-consolidator` |
 
 Роли субагентов (полные промпты и инструкции — в разделе [Субагенты и скиллы](./08-agents-skills.md)):
 
