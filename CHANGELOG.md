@@ -4,6 +4,24 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [1.12.0] — 2026-07-08
+
+Stage 21 closed — the full documentation now exists in native technical English. MINOR: documentation-only (plus the link-integrity fixes below); no code, schema, config, or interface change. The `docs/en/*` tree mirrors `docs/ru/*` one file per file; the living roadmap stays Russian.
+
+### Added
+- **The complete English documentation mirror `docs/en/*`:** `THEORY.md`, `GUIDE.md`, and `architecture/{README, 01-overview … 10-eval-tools, 12-install}` — a faithful, detail-complete, native-technical-English translation of `docs/ru/*`, rendered strictly against `docs/en/glossary.md` (the ~190-pair ru→en terminology glossary; a working reference, deliberately unlinked from the docs). The root `README.md` and `INSTALL.md` were already English (written/translated in earlier stages) and were re-synced to target the English mirror.
+- **`docs/en/architecture/11-roadmap.md`** — an English snapshot pointer: the roadmap is a living Russian working document (translating it in full would duplicate every per-session edit), so this stable orientation page (document structure, stage ledger, whole-roadmap DoD) resolves every inbound English link while directing the reader to the Russian source of truth.
+
+### Changed
+- **Per-file reconcile-then-translate protocol.** Each Russian source was proofread against the actual code (numbers, defaults, CLI flags, edge cases) and cleaned (calques, misplaced anglicisms, residual `Stage N` / `audit 1.NN` tags in the technical layer, `.claude/*` neutralized to `<agent_dir>` in prose) BEFORE translation, so the English never captured stale wording. Reconcile-step fixes landed in the Russian originals too: the phantom `chat` value in `provenance.kind` (the code only writes code/doc/data/user/model_inference), missing `lifecycle.py`/`migrate_schema.py`/the `digest` and `view` verbs and the full `/amg status` field list in 01/07/08, the stale `usage.log` claim in 03/08, the `amg_root`/`--store` default-resolution note in 04/10, and the "Три команды" → "Команды" heading in 05.
+- **English `INSTALL.md` re-pointed to the English docs** (`docs/ru/{09-config,GUIDE}` → `docs/en/…`), now that the English mirror exists.
+
+### Fixed
+- **Documentation link integrity across all 35 files** (a full relative-link + anchor audit — zero broken links, zero cross-language leaks, every `#anchor` valid): a pre-existing depth bug in the architecture docs (3 levels deep, so `../../INSTALL*.md` resolved to a nonexistent `docs/INSTALL*.md`) fixed to `../../../`; the `INSTALL_RU.md` self-link (`../../INSTALL.md` above the repo root) → `INSTALL.md`; and the Russian `08-agents-skills.md` link that pointed at the English INSTALL at the wrong depth → `../../../INSTALL_RU.md` (missed in the earlier ru→INSTALL_RU sweep).
+- **Verification-pass corrections** from a four-lens bilingual review (README parity, GUIDE/THEORY fidelity, architecture native quality — the corpus rated faithful, complete, and native): the one confirmed substantive defect (an ambiguous "it decides" in `08` → "the linker decides", matching the Russian referent) plus genuine calques ("the batch never falls" → "fails"; GUIDE «честно» calques → "properly"/"faithfully"; «приписка» → "mark"; THEORY "recall that" homograph → "as a reminder", archaic "dearer" → "costlier", the Hebbian idiom restored to canonical "neurons that fire together wire together").
+
+Roadmap: the Stage 21 body compacted to its "Выполнено" line, audit §1.54 collapsed to a one-liner; no open Section-1 items remain. DoD green: 21 engine selftests + `selftest_install` + mypy (18 modules) + the eval demo (behavior unchanged — a documentation stage).
+
 ## [1.11.2] — 2026-07-06
 
 The stage-21 preparation release: everything before the translation itself is done, so the stage's remaining scope is exactly the per-file reconcile-then-translate protocol now spelled out in the roadmap. PATCH: one behavior fix (gitignore `!` support — strictly more forgiving), the rest is prompts and docs.
