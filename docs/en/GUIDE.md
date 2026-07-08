@@ -129,7 +129,7 @@ flowchart LR
 
 The pack is **memory, not the ultimate truth**: a summary can lag the source it points to (refactorings happen between consolidations), and a confidently wrong answer is worse than an honest "I don't know". So every fact carries its origin and confidence, and a claim about code is checked against the live source before the answer (the trust layer; theory — [§15](./THEORY.md)).
 
-**Marks in the pack.** A note `⟨…⟩` may stand next to a node — an invitation to re-check, **not** a demotion in the output (a freshly edited node is often exactly the one you need, so it is flagged, not hidden):
+**Marks in the pack.** A mark `⟨…⟩` may stand next to a node — an invitation to re-check, **not** a demotion in the output (a freshly edited node is often exactly the one you need, so it is flagged, not hidden):
 
 - `stale` — the summary may lag a changed source;
 - `unverified` — a claim about code not yet checked against the source;
@@ -371,9 +371,9 @@ Separately from retrieval, the **input chunking** is tunable: the depth and limi
 
 ## Build quality and cost
 
-**Connectivity is a number.** After a build, the `connectivity` line in `/amg status` (or `reconcile.py metrics`) shows whether one connected graph came out: the component count, the largest one's share, the unresolved **internal** edge targets, and the doc nodes without a `documents` edge. The verdict `ok` — all is well; `attention` — usually rerunning the global linking is enough (`/amg sync` finishes the job), and the command prints samples of the problem edges right away. Dangling references to the stdlib and third-party libraries are normal and not counted: the memory honestly records the fact of an import without pretending to know foreign code.
+**Connectivity is a number.** After a build, the `connectivity` line in `/amg status` (or `reconcile.py metrics`) shows whether one connected graph came out: the component count, the largest one's share, the unresolved **internal** edge targets, and the doc nodes without a `documents` edge. The verdict `ok` — all is well; `attention` — usually rerunning the global linking is enough (`/amg sync` finishes the job), and the command prints samples of the problem edges right away. Dangling references to the stdlib and third-party libraries are normal and not counted: the memory faithfully records the fact of an import without pretending to know foreign code.
 
-**A rebuild is free.** Once-written summaries and edges are kept in the derivation cache (`cache/derivations/`) under the content hash: rebuilding the graph from scratch — after a `git clone`, a cleanup, an experiment — restores them verbatim without calling the model, paying only for genuinely new content. This also buys reproducibility: the same input — the same graph. Changing `working_language` honestly invalidates the cache (summaries in another language will not be substituted); to force a full re-derivation — the `derivation_cache: false` key or deleting the directory (e.g. after moving to a stronger model).
+**A rebuild is free.** Once-written summaries and edges are kept in the derivation cache (`cache/derivations/`) under the content hash: rebuilding the graph from scratch — after a `git clone`, a cleanup, an experiment — restores them verbatim without calling the model, paying only for genuinely new content. This also buys reproducibility: the same input — the same graph. Changing `working_language` properly invalidates the cache (summaries in another language will not be substituted); to force a full re-derivation — the `derivation_cache: false` key or deleting the directory (e.g. after moving to a stronger model).
 
 **Cross-domain links are completed by the linking pass.** Documents, examples, and code are brought together by a separate pass: code proposes each node its similar candidates from other domains (over the same vectors as semantic seeding; with no backend — by word overlap), and the model only confirms the real links. A false link is worse than a missed one, so doubtful candidates are rejected; the pass can be repeated — what is already linked is not revisited.
 
@@ -438,7 +438,7 @@ For branches to carry their own memory and merges to be ordinary git merges, **k
 python .claude/skills/amg-retrieve/scripts/verify_claims.py --by-commit --store .claude/amg
 ```
 
-It compares each node's ingest-time commit (`provenance.commit`) with the current HEAD — one `git diff` per such commit — and lists the nodes whose source changed. It is a **complement** to the exact content check (`verify_claims <id>`), not a replacement: the by-commit check is cheap and tells you what exactly to re-check or rebuild.
+It compares each node's ingest-time commit (`provenance.commit`) with the current HEAD — one `git diff` per such commit — and lists the nodes whose source changed. It is a **complement** to the exact content check (`verify_claims <id>`), not a replacement: the by-commit check is cheap and tells you exactly what to re-check or rebuild.
 
 ### Branch awareness
 
