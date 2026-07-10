@@ -97,6 +97,10 @@ The `config.yml → models` block is the single source of truth for model choice
 - **`install_deps`** installs the requested groups (`--deps`): `base` (`pyyaml` — the only mandatory one), `embeddings` (`model2vec`), `embeddings-st` (`sentence-transformers`), `text` (`pypdf`/`python-docx`/`openpyxl`), `treesitter` (`tree-sitter`/`tree-sitter-language-pack`); the same groups are documented in `requirements.txt`.
 - **`verify_store`** initializes and verifies the **local** graph with the **installed** engine (`graph_store.py init` + `verify --repair`) — **without building the graph**. The `--build` flag additionally builds the structural skeleton (`reconcile.py bootstrap`); semantic derivation stays model-driven.
 
+### The post-install step: restart the session
+
+The control plane the installer just wrote comes alive only in a **new session**: an agent environment reads its skill and command registry at session start, so the installing session sees neither the `amg-*` skills nor `/amg`. This matters beyond convenience — a first build started in the installing session would run **without** the `amg-bootstrap` skill, with the model improvising the pipeline from the instruction text and losing the orchestration discipline the skill enforces (bounded batches, checkpoint parts, batched application). So the model-driven flow (INSTALL.md) ends with an explicit restart instruction, and the first build belongs to the fresh session — via the activation loop or `/amg sync`.
+
 ## Reinstall, uninstall, adding a project
 
 - **Reinstall** is simply a repeated `install.py` run, idempotent by construction: `place_engine` replaces only `amg-*`, `inject_block` rewrites the area between the markers, `merge_settings` replaces only the AMG hooks, `write_config` spares the existing config (and prints its effective values), and the model rendering is reapplied. The project's graph is untouched.

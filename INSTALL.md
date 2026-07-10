@@ -37,6 +37,8 @@ Unpack AMG into any folder **outside the project** and, in a session inside your
 
 **Empty answers take the defaults**, except the sources (at least one `mirror_path`/`absorb_path` is needed) — those the installer re-asks. After the answers the model runs `install.py`, which places the engine, renders the block and hooks, writes `config.yml`, installs the chosen dependencies, and runs `verify --repair`. The graph is **not built by itself** — that is the activation step's decision. The AMG source folder may be deleted after the install.
 
+**Close with the restart instruction.** The final message must tell the user to **restart the session** (start a new one): an agent environment registers skills and the `/amg` command at session start, so in the installing session they are not live yet. For the same reason, **do not start the first build here**: without the `amg-bootstrap` skill the model improvises the pipeline from scratch and loses its orchestration discipline (batching, checkpoints, batched application). The first build belongs to a fresh session — see "After the install".
+
 ## Section 2. Manual install (the installer CLI)
 
 The same `install.py` runs directly — no model needed. From the AMG source folder (kept anywhere outside the project; disposable after the install):
@@ -79,11 +81,13 @@ Inheritance is switched on by the `agent_dir` key of the local config (the insta
 
 ## After the install: activation and the first request
 
-**`/amg on` ≠ building the graph.** Activation only raises the `active` flag; **the graph is built by `sync`** or by the activation loop. So after an install with activation:
+**`/amg on` ≠ building the graph.** Activation only raises the `active` flag; **the graph is built by `sync`** or by the activation loop.
 
-- either **start a new session** — the loop reconciles the graph before the first task (with `automation: true`);
-- or say **`/amg sync`** in the current session (in words: "build / sync the memory graph");
-- or install with `--build` in the first place (the structural skeleton is ready the moment the install finishes).
+**Restart the session first.** Skills and the `/amg` command register when a session starts, so the installing session does not see them — and the first build must not run there: a skill-less, improvised build loses the pipeline's orchestration discipline. In the **new** session:
+
+- either the loop reconciles the graph before the first task (with `automation: true`);
+- or say **`/amg sync`** (in words: "build / sync the memory graph");
+- or, if you installed with `--build`, the structural skeleton is already in place — the new session's loop adds the semantic layer.
 
 From here just work: glance at **`/amg status`** (one screen of state, and a tour of the `/amg` commands at the same time), then **ask the model any question about the project** — it assembles context from the graph itself. Manual build/retrieve commands from older instructions are no longer needed: the activation loop drives everything (see the [guide](docs/en/GUIDE.md)).
 
