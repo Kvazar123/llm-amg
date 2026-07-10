@@ -8,7 +8,7 @@
 
 ## What it is
 
-A language model remembers nothing between sessions, and its working memory — the context window — is bounded: when it overflows or the session ends, the accumulated context is lost. AMG gives the model an **external long-term memory shaped as a graph** of linked note-nodes that live as ordinary files on disk.
+Every language model today shares one architectural limitation: it remembers nothing between sessions, and its working memory — the context window — is finite, so when it overflows or the session ends, the accumulated context is lost. AMG lifts that limitation with an external long-term memory: **a graph of note-nodes joined by typed, weighted edges**, from which what is needed is fetched by **spreading activation along those links**. The graph lives as ordinary files on disk.
 
 The idea is to take the best of two familiar approaches and sidestep their weaknesses. **RAG** (retrieval-augmented generation) can automatically find and inject what's relevant into the window, but it does so as a flat top-k: it answers multi-hop questions poorly — the ones whose answer must be assembled from several sources — and accumulates nothing across queries. A **hand-kept wiki** (in the spirit of Andrej Karpathy's llm-wiki) gives human-readable linked pages and explicit structure, but needs manual upkeep and drifts away from the source over time. AMG keeps RAG's automation and the wiki's human-readable structure, but retrieves differently: not by flat similarity, but by **spreading activation along the links** — so the window receives a relevant *neighborhood* of the graph (the node you need together with its context), not a scatter of look-alike fragments.
 
@@ -59,6 +59,7 @@ Memory is tuned cautiously, in a "quality first" spirit:
 - **Hebbian weight learning is off** (`weights.apply_hebbian: false`). The blind reinforcement rule **hurt** recall on a large sparse graph (reinforced links become "highways" that pull activation away from multi-hop nodes); the improved rule — reinforcing by the **real task outcome** rather than mere co-display — already **raises** recall on the same graph, but the default stays off until the uplift is confirmed on real usage. When to enable — see the [guide](docs/en/GUIDE.md); details — [theory, §8](docs/en/THEORY.md).
 - **Compaction is idle by default** — it compresses nothing while a branch is within budget; when it does compress, it passes an automatic recall check (an eval guard measures recall on a graph clone before and after and rejects a drop) and archives the originals.
 - **Embeddings are optional, light enrichment** over BM25, not a replacement; with no backend installed, retrieval stays purely lexical.
+- **Semantic enrichment is eager** (`derivation: eager`): summaries and semantic edges are built for every node right at build time, so the memory is complete from the first query. The lazy mode (`lazy`) — build only the structural map up front and finish detail on first touch — exists as an explicit choice for very large graphs queried in small part; on an ordinary project it buys nothing (see the [guide](docs/en/GUIDE.md)).
 
 ## Installation
 
@@ -110,21 +111,21 @@ The full reference for every key — [09-config](docs/en/architecture/09-config.
 
 Baseline functionality does not depend on the environment; the set of conveniences does. **These modes are untested** on any non-Claude-Code environment so far — all testing was on Claude Code (verifying them is a separate roadmap stage still ahead).
 
-## First run
+## First run and the build
 
 From install to memory's first answer is a couple of steps; no manual scripts — the model does the work itself.
 
-**Restart the session.** Skills and the `/amg` command register when a session starts, so the installing session does not see them yet — start a new one before anything else.
+**YOU MUST RESTART THE SESSION** after the install — this is a requirement, not a tip. Skills and the `/amg` command register only at session start: in the installing session they do not work, and any build attempted there would run not through the standard pipeline but as the model's improvisation — without the batching and checkpoint discipline such a graph cannot be built properly. Do not start the build before the restart, by command or by request; the install itself is already complete and intact.
 
-**Check.** Look at the state and meet the commands at the same time:
+**Check.** In the new session, look at the state and meet the commands at the same time:
 ```
 /amg status
 ```
 One screen: whether memory is active, graph size, queue, recent operations. Every operation is available through the single `/amg <verb>` command — or the same words in an ordinary request.
 
-**Build.** The main one-time step: **`/amg sync`** (the words "build / sync the memory graph") runs the full first build — the structural skeleton, the summaries, the hubs, and the linking pass. With `automation: true` the loop starts it by itself before the first task; from then on `sync` only reconciles what changed.
+**Build.** The main one-time step: **`/amg sync`** (the words "build / sync the memory graph") runs the full first build — the structural skeleton, the summaries, the hubs, and the linking pass. With `automation: true` the loop starts it by itself before the first task. From then on `sync` is incremental: it finds the files changed since last time and **finishes them itself** — refreshes the skeleton, re-summarizes the changed units, completes the links; the unchanged is untouched and costs not a token.
 
-**Work.** From here, **just ask the model questions about your project** — it assembles the right context from the graph itself (the strategic surround plus the specifics) and files conclusions as it goes; routine upkeep is `/amg consolidate` (or automatic).
+**Work.** From here, **just ask the model questions about your project** — it assembles the right context from the graph itself (the strategic surround plus the specifics) and files conclusions as it goes. Memory upkeep: the deterministic half (signal folding, the digest, the transcript dump) is done by the hooks at every session's start and end; the judgment half — selecting conclusions into long-term memory, merging duplicates, compacting overgrown branches — is run by the loop at the end of work, and manually by **`/amg consolidate`**.
 
 ## Sources: mirror and absorb
 
@@ -132,7 +133,7 @@ What feeds memory is listed in `config.yml` under two keys; each file's type (co
 
 - **`mirror_path` — what you edit** (code, docs you maintain). The graph is kept as its **live projection**: file added → node, changed → node updated, removed → node purged. The source stays the single source of truth, and the graph holds a summary and a pointer to it (`path:line`), not a verbatim copy.
 - **`absorb_path` — one-off material you don't edit** (chat logs, data dumps, third-party documents). It is **ingested once** into independent nodes, and deleting the source does not erase the knowledge — what was absorbed no longer depends on it. This key is **optional**: you can run mirrors only.
-- **`absorb_once_path` — a one-off snapshot you don't want re-synced.** Like `absorb` (deleting the source keeps the node), but later *changes* to the source are ignored too — the node is ingested once and **frozen**. For a report, log, or export pinned to a moment in time.
+- **`absorb_once_path` — a one-off snapshot you don't want re-synced.** Exactly one thing separates it from `absorb_path`: while the absorbed file sits on disk, `absorb` keeps **re-reconciling its changes** (like a mirror), whereas `absorb_once` tracks nothing — ingested once and **frozen**, later edits to the file never reach the memory. Deleting the source erases the knowledge in neither case. For a report, log, or export pinned to a moment in time while the file itself lives on.
 
 **A trick for important material.** Absorption keeps a distillate (the gist, not every word), so if you delete an absorbed source only the summary remains. When you need guaranteed access to **all** the detail, declare the material a **mirror** even without editing it: the graph then holds summaries and pointers, while the full text is always reachable via the link in the file itself (the price: the source must stay on disk). This is especially useful for valuable conversations — keeping them as a mirror is safer than absorbing them.
 
@@ -163,8 +164,9 @@ All control goes through one `/amg <verb>` command (and the same words in an ord
 | `/amg sync` | build or reconcile the graph with the sources |
 | `/amg retrieve <query>` | assemble a context pack |
 | `/amg consolidate` | fold weights, file conclusions, compact over-budget branches |
+| `/amg view` | open the 3D graph viewer — an offline HTML, read-only (the words "open / show the memory graph", "visualize the memory") |
 
-Control verbs (`status`/`on`/`off`/`repair`) are run by a helper script; work verbs (`sync`/`retrieve`/`consolidate`) delegate to the dedicated skills (also invocable directly). Every automatic operation has such a manual counterpart. Note: `on` only enables memory — **the graph is built by `sync`**.
+Control verbs (`status`/`on`/`off`/`repair`) are run by a helper script; work verbs (`sync`/`retrieve`/`consolidate`) delegate to the dedicated skills (also invocable directly); `view` is a direct run of the exporter, no model involved. Every automatic operation has such a manual counterpart. Note: `on` only enables memory — **the graph is built by `sync`**.
 
 **A digest in every session.** The loop's main failure is "the memory exists but was never consulted." So consolidation keeps a small `digest.md` next to the entry point — 5–10 of the most salient decisions and open questions — loaded into **every** session: the essentials are visible at once, before the first retrieval.
 
@@ -178,9 +180,21 @@ You can open the memory's structure as a **self-contained, offline HTML page** w
 python .claude/skills/amg-retrieve/scripts/export_graph.py --store .claude/amg --open
 ```
 
-This is a working diagnostic instrument, not a showpiece — always one command away when you want to *see* your memory. It reads the project at a glance: the hubs and key nodes with their links, the thematic clusters standing apart in color. And it makes build problems literally visible: an **island** floating away from the main graph, an **unlinked node**, a documentation cluster hanging apart from the code it should describe — each is a gap for the linking pass (`/amg sync`) to close, and the `connectivity` line of `/amg status` states the same verdict as a number. Contested knowledge is spotted by eye too — the arbitration verdicts (`disputed` / `rejected` / `superseded`) are highlighted.
+This is a working diagnostic instrument, not a showpiece — always one command away when you want to *see* your memory. What it lets you spot:
 
-**The legend colors nodes by content category** (the storage bucket) — not by the project's folders and not by the source policy: **code** — functions, classes, modules (tests included: a test is code, whatever folder it lives in); **docs** — document sections (an absorbed markdown is a doc, not "data"); **data** — structured records (JSON/YAML, CSV/XLSX sheets); **notes** — authored captures (decisions, conclusions, open questions; session dialogues land under docs); **hubs** — the synthesized strategic layer. Node size reflects connectivity (hubs read large), edge thickness the link weight.
+- **the project at a glance** — the hubs and key nodes with their links; thematic clusters stand apart in color, node size reflects connectivity (hubs read large), edge thickness the link strength;
+- **the health of the knowledge — by status highlighting**: `disputed` (amber) — an open contradiction, two claims disagree and deserve a ruling; `rejected` (red) — a claim found false; `superseded` (gray) — displaced by something fresher; `stale` (dimmed) — the summary may lag a changed source. Contested and outdated knowledge is found by eye in seconds;
+- **build problems — literally by the graph's shape**: an island floating away from the main graph; an isolated node with no links at all; a documentation cluster hanging apart from the code it should describe. Each is a linking gap that a re-run of `/amg sync` closes. Dangling (broken) edges are not drawn — they surface exactly as islands and loners, and their precise count is the `connectivity` line of `/amg status`.
+
+**The legend** — node color follows the **content** category, not the project's folders and not the source policy:
+
+| Color bucket | What it holds |
+|---|---|
+| code | functions, classes, modules — tests are code too, whatever folder they live in |
+| docs | document sections (an absorbed markdown is a doc, not "data"); session dialogues land here as well |
+| data | structured records: JSON/YAML, CSV/XLSX sheets |
+| notes | authored captures — decisions, conclusions, open questions, plans |
+| hubs | the synthesized strategic layer — overviews and topics |
 
 The file is self-contained — the graph data and the visualization library are inlined — so it opens by double-click, with no server and no internet, **read-only**. Also on board: rotate/zoom/pan and a click-open side panel (summary, frontmatter, edges); **filters** by type, status, and bucket and **search** by id and summary; **cluster coloring**; a **large-graph mode** — start from the hubs and expand on click, so a big graph never becomes a hairball or stalls; adjustable render **quality** and a **light/dark theme**. Behavior is set by the `viewer` block in `config.yml` (the large-graph threshold, quality, hiding weak edges, and a pass-through to the library). Besides the viewer, `--json` exports the graph for external analysis tools. Full detail — the [guide](docs/en/GUIDE.md) and the [config reference](docs/en/architecture/09-config.md).
 
