@@ -54,10 +54,12 @@ There are no hooks here, so **you** run each step at the right moment.
    do not re-open sources), and for each unit write a 1–3 phrase summary plus the
    meaningful edges, following the guidance in `.claude/agents/amg-builder.md` (per-unit
    summaries + edges) and `.claude/agents/amg-synth.md` (an overview, hubs, cross-domain
-   `documents` edges, and a gap report). Write the result to
-   `.claude/amg/work/derived-<batch>.json` (the derivation format) and apply it:
+   `documents` edges, and a gap report). Write the results to
+   `.claude/amg/work/derived-<batch>.json` files (the derivation format) and apply them
+   all with ONE call (it consumes every `work/derived-*.json` and moves the applied
+   files to `work/applied/` — re-running it is the resume path):
    ```
-   python .claude/skills/amg-bootstrap/scripts/reconcile.py apply .claude/amg/work/derived-<batch>.json .
+   python .claude/skills/amg-bootstrap/scripts/reconcile.py apply-derived .
    ```
    Then complete the cross-domain links (doc <-> code <-> example) with the global
    linking pass — per-batch summarizing cannot see across batches:
@@ -72,15 +74,25 @@ There are no hooks here, so **you** run each step at the right moment.
    the same operation — crash-safe and idempotent, so re-running never duplicates or
    loses anything.
 
-2. **Retrieve before you work.** For each task, FIRST assemble a context pack from the
-   graph (seed → spreading activation → a budgeted pack), then work from it — do not dump
-   the whole codebase into context:
+2. **The graph is the primary context source — retrieve before you work.** Everything
+   the graph can give, take from the graph FIRST; only then decide what is left to look
+   up in the files. For each task, assemble a context pack (seed → spreading activation
+   → a budgeted pack) and work from it:
    ```
    python .claude/skills/amg-retrieve/scripts/retrieve.py "<query>" --store .claude/amg
    ```
-   Read the written pack at `.claude/amg/cache/pack.md`. Re-run when the focus shifts (a
-   new requirement, a different subsystem). For code the pack gives `path:line` pointers —
-   edit the real file; the graph is not a copy of the code.
+   Read the written pack at `.claude/amg/cache/pack.md`. The protocol:
+   - **Decompose a complex prompt**: a request with several distinct topics gets a
+     separate retrieval per topic, run as you turn to that part — the retrieved
+     branches together form the task's context.
+   - **A focus shift = a new retrieval** (a new requirement, question, or subsystem).
+   - **Graph before filesystem search**: open sources point-wise from the pack's
+     `path:line` pointers; search the files directly only for what the pack did not
+     cover, and say so in one line. A project-wide grep sweep instead of retrieval is
+     the failure mode this loop exists to prevent.
+   - **Make it visible**: tell the user in one line that context came from memory.
+   For code the pack gives `path:line` pointers — edit the real file; the graph is not
+   a copy of the code.
 
 3. **Capture as you go; consolidate at the end.** When a decision, conclusion, open
    question, or forward-looking plan emerges, capture it with the safe note API — do NOT

@@ -68,7 +68,13 @@ layer thin:
 - keep per-batch results to the subagent's single status line; do not echo item
   contents back;
 - the queue already carries each unit's text, so neither you nor the builders
-  re-read source files during derivation.
+  re-read source files during derivation;
+- **turn count is the same currency as volume** — every command you run re-sends
+  your whole context. One `apply-derived` call per round (never one apply per part
+  file); spawn a round's subagents in ONE message;
+- **never write ad-hoc scripts that touch the graph.** The shipped CLI covers every
+  pipeline step; if a step seems missing, stop and report it to the user instead of
+  improvising a mutation script.
 
 ## Workflow
 
@@ -127,35 +133,44 @@ delegating per-unit reading to subagents.
    (`derived-<part>-p01.json`, …) and reports `BATCH COMPLETE: N/M` or
    `BATCH PARTIAL: N/M`. It does **not** write graph files.
 
-4. **Apply derivations — and verify the counts.** Apply every produced part
-   transactionally (glob `work/derived-*.json`, including `-pNN` parts):
+4. **Apply derivations — ONE call per round — and verify the counts.** When a round
+   of builders has returned, apply every produced part file in a single command:
    ```bash
-   python .claude/skills/amg-bootstrap/scripts/reconcile.py apply .claude/amg/work/derived-<part>-p01.json .
+   python .claude/skills/amg-bootstrap/scripts/reconcile.py apply-derived .
    ```
-   This sets `derived_from_hash = source_hash` and flips nodes to `active`, so a unit
-   counts as derived only once its summary/edges are durably committed. A malformed
-   item is repaired or skipped per item (`skipped_invalid` + reasons) — the batch
-   never aborts; applied items are stored in the persistent derivation cache, so a
-   future rebuild restores them for free.
-   **Do not take a builder's word for completion**: compare the sum of
-   `applied + skipped_*` across a batch's parts with the batch's unit count, and
-   treat any `BATCH PARTIAL` or shortfall as an interrupted batch — re-spawn a
-   builder on the remainder (or just re-run step 2: an underived unit re-queues by
-   construction, nothing is lost). After each apply round, report progress from
-   `inspect_queue.py .` (`progress.derived_percent` — the traveled part of the path).
+   It consumes ALL `work/derived-*.json` (checkpoint `-pNN` parts included) in one
+   transaction, prints one aggregated result, and moves the consumed files to
+   `work/applied/` — so re-running it is a cheap no-op and is also the resume path.
+   Never apply part files one command each: every command is a turn that re-sends
+   your whole context. Applying sets `derived_from_hash = source_hash` and flips
+   nodes to `active`, so a unit counts as derived only once its summary/edges are
+   durably committed. A malformed item is repaired or skipped per item
+   (`skipped_invalid` + reasons) and a torn checkpoint file lands in `work/invalid/`
+   (`malformed_files`) — the batch never aborts; applied items are stored in the
+   persistent derivation cache, so a future rebuild restores them for free.
+   **Do not take a builder's word for completion**: compare the aggregated
+   `applied + skipped_*` with the round's unit count, and treat any `BATCH PARTIAL`
+   or shortfall as an interrupted batch — re-spawn a builder on the remainder (or
+   just re-run step 2: an underived unit re-queues by construction, nothing is
+   lost). **Every between-rounds report to the user carries the progress percentage**
+   from `inspect_queue.py .` (`progress.derived_percent`) and names any interrupted
+   batch explicitly («batch X: PARTIAL n/m — finishing the remainder»).
 
 5. **Synthesis and gap report (strong model) — hubs BEFORE linking.** First write
-   the deterministic hub anchors, then spawn one `amg-synth` subagent:
+   the deterministic hub anchors AND the one-file synthesis input, then spawn one
+   `amg-synth` subagent:
    ```bash
-   python .claude/skills/amg-bootstrap/scripts/link_candidates.py --hubs .   # -> work/hub-candidates.json
+   python .claude/skills/amg-bootstrap/scripts/link_candidates.py --hubs .          # -> work/hub-candidates.json
+   python .claude/skills/amg-bootstrap/scripts/link_candidates.py --synth-input .   # -> work/synth-input.json
    ```
-   It reads the now-populated nodes plus `work/hub-candidates.json` and produces:
-   top-level architecture/overview nodes anchored to the stable suggested ids,
-   hub->member `documents` edges, weighted multi-membership (`part_of`) for
-   cross-cutting topics, pattern nodes, and a **gap report** — undocumented code
-   (code nodes with no inbound `documents` edge), drifted docs (docs referencing
-   changed/removed code), and contradictions. Apply its derivation file the same
-   way (step 4) and surface the gap report to the user.
+   The synth works from those two files ONLY (`synth-input.json` is the whole
+   summary layer as one sheet, gap material included — it never scans `nodes/`) and
+   produces: top-level architecture/overview nodes anchored to the stable suggested
+   ids, hub->member `documents` edges, weighted multi-membership (`part_of`) for
+   cross-cutting topics, pattern nodes, and a **gap report** — undocumented code,
+   drifted docs, and contradictions (from the sheet's `gaps` block). Apply its
+   derivation with the same single `apply-derived` call (step 4) and surface the
+   gap report to the user.
 
 6. **Global semantic linking (parallel).** The builders were each locked to their
    batch, so cross-domain edges (doc <-> code, example <-> guide, ADR -> code) need a
@@ -166,9 +181,11 @@ delegating per-unit reading to subagents.
    (Uses cached embeddings for similarity when a backend is installed, else a
    lexical fallback — it degrades softly, never blocks.) Spawn an `amg-linker`
    subagent per batch **in parallel**, each given its `work/link-batch-<n>.json` and
-   an output path like `.claude/amg/work/derived-links-<n>.json`; apply each result
-   (step 4). The pass is incrementally re-runnable: already-linked pairs are never
-   re-nominated, so re-running it after new derivations only adds what is missing.
+   an output path like `.claude/amg/work/derived-links-<n>.json` — the linker writes
+   it in checkpoint parts (`-p01.json`, …), so an interrupted batch keeps its judged
+   nodes; apply the whole round with one `apply-derived` call (step 4). The pass is
+   incrementally re-runnable: already-linked pairs are never re-nominated, so
+   re-running it after new derivations only adds what is missing.
 
 7. **Acceptance gate (connectivity).** Verify the build is one connected graph:
    ```bash
@@ -223,11 +240,12 @@ graph converges to fully derived — most-used first — without a bootstrap spi
   works in its own isolated context so nothing overflows.
 - **Resume after an interrupted run — apply leftovers FIRST:** if a prior run left
   `work/derived-*.json` files (including `-pNN` checkpoint parts of a batch that
-  never finished), apply them all (step 4) before re-running step 2. It is
-  freshness-safe — each item carries its `content_sha`, so `apply` skips any whose
-  source has since changed (they re-queue) and you re-derive only the remainder,
-  not the whole queue. The checkpoints make this loss-bounded: a builder that died
-  mid-batch still left every finished part on disk.
+  never finished), one `apply-derived` call (step 4) consumes them all before you
+  re-run step 2. It is freshness-safe — each item carries its `content_sha`, so
+  `apply` skips any whose source has since changed (they re-queue) and you re-derive
+  only the remainder, not the whole queue. The checkpoints make this loss-bounded: a
+  builder, linker, or synth that died mid-batch still left every finished part on
+  disk.
 - Every write goes through the journal, so an interruption at any point recovers via
   step 1 on the next run.
 - Re-running the whole skill on an unchanged repo is free: extraction is exact and
@@ -238,7 +256,8 @@ graph converges to fully derived — most-used first — without a bootstrap spi
 - `references/consistency-model.md` — guarantees, journal protocol, recovery,
   reconcile rules, crash-point analysis.
 - `scripts/graph_store.py` — transactional store (`recover`, `verify`).
-- `scripts/reconcile.py` — diff engine (`bootstrap`, `plan`, `apply`).
+- `scripts/reconcile.py` — diff engine (`bootstrap`, `plan`, `apply`, `apply-derived`
+  — every `work/derived-*.json` in one call, consumed files move to `work/applied/`).
 - `scripts/extract_structure.py` — deterministic source → units: classifier +
   chunker registry (python/tree-sitter/markdown/text/json/pdf/docx/xlsx), ignore
   defaults, `--stats` for a classification + extractor-availability summary.
@@ -246,10 +265,11 @@ graph converges to fully derived — most-used first — without a bootstrap spi
   batches by subtree, bounded by unit count and input volume (`config.yml → builder`);
   `scripts/inspect_queue.py` — a read-only queue summary (counts by category / subtree /
   kind, units carrying text) plus the build-progress block (derived vs stale, percent).
-- `scripts/link_candidates.py` — deterministic prep for the global linking pass:
+- `scripts/link_candidates.py` — deterministic prep for the global passes:
   candidate nomination by cached-embedding similarity (lexical fallback) into
-  `work/link-batch-*.json`, and `--hubs` for the stable hub anchors
-  (`work/hub-candidates.json`).
+  `work/link-batch-*.json`, `--hubs` for the stable hub anchors
+  (`work/hub-candidates.json`), and `--synth-input` for the one-file synthesis
+  sheet (`work/synth-input.json`: the whole summary layer + gap material).
 - Subagents: `../../agents/amg-builder.md`, `../../agents/amg-synth.md`,
   `../../agents/amg-linker.md` (global linking, step 6),
   `../../agents/amg-classifier.md` (optional, for ambiguous files).

@@ -17,11 +17,16 @@ reversible). Work in your own context; return a short summary.
 
 ## Inputs
 - `.claude/amg/work/consolidation-plan.json`: over-budget branches (with staged
-  steps), near-duplicate candidates, episodic notes ranked by a deterministic
-  salience score, and — for arbitration (below) — `contradictions` (node-vs-node
-  conflict pairs, each side with its comparison inputs) and `source_contradicted`
-  (nodes whose live-source check failed).
-- Read the bodies of the nodes the plan references as needed.
+  steps and a `members_preview` of id/type/summary), near-duplicate candidates
+  (each with both summaries), episodic notes ranked by a deterministic salience
+  score (each with its type and summary), and — for arbitration (below) —
+  `contradictions` (node-vs-node conflict pairs, each side with its comparison
+  inputs and summary) and `source_contradicted` (nodes whose live-source check
+  failed, with summaries).
+- **The plan is your working layer** — it already carries every candidate's summary,
+  so judge from it. Read a node's body only for the few FINALISTS of a destructive
+  action (a merge's surviving text, a shorten's kept gist); never walk the plan's
+  nodes one by one and never scan `nodes/` — each read re-sends your whole context.
 - `working_language` from `.claude/amg/config.yml` (write summaries in it).
 
 ## Principles

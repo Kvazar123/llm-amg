@@ -19,6 +19,12 @@ material is prepared here, deterministically and without a model:
   * hub candidates  : --hubs writes work/hub-candidates.json — deterministic hub
     anchors from the directory structure (subtree sizes), so amg-synth names and
     refines a STABLE taxonomy instead of inventing hub ids anew per rebuild.
+  * synthesis input : --synth-input writes work/synth-input.json — the whole summary
+    layer as ONE compact sheet (id/type/qualname/summary/part_of, grouped by
+    subtree), so amg-synth reads a single file instead of scanning hundreds of
+    nodes/*.md in its own context (each agent turn re-sends everything read so far —
+    a per-file scan is a quadratic token sink). Size-capped: over the budget the
+    summaries are trimmed first, then groups keep counted samples (`truncated`).
 
 Reads the summary layer through retrieve.load_nodes (the SQLite read-index — no
 nodes/*.md rescan). Read-only over the graph; writes only work/ files. Stale
@@ -30,6 +36,7 @@ CLI:
   python link_candidates.py [<project_root>] [--root <agent_dir>]
         [--top K] [--batch N] [--min-sim S]
   python link_candidates.py --hubs [<project_root>] [--root <agent_dir>]
+  python link_candidates.py --synth-input [<project_root>] [--root <agent_dir>]
 """
 from __future__ import annotations
 
@@ -241,6 +248,109 @@ def _hub_slug(topic: str) -> str:
     return s[:48] or "root"
 
 
+# Budget for the one-file synthesis input. Well above a real project's summary layer
+# (hundreds of KB) yet a hard stop against a degenerate graph: over it, summaries are
+# trimmed first, then each group keeps a counted sample — the sheet always stays one
+# readable file for the synthesis agent.
+_SYNTH_INPUT_MAX_CHARS = 800_000
+_SYNTH_TRIM_SUMMARY = 160
+_SYNTH_GROUP_SAMPLE = 40
+
+
+def _synth_rows(nodes: Dict[str, Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    """Group the summary layer for the synthesis sheet: file-backed nodes by source
+    subtree, the rest (hubs, notes) by their storage bucket. Stale (not-yet-derived)
+    nodes ride along with an empty summary — the synthesis must see they exist
+    (lazy-aware counts) without mistaking them for gaps."""
+    groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for nid, n in sorted(nodes.items()):
+        sp = n.get("source_path")
+        key = subtree_key(str(sp), 2) if sp else f"_{_bucket(n).lstrip('_') or 'other'}"
+        row: Dict[str, Any] = {"id": nid, "type": n.get("type"),
+                               "summary": (n.get("summary") or "").strip()}
+        qual = n.get("qualname")
+        if qual:
+            row["qualname"] = qual
+        topics = [p.get("topic") for p in (n.get("part_of") or [])
+                  if isinstance(p, dict) and p.get("topic")]
+        if topics:
+            row["part_of"] = topics
+        if n.get("status") not in (None, "active"):
+            row["status"] = n.get("status")
+        groups[key].append(row)
+    return groups
+
+
+def _synth_gaps(nodes: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """Deterministic raw material for the synthesis gap report, so the agent needs no
+    edge scan of its own: code nodes with no inbound `documents` edge (undocumented),
+    doc nodes whose `documents` target no longer exists (drifted), and the
+    contradiction pairs. Stale nodes are excluded from 'undocumented' — a deferred
+    node has not had its chance yet."""
+    documented: Set[str] = set()
+    drifted: List[Dict[str, str]] = []
+    pairs: List[List[str]] = []
+    for nid, n in sorted(nodes.items()):
+        for e in n.get("edges") or []:
+            if not isinstance(e, dict) or not e.get("to"):
+                continue
+            rel, to = e.get("rel"), str(e["to"])
+            if rel == "documents":
+                if to in nodes:
+                    documented.add(to)
+                elif _bucket(n) == "doc" and len(drifted) < 100:
+                    drifted.append({"doc": nid, "missing": to})
+            elif rel in ("contradicts", "supersedes") and to in nodes and len(pairs) < 100:
+                pairs.append([nid, to, str(rel)])
+    undocumented = sorted(
+        nid for nid, n in nodes.items()
+        if _bucket(n) == "code" and n.get("status") != "stale" and nid not in documented)
+    return {"undocumented_code": undocumented[:200],
+            "undocumented_code_total": len(undocumented),
+            "drifted_doc_refs": drifted, "contradiction_pairs": pairs}
+
+
+def synth_input(amg_root: Path) -> Dict[str, Any]:
+    """Write work/synth-input.json — the compact one-file input of the synthesis pass.
+
+    The whole point is turn economy: amg-synth used to scan nodes/*.md itself, and an
+    isolated agent pays its entire accumulated context again on every read. This sheet
+    is the same summary layer (via the index-backed loader, no scan) delivered once,
+    plus the deterministic gap material (undocumented code, drifted doc references,
+    contradiction pairs) the gap report is written from.
+    """
+    nodes = rt.load_nodes(amg_root)
+    groups = _synth_rows(nodes)
+    payload: Dict[str, Any] = {
+        "nodes_total": len(nodes),
+        "stale_total": sum(1 for n in nodes.values() if n.get("status") == "stale"),
+        "truncated": False,
+        "gaps": _synth_gaps(nodes),
+        "groups": [{"subtree": k, "count": len(rows), "nodes": rows}
+                   for k, rows in sorted(groups.items())],
+    }
+
+    def _size() -> int:
+        return len(json.dumps(payload, ensure_ascii=False))
+
+    if _size() > _SYNTH_INPUT_MAX_CHARS:      # step 1: trim long summaries
+        for g in payload["groups"]:
+            for row in g["nodes"]:
+                if len(row["summary"]) > _SYNTH_TRIM_SUMMARY:
+                    row["summary"] = row["summary"][:_SYNTH_TRIM_SUMMARY]
+        payload["truncated"] = "summaries"
+    if _size() > _SYNTH_INPUT_MAX_CHARS:      # step 2: counted samples per group
+        for g in payload["groups"]:
+            if len(g["nodes"]) > _SYNTH_GROUP_SAMPLE:
+                g["nodes"] = g["nodes"][:_SYNTH_GROUP_SAMPLE]
+                g["sampled"] = True
+        payload["truncated"] = True
+    gs.atomic_write_text(amg_root / "work" / "synth-input.json",
+                         json.dumps(payload, ensure_ascii=False, indent=1))
+    return {"nodes": len(nodes), "groups": len(payload["groups"]),
+            "chars": _size(), "truncated": payload["truncated"]}
+
+
 def hub_candidates(amg_root: Path) -> Dict[str, Any]:
     """Deterministic hub anchors from the directory structure: every
     source subtree with enough file-backed nodes suggests one stable hub id, so the
@@ -280,10 +390,16 @@ def main(argv: List[str]) -> int:
     hubs_mode = "--hubs" in args
     if hubs_mode:
         args.remove("--hubs")
+    synth_mode = "--synth-input" in args
+    if synth_mode:
+        args.remove("--synth-input")
     project_root = Path(args[0]).resolve() if args else Path.cwd()
     amg_root = gs.resolve_amg_root(cli_root, project_root)
     if hubs_mode:
         print(json.dumps(hub_candidates(amg_root), ensure_ascii=False, indent=2))
+        return 0
+    if synth_mode:
+        print(json.dumps(synth_input(amg_root), ensure_ascii=False, indent=2))
         return 0
     print(json.dumps(build_batches(project_root, amg_root, overrides),
                      ensure_ascii=False, indent=2))

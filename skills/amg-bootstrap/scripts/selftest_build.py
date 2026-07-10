@@ -28,6 +28,14 @@ Proves, without a single model call:
                   needed), skips already-linked pairs and stale nodes, batches
                   deterministically with the hub list attached, and --hubs writes
                   stable directory-anchored hub suggestions (audits 1.45/1.46).
+  7. batch door : apply-derived consumes every work/derived-*.json (checkpoint
+                  parts included) in ONE call with one aggregated result, moves the
+                  consumed files to work/applied/ and quarantines a torn (invalid
+                  JSON) part in work/invalid/; a re-run is a cheap no-op — the
+                  resume path (audit 1.56).
+  8. synth sheet: --synth-input writes the whole summary layer as one grouped file
+                  (with the deterministic gap material), so the synthesis agent
+                  reads a single input instead of scanning nodes/ (audit 1.55).
 
 The fixture is hermetic: config.yml is mandatory (extraction exits without one)
 and the `agent_dir` key is deliberately ABSENT so the machine's global defaults
@@ -211,14 +219,28 @@ def main() -> int:
         assert lc0["skipped_stale"] == 11, lc0
         print("PASS  candidates: stale (underived) nodes are skipped, not linked")
 
-        # 2. stub builder -> apply: malformed items repaired/skipped, batch survives
+        # 2. stub builder -> apply-derived (the batch door, ONE call): checkpoint
+        # parts consumed together, malformed items repaired/skipped, a torn part
+        # quarantined, consumed files moved to work/applied/, re-run = no-op
         queue = json.loads((amg / "work" / "queue.json").read_text(encoding="utf-8"))
-        (amg / "work" / "derived-stub.json").write_text(
-            json.dumps(stub_derivation(queue["units"]), ensure_ascii=False),
-            encoding="utf-8")
-        r = RC.apply_derivation(proj, amg / "work" / "derived-stub.json", amg)
+        stub = stub_derivation(queue["units"])
+        (amg / "work" / "derived-stub-p01.json").write_text(
+            json.dumps(stub[:7], ensure_ascii=False), encoding="utf-8")
+        (amg / "work" / "derived-stub-p02.json").write_text(
+            json.dumps(stub[7:], ensure_ascii=False), encoding="utf-8")
+        (amg / "work" / "derived-torn-p01.json").write_text(
+            '[{"id": "code:x", "summ', encoding="utf-8")   # a checkpoint torn mid-write
+        r = RC.apply_derived(proj, amg)
+        assert r["files"] == 2, r
+        assert r.get("malformed_files") == ["derived-torn-p01.json"], r
         assert r["skipped_invalid"] == 2, r          # the no-id item + the bare string
         assert r["created"] == 1 and r["applied"] == 11 + 2, r  # units + swap + util extra
+        assert not list((amg / "work").glob("derived-*.json")), "consumed files must move"
+        assert (amg / "work" / "applied" / "derived-stub-p01.json").exists()
+        assert (amg / "work" / "invalid" / "derived-torn-p01.json").exists()
+        r2 = RC.apply_derived(proj, amg)
+        assert r2["files"] == 0 and r2["applied"] == 0, r2   # resume re-run: cheap no-op
+        print("PASS  batch door: one apply-derived call, parts consumed, torn part quarantined")
         nodes = RC.load_nodes(gs.GraphStore(amg))
         assert "overview:build" in nodes and "hub:overview:build" not in nodes, \
             "the doubled category prefix must collapse"
@@ -229,10 +251,11 @@ def main() -> int:
         assert ("depends_on", f"{UTIL}::helper") in rels(f"{CORE}::top_fn")
         print("PASS  apply: swap repaired, prefix re-bound, 2 skipped, batch intact")
 
-        # 3. synth stub -> apply -> connectivity gate over the finished graph
+        # 3. synth stub -> the same batch door -> connectivity gate
         (amg / "work" / "derived-synth.json").write_text(
             json.dumps(synth_stub(), ensure_ascii=False), encoding="utf-8")
-        RC.apply_derivation(proj, amg / "work" / "derived-synth.json", amg)
+        rs = RC.apply_derived(proj, amg)
+        assert rs["files"] == 1 and rs["created"] == 1, rs
         m = RC.graph_metrics(RC.load_nodes(gs.GraphStore(amg)))
         assert m["components"] == 1, m
         assert m["largest_component_share"] == 1.0, m
@@ -243,6 +266,23 @@ def main() -> int:
         assert m["gate"] == "ok", m
         print("PASS  metrics: one component, 0 internal dangling, gate ok "
               f"(external imports={m['dangling_external_imports']})")
+
+        # the one-file synthesis sheet: grouped summary rows + deterministic gap
+        # material, so amg-synth never scans nodes/ in its own context
+        si = LC.synth_input(amg)
+        assert si["nodes"] == 15 and si["truncated"] is False, si
+        sheet = json.loads((amg / "work" / "synth-input.json").read_text(encoding="utf-8"))
+        sgroups = {g["subtree"]: g for g in sheet["groups"]}
+        assert sgroups["src/pkg"]["count"] == 11 and "_hubs" in sgroups, list(sgroups)
+        assert all(row["summary"] for row in sgroups["src/pkg"]["nodes"]), \
+            "summaries ride inline"
+        gaps = sheet["gaps"]
+        # documented: CORE (by hub:build) and Widget (by the guide) — 9 of 11 remain
+        assert gaps["undocumented_code_total"] == 9, gaps
+        assert CORE not in gaps["undocumented_code"], gaps["undocumented_code"]
+        assert f"{CORE}::Widget" not in gaps["undocumented_code"], gaps["undocumented_code"]
+        assert gaps["drifted_doc_refs"] == [] and gaps["contradiction_pairs"] == [], gaps
+        print("PASS  synth-input: one-file sheet with grouped summaries + gap material")
 
         # 4. idempotency: the re-run bootstrap is a strict no-op
         s = RC.plan(proj, amg)

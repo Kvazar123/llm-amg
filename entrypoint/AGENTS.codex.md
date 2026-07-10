@@ -62,10 +62,18 @@ There are no SessionStart/SessionEnd hooks here, so **you** run each step at the
    the builder/synth subagents for the semantic half. Building from empty and reconciling
    are the same operation — crash-safe and idempotent.
 
-2. **Retrieve before you work.** For each task, FIRST assemble a context pack via the
-   **amg-retrieve** skill (it spawns amg-retriever), then read `.claude/amg/cache/pack.md`
-   and work from it. Re-run when the focus shifts. For code the pack gives `path:line`
-   pointers — edit the real file; the graph is not a copy of the code.
+2. **The graph is the primary context source — retrieve before you work.** Everything
+   the graph can give, take from the graph FIRST; only then decide what is left to look
+   up in the files. For each task, assemble a context pack via the **amg-retrieve**
+   skill (it spawns amg-retriever), then read `.claude/amg/cache/pack.md` and work from
+   it. The protocol: **decompose a complex prompt** (a separate retrieval per distinct
+   topic, run as you turn to that part — the retrieved branches together form the
+   task's context); **a focus shift = a new retrieval**; **graph before filesystem
+   search** (open sources point-wise from the pack's `path:line` pointers; search the
+   files directly only for what the pack did not cover, and say so in one line);
+   **make it visible** (tell the user in one line that context came from memory). For
+   code the pack gives `path:line` pointers — edit the real file; the graph is not a
+   copy of the code.
 
 3. **Capture as you go; consolidate at the end.** Capture decisions, conclusions, open
    questions, and forward-looking plans with the safe note API — do NOT hand-edit `nodes/`:

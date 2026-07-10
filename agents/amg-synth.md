@@ -18,8 +18,15 @@ cross-domain linking is the linker's job, not yours — focus on the strategic l
 Work in your own context and return a concise report.
 
 ## Inputs
-- The populated node set under `.claude/amg/nodes/` (read frontmatter: `id`, `type`,
-  `source_path`, `summary`, `part_of`, `edges`).
+- `.claude/amg/work/synth-input.json` — the WHOLE summary layer as one prepared
+  sheet (`{nodes_total, stale_total, groups: [{subtree, count, nodes: [{id, type,
+  qualname?, summary, part_of?, status?}]}], truncated}`), written by
+  `link_candidates.py --synth-input`. **This sheet is your working layer: do NOT
+  scan `nodes/*.md` and do NOT open source files** — reading the graph file by file
+  in your own context re-sends everything you already read on every turn and is the
+  exact token sink this sheet removes. A `status: stale` row is a not-yet-derived
+  node (empty summary): count it, but never report it as a gap. If `truncated` is
+  set, per-group `count` is still exact — reason from counts where samples end.
 - `.claude/amg/work/hub-candidates.json` — deterministic hub anchors from the
   directory structure (`{candidates: [{topic_dir, suggested_id, members, sample}],
   existing_hubs}`), written by `link_candidates.py --hubs`.
@@ -72,11 +79,15 @@ Work in your own context and return a concise report.
    an instance that does not truly fit** — a false analogy is worse than a missing one (the
    eval measures `false_analogy_rate`). Prefer a few well-grounded patterns over many thin ones.
 
-4. **Gap report** (`gap-report.md`, in `working_language`), with three sections:
-   - **Undocumented code** — code nodes with no inbound `documents` edge.
-   - **Drifted docs** — doc nodes describing code whose `source_hash` changed, or
-     referencing code ids that no longer exist.
-   - **Contradictions** — pairs linked by `contradicts`, with a one-line note each.
+4. **Gap report** (`gap-report.md`, in `working_language`), with three sections,
+   written from the sheet's ready-made `gaps` block (no edge scan of your own):
+   - **Undocumented code** — `gaps.undocumented_code` (code nodes with no inbound
+     `documents` edge; `undocumented_code_total` is the exact count when the list
+     is capped). Group them sensibly (by subtree) rather than dumping raw ids.
+   - **Drifted docs** — `gaps.drifted_doc_refs` (doc nodes whose `documents` target
+     no longer exists).
+   - **Contradictions** — `gaps.contradiction_pairs`, with a one-line note each
+     (use the two summaries from the sheet).
    This is one of the most valuable outputs for an existing project; make it
    specific and actionable.
 
@@ -96,6 +107,8 @@ JSON array. A written part survives an interruption; the driver applies parts
 independently.
 
 ## Rules
+- Work from the two input files only (`synth-input.json` + `hub-candidates.json`) —
+  never scan `nodes/` or open sources; everything you need is in the sheet.
 - Justify every edge from node summaries/structure; do not invent targets.
 - Prefer a few high-quality hubs over many thin ones.
 - Read-only on sources.

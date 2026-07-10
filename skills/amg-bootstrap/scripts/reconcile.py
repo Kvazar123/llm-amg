@@ -45,9 +45,16 @@ every time. bootstrap/plan restore cache hits automatically (derivation_cache: t
 Commands:
   python reconcile.py bootstrap [<project_root>] [--root <agent_dir>]
   python reconcile.py plan      [<project_root>] [--root <agent_dir>]
-  python reconcile.py apply <derivation.json> [<project_root>] [--root <agent_dir>]
+  python reconcile.py apply <derivation.json|glob> ... [<project_root>] [--root <agent_dir>]
+  python reconcile.py apply-derived [<project_root>] [--root <agent_dir>]  # every work/derived-*.json, one call
   python reconcile.py apply-cached [<project_root>] [--root <agent_dir>]  # restore from cache
   python reconcile.py metrics   [<project_root>] [--root <agent_dir>]   # connectivity report
+
+Batch application: `apply` accepts several paths and glob patterns (expanded
+internally — a Windows shell does not expand globs), and `apply-derived` applies every
+checkpoint part under work/ in ONE call with one aggregated result, moving consumed
+files to work/applied/ (a malformed file goes to work/invalid/ instead). One call per
+apply round keeps the orchestrator's turn count — and so its context re-sends — flat.
 
 The graph root is <agent_dir>/amg, resolved by graph_store.resolve_amg_root:
 --root -> AMG_AGENT_DIR env -> upward search from <project_root> (agent-dir
@@ -1156,6 +1163,61 @@ def _sanitize_item(item: Any) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
 
 def apply_derivation(project_root: Path, derivation_path: Path,
                      amg_root: Optional[Path] = None) -> Dict[str, Any]:
+    """Load one derivation JSON file and apply its items (see _apply_items)."""
+    amg_root = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
+    items = json.loads(Path(derivation_path).read_text(encoding="utf-8"))
+    if not isinstance(items, list):
+        items = [items]
+    return _apply_items(project_root, items, amg_root)
+
+
+def apply_derived(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
+    """Apply EVERY work/derived-*.json (checkpoint parts included) in one call.
+
+    This is the orchestrator's batch door: builders/linkers/synth leave many small
+    part files, and applying them one command each costs one orchestrator turn per
+    file — with the whole conversation re-sent every turn. Here all parts are read
+    in deterministic (sorted) order, applied as ONE item stream (one transaction,
+    one aggregated result), and the consumed files are moved to work/applied/ so a
+    re-run — which is also the resume path after an interruption — is a cheap no-op
+    over what already landed. A file that is not valid JSON (a checkpoint torn by a
+    hard kill) is moved to work/invalid/ and reported, never aborting the rest;
+    re-applying a moved file by hand stays safe (apply is idempotent and
+    freshness-checked)."""
+    amg_root = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
+    work = amg_root / "work"
+    files = sorted(work.glob("derived-*.json")) if work.exists() else []
+    if not files:
+        return {"files": 0, "applied": 0, "created": 0, "skipped_missing": 0,
+                "skipped_stale": 0, "skipped_invalid": 0}
+    items: List[Dict[str, Any]] = []
+    consumed: List[Path] = []
+    malformed: List[str] = []
+    for f in files:
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            malformed.append(f.name)
+            continue
+        items.extend(data if isinstance(data, list) else [data])
+        consumed.append(f)
+    result = _apply_items(project_root, items, amg_root)
+    for f, dest_dir in ([(f, "applied") for f in consumed]
+                        + [(work / n, "invalid") for n in malformed]):
+        try:
+            target_dir = work / dest_dir
+            target_dir.mkdir(parents=True, exist_ok=True)
+            f.replace(target_dir / f.name)
+        except OSError:
+            pass          # a held file (AV/indexer) stays put; the next run retries
+    result["files"] = len(consumed)
+    if malformed:
+        result["malformed_files"] = malformed
+    return result
+
+
+def _apply_items(project_root: Path, items: List[Dict[str, Any]],
+                 amg_root: Path) -> Dict[str, Any]:
     """Apply derivation items to the graph. Two item shapes are supported:
 
       * update : {id, summary?, lang?, edges?, part_of?, body?, content_sha?} -> update
@@ -1181,11 +1243,7 @@ def apply_derivation(project_root: Path, derivation_path: Path,
     (`skipped_invalid` + reasons) without aborting the batch; edge targets are
     canonicalized against the existing node set before merging.
     """
-    amg_root = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     store = gs.GraphStore(amg_root)
-    items = json.loads(Path(derivation_path).read_text(encoding="utf-8"))
-    if not isinstance(items, list):
-        items = [items]
     config = load_config(amg_root) or {}
     default_lang = config.get("working_language", "en")
     weights_cfg = config.get("weights") or {}
@@ -1505,15 +1563,42 @@ def main(argv: List[str]) -> int:
         print(json.dumps(apply_cached(project_root, amg_root), indent=2))
         return 0
 
+    if cmd == "apply-derived":
+        project_root = Path(args[1]).resolve() if len(args) > 1 else Path.cwd()
+        amg_root = gs.resolve_amg_root(cli_root, project_root)
+        print(json.dumps(apply_derived(project_root, amg_root), indent=2))
+        return 0
+
     if cmd == "apply":
         if len(args) < 2:
-            print("usage: reconcile.py apply <derivation.json> [<project_root>] "
+            print("usage: reconcile.py apply <derivation.json|glob> ... [<project_root>] "
                   "[--root <agent_dir>]")
             return 2
-        derivation = Path(args[1])
-        project_root = Path(args[2]).resolve() if len(args) > 2 else Path.cwd()
+        # Several files and glob patterns in one call (expanded here — a Windows
+        # shell passes globs through verbatim). A trailing EXISTING DIRECTORY is the
+        # project root; everything else names derivation files.
+        import glob as _glob
+        rest = args[1:]
+        project_root = Path.cwd()
+        if len(rest) > 1 and Path(rest[-1]).is_dir():
+            project_root = Path(rest[-1]).resolve()
+            rest = rest[:-1]
+        paths: List[Path] = []
+        for pat in rest:
+            hits = sorted(_glob.glob(pat)) if any(c in pat for c in "*?[") else [pat]
+            if not hits:
+                print(f"reconcile.py apply: no files match {pat!r}")
+                return 2
+            paths += [Path(h) for h in hits]
         amg_root = gs.resolve_amg_root(cli_root, project_root)
-        print(json.dumps(apply_derivation(project_root, derivation, amg_root), indent=2))
+        items: List[Dict[str, Any]] = []
+        for p in paths:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            items.extend(data if isinstance(data, list) else [data])
+        result = _apply_items(project_root, items, amg_root)
+        if len(paths) > 1:
+            result["files"] = len(paths)
+        print(json.dumps(result, indent=2))
         return 0
 
     if cmd == "metrics":

@@ -626,6 +626,18 @@ def _source_rank(node: Dict[str, Any]) -> int:
     return _SOURCE_RANK.get(kind, 2)
 
 
+def _plan_summary(node: Optional[Dict[str, Any]], cap: int = 200) -> str:
+    """A node's summary trimmed for the consolidation plan. The plan carries the
+    candidates' summaries INLINE so the consolidator judges from one file instead of
+    reading node bodies one by one — each agent turn re-sends its whole context, so a
+    per-node read loop is the same token sink the synthesis input removes (the bodies
+    stay available for the few finalists that genuinely need them)."""
+    if not node:
+        return ""
+    s = " ".join(str(node.get("summary") or "").split())
+    return s[:cap]
+
+
 def _node_arb_info(node: Dict[str, Any]) -> Dict[str, Any]:
     """The comparison inputs the consolidator weighs when arbitrating a contradiction:
     source rank, confidence, freshness (updated), verification status, provenance kind,
@@ -660,8 +672,11 @@ def _contradiction_candidates(nodes: Dict[str, Dict[str, Any]]
                 continue
             seen.add(frozenset((nid, to)))
             pairs.append({"a": nid, "b": to, "rel": e["rel"],
-                          "a_info": _node_arb_info(n), "b_info": _node_arb_info(nodes[to])})
-    source_contradicted = [{"id": nid, **_node_arb_info(n)} for nid, n in nodes.items()
+                          "a_info": _node_arb_info(n), "b_info": _node_arb_info(nodes[to]),
+                          "a_summary": _plan_summary(n),
+                          "b_summary": _plan_summary(nodes[to])})
+    source_contradicted = [{"id": nid, "summary": _plan_summary(n), **_node_arb_info(n)}
+                           for nid, n in nodes.items()
                            if (n.get("verification") or {}).get("status") == "contradicted"]
     return pairs, source_contradicted
 
@@ -687,6 +702,12 @@ def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, 
             if len(mem) > budget or tok > cmp_cfg["default_branch_budget_tokens"]:
                 over_budget.append({"hub": hub, "size_nodes": len(mem), "size_tokens": tok,
                                     "budget_nodes": budget, "members": mem,
+                                    # inline preview so the judge picks compaction
+                                    # targets without a per-node read loop
+                                    "members_preview": [
+                                        {"id": m, "type": nodes[m].get("type"),
+                                         "summary": _plan_summary(nodes[m], 160)}
+                                        for m in mem[:60]],
                                     "staged_steps": cmp_cfg["steps"]})
 
     # near-duplicate candidates (lexical Jaccard over summaries). Restricted to the
@@ -705,7 +726,9 @@ def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, 
         for j in range(i + 1, len(dup_ids)):
             sim = _jaccard(toks[dup_ids[i]], toks[dup_ids[j]])
             if sim >= cfg["near_duplicate_sim"]:
-                dups.append({"a": dup_ids[i], "b": dup_ids[j], "sim": round(sim, 3)})
+                dups.append({"a": dup_ids[i], "b": dup_ids[j], "sim": round(sim, 3),
+                             "a_summary": _plan_summary(nodes[dup_ids[i]]),
+                             "b_summary": _plan_summary(nodes[dup_ids[j]])})
 
     # episodic candidates + salience
     grounded_in = _inbound_grounded(nodes)
@@ -713,7 +736,8 @@ def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, 
     for nid, n in nodes.items():
         if (n.get("type") in cfg["episodic_types"]
                 and n.get("source_kind") not in ("derived_from_file",)):
-            episodic.append({"id": nid,
+            episodic.append({"id": nid, "type": n.get("type"),
+                             "summary": _plan_summary(n),
                              "salience": salience(n, degree[nid], max_deg, cfg,
                                                   nid in grounded_in),
                              "protected": (n.get("type") or "").lower() in cmp_cfg["protect_types"]})

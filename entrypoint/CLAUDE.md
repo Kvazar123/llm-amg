@@ -78,13 +78,29 @@ explicit request.
    the same operation — crash-safe and idempotent, so re-running never duplicates or
    loses anything.
 
-2. **Retrieve before you work.** For each task, FIRST assemble context from the graph
-   via the **`amg-retrieve`** skill (seed → spreading activation → a budgeted context
-   pack), then do the work. Do not dump the whole codebase into context. The pack is
-   memory, not ground truth: before you state a code fact from it — especially a node it
-   flags `⟨stale / unverified / contradicted / low confidence⟩` — confirm it against the
-   live source. `verify_claims.py <id> --store .claude/amg` does this cheaply
-   (file/symbol/hash, read-only); on any conflict the current source wins.
+2. **The graph is the primary context source — retrieve before you work.** Everything
+   the graph can give, take from the graph FIRST; only then decide what is left to
+   look up in the files. For each task, assemble context via the **`amg-retrieve`**
+   skill (seed → spreading activation → a budgeted context pack), then work from the
+   pack. The protocol:
+   - **Decompose a complex prompt.** A request with several distinct topics or
+     sub-tasks gets a separate retrieval per topic — run each as you turn to that
+     part; the retrieved branches together form the task's context. One vague
+     mega-query is not decomposition.
+   - **A focus shift = a new retrieval.** A new requirement, question, or subsystem
+     mid-conversation re-runs retrieval for the current focus.
+   - **Graph before filesystem search.** Open sources point-wise from the pack's
+     `path:line` pointers. Search the files directly only for what the pack did not
+     cover — and say so in one line (and if the sources may have changed, sync
+     first). A project-wide grep/Glob sweep instead of retrieval is the failure
+     mode this loop exists to prevent.
+   - **Make it visible.** Tell the user in one line that context came from memory
+     (e.g. "memory pack on X: 12 nodes").
+   The pack is memory, not ground truth: before you state a code fact from it —
+   especially a node it flags `⟨stale / unverified / contradicted / low confidence⟩` —
+   confirm it against the live source. `verify_claims.py <id> --store .claude/amg`
+   does this cheaply (file/symbol/hash, read-only); on any conflict the current
+   source wins.
 
 3. **Capture as you go; consolidate at the end.** When a decision, conclusion, open
    question, or forward-looking plan emerges, capture it with the safe note API — do

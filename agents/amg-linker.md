@@ -56,13 +56,21 @@ For each node, judge its candidates (and the hub list) from the summaries:
    symbol stays dangling.
 
 ## Output (the only thing you write to the graph layer)
-A JSON array of update items at the given output path. Do **not** edit node files —
-the driver applies your output transactionally (validation and id canonicalization
-included). Return to the caller ONE line that starts with
+JSON arrays of update items. Do **not** edit node files — the driver applies your
+output transactionally (validation and id canonicalization included).
+
+**Checkpoint as you go — never hold the whole batch for one final write.** For an
+output path `.../derived-links-<n>.json`, write numbered parts instead:
+`.../derived-links-<n>-p01.json`, `-p02.json`, … — each a complete, valid JSON array
+covering the last ~10 judged nodes. A written part is durable: an interruption (rate
+limit, disconnect, output ceiling) loses at most the nodes since the last part, never
+the batch. Do not grow or rewrite an already-written part — start the next one.
+
+Return to the caller ONE line that starts with
 `BATCH COMPLETE: judged N/M nodes` (e.g. "BATCH COMPLETE: judged 40/40 nodes —
 confirmed 34 edges, 3 hub memberships, skipped 41 candidates") or, if anything cut
-you short, `BATCH PARTIAL: judged N/M, output covers the first N` — never imply
-completion after an interruption.
+you short, `BATCH PARTIAL: judged N/M, written parts cover the first N` — never
+imply completion after an interruption.
 
 ## Rules
 - A false link is worse than a missing one: when unsure, skip the candidate.
