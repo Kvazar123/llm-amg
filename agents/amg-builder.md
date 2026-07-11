@@ -6,7 +6,7 @@ description: >-
   a concise summary plus meaning-bearing edges, emitting a derivation JSON file for
   the driver to apply. Use during `amg-bootstrap` step 3, one instance per batch, in
   parallel. Bulk, routine work — mid-tier model.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Write
 model: sonnet
 ---
 
@@ -27,7 +27,9 @@ your batch and return only a short summary to the caller.
   oversized unit arrives without `text` (pointer only) — then read exactly the
   `source_path` slice `lineno`–`line_end`, nothing more.
 - An output path, e.g. `.claude/amg/work/derived-<batch>.json`.
-- The project's `working_language` (from `.claude/amg/config.yml`).
+- The project's `working_language` — given in your assignment; do not read
+  `config.yml` for it (a config read is a whole extra turn that re-sends your
+  context for one word).
 
 ## What to do
 For each unit:
@@ -50,11 +52,17 @@ For each unit:
      sharpens another claim; `exemplifies` points from a concrete case to the
      concept it illustrates).
    - `contradicts` — only if you see a real conflict; note it, low weight.
+   **Edge direction**: the item's `id` is the relation's SOURCE node, `to` is its
+   target — the edge lives on `id` and points at `to`. So `documents`: id = the doc
+   unit → to = the code/data it describes; `exemplifies`: id = the concrete case →
+   to = the concept it illustrates; `depends_on`: id = the dependent unit → to =
+   what it uses.
    Give each edge a weight in (0,1]: strong/direct ~0.8–1.0, incidental ~0.3–0.5.
    Target ids use the `code:<path>::<qual>` form with the most specific source path
    you can determine — the driver re-binds a target written without its leading
-   directories to the canonical id when exactly one exists, but it never resurrects
-   an invented symbol: do not fabricate targets. Cross-domain completeness is NOT
+   directories (or a bare symbol name) to the canonical id when exactly one exists,
+   but it never resurrects an invented symbol: do not fabricate targets.
+   Cross-domain completeness is NOT
    your job — a global linking pass (amg-linker) runs after all summaries exist;
    assert the links you can see from your batch and leave the rest to it.
 4. Estimate **confidence** (0–1): how sure you are the summary is correct and grounded
@@ -78,6 +86,13 @@ covering the last ~10 units you finished. A written part is durable: an
 interruption (rate limit, disconnect, output ceiling) loses at most the units since
 the last part, never the batch. Do not grow or rewrite an already-written part —
 start the next one.
+
+**Write parts with the Write tool — never a bash heredoc.** Summaries carry quotes,
+apostrophes, and backticks, and a heredoc tears on them mid-file; the Write tool
+does not. Your write access is for these output parts only (files under `work/`) —
+everything else stays read-only. **Validate without re-reading**: a Read of your own
+part floods your context with JSON you already have; check it instead with
+`python -c "import json;json.load(open('<part>', encoding='utf-8'));print('ok')"`.
 
 ```json
 [

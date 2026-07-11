@@ -6,7 +6,7 @@ description: >-
   cross-domain edges (docs↔code), weighted multi-membership for cross-cutting
   topics, and a GAP REPORT (undocumented code, drifted docs, contradictions). This
   is the foundational, high-leverage pass — strongest model.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Write
 model: opus
 ---
 
@@ -32,7 +32,7 @@ Work in your own context and return a concise report.
   existing_hubs}`), written by `link_candidates.py --hubs`.
 - An output path for your derivation, e.g. `.claude/amg/work/derived-synth.json`.
 - A path for the gap report, e.g. `.claude/amg/gap-report.md`.
-- `working_language` from `.claude/amg/config.yml`.
+- `working_language` — given in your assignment; do not read `config.yml` for it.
 
 ## Produce
 
@@ -105,6 +105,14 @@ write it in numbered parts as sections complete — `derived-synth-p01.json` (hu
 `-p02.json` (memberships/edges), `-p03.json` (patterns) — each a complete, valid
 JSON array. A written part survives an interruption; the driver applies parts
 independently.
+
+**Write parts (and the gap report) with the Write tool — never a bash heredoc.**
+Summaries carry quotes, apostrophes, and backticks, and a heredoc tears on them
+mid-file; the Write tool does not. Your write access is for the derivation parts
+under `work/` and the gap report at its given path — everything else stays
+read-only. **Validate without re-reading**: a Read of your own part floods your
+context with JSON you already have; check it instead with
+`python -c "import json;json.load(open('<part>', encoding='utf-8'));print('ok')"`.
 
 ## Rules
 - Work from the two input files only (`synth-input.json` + `hub-candidates.json`) —

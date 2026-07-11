@@ -71,10 +71,18 @@ layer thin:
   re-read source files during derivation;
 - **turn count is the same currency as volume** — every command you run re-sends
   your whole context. One `apply-derived` call per round (never one apply per part
-  file); spawn a round's subagents in ONE message;
+  file); spawn a round's subagents in ONE message, in waves of 5–10 agents (fewer
+  waves = fewer of your turns);
+- **read `config.yml` once and pass what workers need in their assignments**
+  (`working_language` above all): a worker that opens the config spends a whole
+  extra turn — with its full context re-sent — on one word;
 - **never write ad-hoc scripts that touch the graph.** The shipped CLI covers every
   pipeline step; if a step seems missing, stop and report it to the user instead of
-  improvising a mutation script.
+  improvising a mutation script;
+- **conclusions about the AMG engine itself go to the user, not into the graph.**
+  If you notice an engine bug, limitation, or improvement idea, say it in your
+  report; never file it via `notes.py` — the graph is the project's memory, and
+  engine observations would pollute its digest.
 
 ## Workflow
 
@@ -123,15 +131,20 @@ delegating per-unit reading to subagents.
    ```
    It groups by subtree AND bounds every batch by unit count / input volume
    (`config.yml → builder`), so a dense directory never becomes one giant batch.
-   Then spawn an `amg-builder` subagent per batch **in parallel**, each given only
-   its batch PATH (`work/queue-<part>.json`) and an output path like
-   `.claude/amg/work/derived-<part>.json`. The units carry their own `text`, so the
-   builder summarizes straight from the batch (in the configured `working_language`
+   Then spawn an `amg-builder` subagent per batch **in parallel, in waves of 5–10
+   agents per message**, each given only its batch PATH (`work/queue-<part>.json`),
+   an output path like `.claude/amg/work/derived-<part>.json`, **and the
+   `working_language` value** (you read the config once; a builder must not spend a
+   turn reading it). The units carry their own `text`, so the
+   builder summarizes straight from the batch (in the given `working_language`
    for docs/notes; code identifiers verbatim), proposes local edges (`documents` is
    mandatory on a doc unit with a real subject), **echoes each unit's `content_sha`**
    into its items, **checkpoints output in numbered parts**
    (`derived-<part>-p01.json`, …) and reports `BATCH COMPLETE: N/M` or
    `BATCH PARTIAL: N/M`. It does **not** write graph files.
+   One caveat your wave instructions must never override: a unit **without** `text`
+   (oversized, pointer only) is the one case where a builder legitimately reads the
+   `source_path` slice — "do not read sources" applies to units that carry text.
 
 4. **Apply derivations — ONE call per round — and verify the counts.** When a round
    of builders has returned, apply every produced part file in a single command:
@@ -168,7 +181,9 @@ delegating per-unit reading to subagents.
    produces: top-level architecture/overview nodes anchored to the stable suggested
    ids, hub->member `documents` edges, weighted multi-membership (`part_of`) for
    cross-cutting topics, pattern nodes, and a **gap report** — undocumented code,
-   drifted docs, and contradictions (from the sheet's `gaps` block). Apply its
+   drifted docs, and contradictions (from the sheet's `gaps` block). Give it the
+   two input paths, the output paths, and the `working_language` value in the
+   assignment. Apply its
    derivation with the same single `apply-derived` call (step 4) and surface the
    gap report to the user.
 
@@ -180,12 +195,17 @@ delegating per-unit reading to subagents.
    ```
    (Uses cached embeddings for similarity when a backend is installed, else a
    lexical fallback — it degrades softly, never blocks.) Spawn an `amg-linker`
-   subagent per batch **in parallel**, each given its `work/link-batch-<n>.json` and
+   subagent per batch **in parallel, in waves of 5–10 agents per message**, each
+   given its `work/link-batch-<n>.json` and
    an output path like `.claude/amg/work/derived-links-<n>.json` — the linker writes
    it in checkpoint parts (`-p01.json`, …), so an interrupted batch keeps its judged
-   nodes; apply the whole round with one `apply-derived` call (step 4). The pass is
-   incrementally re-runnable: already-linked pairs are never re-nominated, so
-   re-running it after new derivations only adds what is missing.
+   nodes; apply the whole round with one `apply-derived` call (step 4). **Report
+   linking progress the same way as building**: after every wave, tell the user
+   "X/Y link batches judged" (plus any PARTIAL by name). The pass is
+   incrementally re-runnable: already-linked pairs are never re-nominated, so the
+   **completeness criterion is built in — repeat `link_candidates.py` + the wave
+   until it emits zero new batches, or `metrics` reports `gate: ok`**; re-running
+   after new derivations only adds what is missing.
 
 7. **Acceptance gate (connectivity).** Verify the build is one connected graph:
    ```bash

@@ -96,6 +96,11 @@ explicit request.
      mode this loop exists to prevent.
    - **Make it visible.** Tell the user in one line that context came from memory
      (e.g. "memory pack on X: 12 nodes").
+   One exception: when the prompt itself hands you the exact entry points — a
+   file and line, a ready-made fix to apply, a fully specified local change — a
+   ritual pack adds nothing; the graph is for entering the unfamiliar. Skip the
+   retrieval and start; the protocol resumes the moment the task reaches beyond
+   what the prompt already gave.
    The pack is memory, not ground truth: before you state a code fact from it —
    especially a node it flags `⟨stale / unverified / contradicted / low confidence⟩` —
    confirm it against the live source. `verify_claims.py <id> --store .claude/amg`
@@ -110,7 +115,10 @@ explicit request.
    ```
    (types: `note` / `decision` / `adr` / `open_question` / `plan`). This is cheap,
    transactional, and does NOT require a bootstrap (bootstrap is only for source files,
-   not for your reasoning). At session end, or before `/clear`, run the
+   not for your reasoning). Capture conclusions about the PROJECT only: an observation
+   about the AMG engine itself (a suspected bug, a limitation) goes to the user in
+   chat, never into the project's memory — it would pollute the digest. At session
+   end, or before `/clear`, run the
    **`amg-consolidate`** skill once to fold the session's co-activations into edge
    weights and maintain memory. Conclusions that live only in chat are lost on
    `/clear`; the graph is where they survive, so capture before clearing. With

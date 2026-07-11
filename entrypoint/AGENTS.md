@@ -91,6 +91,11 @@ There are no hooks here, so **you** run each step at the right moment.
      cover, and say so in one line. A project-wide grep sweep instead of retrieval is
      the failure mode this loop exists to prevent.
    - **Make it visible**: tell the user in one line that context came from memory.
+   One exception: when the prompt itself hands you the exact entry points — a file
+   and line, a ready-made fix to apply, a fully specified local change — a ritual
+   pack adds nothing; the graph is for entering the unfamiliar. Skip the retrieval
+   and start; the protocol resumes the moment the task reaches beyond what the
+   prompt already gave.
    For code the pack gives `path:line` pointers — edit the real file; the graph is not
    a copy of the code.
 
@@ -101,7 +106,10 @@ There are no hooks here, so **you** run each step at the right moment.
    python .claude/skills/amg-bootstrap/scripts/notes.py add --type decision --summary "..." [--body "..."] [--tags "a,b"]
    ```
    (types: `note` / `decision` / `adr` / `open_question` / `plan`; cheap, transactional, no
-   bootstrap needed). At session end, or before clearing context, maintain memory:
+   bootstrap needed). Capture conclusions about the PROJECT only: an observation about
+   the AMG engine itself (a suspected bug, a limitation) goes to the user in chat,
+   never into the project's memory — it would pollute the digest. At session end, or
+   before clearing context, maintain memory:
    ```
    python .claude/skills/amg-consolidate/scripts/consolidate.py weights .
    python .claude/skills/amg-consolidate/scripts/consolidate.py plan .

@@ -6,7 +6,7 @@ description: >-
   summarize, group under a sub-hub, shorten, or retire — applying the value-of-
   information rubric and respecting branch budgets and protected types. Emits an
   actions JSON for the driver to apply transactionally. Decision-heavy — strong model.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Write
 model: opus
 ---
 
@@ -27,7 +27,8 @@ reversible). Work in your own context; return a short summary.
   so judge from it. Read a node's body only for the few FINALISTS of a destructive
   action (a merge's surviving text, a shorten's kept gist); never walk the plan's
   nodes one by one and never scan `nodes/` — each read re-sends your whole context.
-- `working_language` from `.claude/amg/config.yml` (write summaries in it).
+- `working_language` — given in your assignment (write summaries in it); do not
+  read `config.yml` for it.
 
 ## Principles
 **Value of information, not topic.** Keep and promote: decisions, commitments, plans,
@@ -73,7 +74,13 @@ supersede/reject and dispute, choose `dispute`.** Old facts are retired by prove
 by how often a query hits them.
 
 ## Decide and emit
-Write `.claude/amg/work/actions.json` — a JSON array. Action shapes:
+Write `.claude/amg/work/actions.json` — a JSON array, **with the Write tool, never a
+bash heredoc** (merged summaries carry quotes and apostrophes, and a heredoc tears
+on them mid-file). Your write access is for this actions file only — everything else
+stays read-only. Validate it without re-reading (a Read floods your context with
+JSON you already have):
+`python -c "import json;json.load(open('<actions.json>', encoding='utf-8'));print('ok')"`.
+Action shapes:
 
 ```json
 [

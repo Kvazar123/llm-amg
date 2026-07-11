@@ -70,8 +70,11 @@ changes; nothing is compacted).
    arbitration — `contradictions` (conflict pairs with comparison inputs) and
    `source_contradicted` (nodes whose live-source check failed).
 
-4. **Judge** — spawn the `amg-consolidator` subagent with the plan. It reads the plan
-   and the relevant node bodies and decides, per the salience rubric and branch
+4. **Judge** — spawn the `amg-consolidator` subagent with the plan path **and the
+   `working_language` value in the assignment** (you read the config once; the judge
+   must not spend a turn reading it). The plan already carries every candidate's
+   summary, so the judge works from it (bodies are opened point-wise, only for the
+   finalists of a destructive action) and decides, per the salience rubric and branch
    budgets, which notes to **promote / retire**, which near-duplicates to **merge**,
    which stale episodes to **summarize**, where to **introduce a sub-hub**, and what
    low-value detail to **shorten**; and it **arbitrates contradictions** — by provenance,

@@ -71,7 +71,11 @@ There are no SessionStart/SessionEnd hooks here, so **you** run each step at the
    task's context); **a focus shift = a new retrieval**; **graph before filesystem
    search** (open sources point-wise from the pack's `path:line` pointers; search the
    files directly only for what the pack did not cover, and say so in one line);
-   **make it visible** (tell the user in one line that context came from memory). For
+   **make it visible** (tell the user in one line that context came from memory).
+   One exception: when the prompt itself hands you the exact entry points — a file
+   and line, a ready-made fix, a fully specified local change — a ritual pack adds
+   nothing; the graph is for entering the unfamiliar. Skip the retrieval and start;
+   the protocol resumes the moment the task reaches beyond what the prompt gave. For
    code the pack gives `path:line` pointers — edit the real file; the graph is not a
    copy of the code.
 
@@ -81,6 +85,9 @@ There are no SessionStart/SessionEnd hooks here, so **you** run each step at the
    python .claude/skills/amg-bootstrap/scripts/notes.py add --type decision --summary "..." [--body "..."] [--tags "a,b"]
    ```
    (types: `note` / `decision` / `adr` / `open_question` / `plan`; cheap, transactional).
+   Capture conclusions about the PROJECT only: an observation about the AMG engine
+   itself (a suspected bug, a limitation) goes to the user in chat, never into the
+   project's memory — it would pollute the digest.
    At session end, or before clearing context, run the **amg-consolidate** skill (it spawns
    amg-consolidator) to fold weights, file the session's conclusions, and compact
    over-budget branches. Conclusions that live only in chat are lost when context clears.

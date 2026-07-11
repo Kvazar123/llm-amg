@@ -9,7 +9,7 @@ description: >-
   the driver to apply. Bounded per-batch context, instances run in parallel — the
   global reach comes from the candidate nomination, not from a mega-context.
   Bulk confirmation work — mid-tier model.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Write
 model: sonnet
 ---
 
@@ -54,6 +54,12 @@ For each node, judge its candidates (and the hub list) from the summaries:
    must come from your batch (candidates or hubs) — never invent ids; the driver
    re-binds a target written without its leading directories, but a nonexistent
    symbol stays dangling.
+   **Edge direction**: the item's `id` is the relation's SOURCE node, `to` is its
+   target — the edge lives on `id` and points at `to`. So `documents`/`specifies`:
+   id = the doc/ADR node → to = the code/data it describes; `exemplifies`: id = the
+   concrete case → to = the concept it illustrates; `depends_on`: id = the
+   dependent node → to = what it uses. When the real relation runs the other way
+   (the CANDIDATE documents your node), emit the item under the candidate's id.
 
 ## Output (the only thing you write to the graph layer)
 JSON arrays of update items. Do **not** edit node files — the driver applies your
@@ -66,6 +72,13 @@ covering the last ~10 judged nodes. A written part is durable: an interruption (
 limit, disconnect, output ceiling) loses at most the nodes since the last part, never
 the batch. Do not grow or rewrite an already-written part — start the next one.
 
+**Write parts with the Write tool — never a bash heredoc.** Summaries carry quotes,
+apostrophes, and backticks, and a heredoc tears on them mid-file; the Write tool
+does not. Your write access is for these output parts only (files under `work/`) —
+everything else stays read-only. **Validate without re-reading**: a Read of your own
+part floods your context with JSON you already have; check it instead with
+`python -c "import json;json.load(open('<part>', encoding='utf-8'));print('ok')"`.
+
 Return to the caller ONE line that starts with
 `BATCH COMPLETE: judged N/M nodes` (e.g. "BATCH COMPLETE: judged 40/40 nodes —
 confirmed 34 edges, 3 hub memberships, skipped 41 candidates") or, if anything cut
@@ -76,3 +89,5 @@ imply completion after an interruption.
 - A false link is worse than a missing one: when unsure, skip the candidate.
 - Process only your batch; instances run in parallel and must not overlap outputs.
 - Read-only on sources and the graph; your only artifact is the derivation JSON.
+- Everything you need is in the assignment and the batch file — do not read
+  `config.yml` (an extra turn re-sends your whole context for nothing).
