@@ -126,9 +126,11 @@ def stub_derivation(queue_units: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             # rare shared tokens with Base.ping below -> a lexical link candidate
             item["summary"] = ("Guide covering Widget rendering and the heartbeat "
                                "health probe.")
-            # the mis-prefixed target the resolver must re-bind
+            # two repairable target shapes: a path missing its leading dirs, and a
+            # BARE symbol name with no path at all (unique qualname re-binds it)
             item["edges"] = [{"rel": "documents", "to": "code:pkg/core.py::Widget",
-                              "w": 0.9}]
+                              "w": 0.9},
+                             {"rel": "relates_to", "to": "code:top_fn", "w": 0.4}]
         if u["id"] == f"{CORE}::Base.ping":
             item["summary"] = "Returns the heartbeat health probe value."
         if u["id"] == RECORD:
@@ -246,10 +248,11 @@ def main() -> int:
             "the doubled category prefix must collapse"
         guide_tos = {e["to"] for e in nodes[GUIDE]["edges"]}
         assert f"{CORE}::Widget" in guide_tos, guide_tos      # mis-prefix re-bound
+        assert f"{CORE}::top_fn" in guide_tos, guide_tos      # bare qualname re-bound
         top = nodes[f"{CORE}::top_fn"]
         assert top["confidence"] == 0.77, top.get("confidence")
         assert ("depends_on", f"{UTIL}::helper") in rels(f"{CORE}::top_fn")
-        print("PASS  apply: swap repaired, prefix re-bound, 2 skipped, batch intact")
+        print("PASS  apply: swap repaired, prefix + bare name re-bound, 2 skipped, batch intact")
 
         # 3. synth stub -> the same batch door -> connectivity gate
         (amg / "work" / "derived-synth.json").write_text(
@@ -266,6 +269,23 @@ def main() -> int:
         assert m["gate"] == "ok", m
         print("PASS  metrics: one component, 0 internal dangling, gate ok "
               f"(external imports={m['dangling_external_imports']})")
+
+        # session-dump turns are excluded from doc_without_documents by source-path
+        # prefix (dialogue turns have no subject; they must not drown the doc signal)
+        fake = {
+            "doc:s.md::m1": {"_path": "nodes/doc/a.md", "status": "active",
+                             "source_path": ".claude/amg/sessions/s.md",
+                             "edges": [], "part_of": []},
+            "doc:real.md::intro": {"_path": "nodes/doc/b.md", "status": "active",
+                                   "source_path": "doc/real.md",
+                                   "edges": [], "part_of": []},
+        }
+        mm = RC.graph_metrics(fake, None, session_prefix=".claude/amg/sessions/")
+        assert mm["doc_without_documents"] == 1, mm
+        assert mm["doc_without_documents_sample"] == ["doc:real.md::intro"], mm
+        assert RC.graph_metrics(fake, None)["doc_without_documents"] == 2
+        assert RC.session_source_prefix(proj, {}, amg) == ".claude/amg/sessions/"
+        print("PASS  metrics: session-dump doc turns excluded from doc_without_documents")
 
         # the one-file synthesis sheet: grouped summary rows + deterministic gap
         # material, so amg-synth never scans nodes/ in its own context
@@ -288,7 +308,18 @@ def main() -> int:
         s = RC.plan(proj, amg)
         assert s["added"] == s["changed"] == s["requeued_stale"] == 0, s
         assert s["edges_refreshed"] == 0 and s["queued_for_semantic"] == 0, s
+        assert "leftover_derived" not in s, s
         print("PASS  idempotency: re-run bootstrap is a no-op")
+
+        # an unapplied checkpoint part is surfaced by plan (the resume nudge: one
+        # apply-derived call consumes it) and cleared once applied
+        (amg / "work" / "derived-leftover-p01.json").write_text("[]", encoding="utf-8")
+        s = RC.plan(proj, amg)
+        assert s.get("leftover_derived") == 1, s
+        r = RC.apply_derived(proj, amg)
+        assert r["files"] == 1 and r["applied"] == 0, r
+        assert "leftover_derived" not in RC.plan(proj, amg)
+        print("PASS  leftover guard: plan surfaces unapplied parts; apply-derived clears")
 
         # 5. link candidates over the built graph (lexical fallback: embeddings off)
         lc = LC.build_batches(proj, amg)

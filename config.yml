@@ -192,9 +192,15 @@ derivation_cache: true
 # used to become one giant batch whose loss on an interruption cost hours). The
 # builders also checkpoint output in parts, so an interrupted batch keeps what it
 # already wrote. Symmetric to linker.batch_nodes for the linking pass.
+# Batch size trades the agent environment's FIXED per-step overhead (the system
+# prompt and tool schemas re-sent on every step of every agent) against the cost of
+# losing an interrupted batch: fewer, larger batches cut the overhead while the
+# ~10-unit checkpoint parts keep the loss bound unchanged. Quality does not depend
+# on batch size (same units, same decisions). Growing far beyond these defaults
+# buys little: the overhead is already amortized, while a lost batch costs more.
 # -----------------------------------------------------------------------------
 builder:
-  batch_units: 40         # units per builder batch
+  batch_units: 60         # units per builder batch
   batch_max_chars: 120000 # estimated input volume per batch (sum of unit texts)
 
 # -----------------------------------------------------------------------------
@@ -211,7 +217,7 @@ builder:
 linker:
   top_k: 5              # candidate nominees per node
   min_sim: 0.35         # embedding-cosine floor for a nomination (embeddings mode)
-  batch_nodes: 40       # nodes per link batch (bounds one linker's context)
+  batch_nodes: 80       # nodes per link batch (bounds one linker's context)
 
 # -----------------------------------------------------------------------------
 # Spreading-activation retrieval (amg-retrieve). Query-biased Personalized PageRank.
@@ -219,7 +225,11 @@ linker:
 retrieval:
   damping: 0.85                   # how far activation spreads
   max_hops: 30                    # power-iteration cap
-  activation_threshold: 0.02      # ignore nodes below this final activation
+  # Pack cutoff as a SHARE of the top activation (activations are rescaled so the
+  # best node = 1.0 before assembly): 0.02 = keep nodes at >= 2% of the top. The
+  # share is scale-free — an absolute cutoff would empty the pack on a large graph,
+  # where PPR mass (summing to 1) spreads thin over thousands of nodes.
+  activation_threshold: 0.02
   token_budget:
     strategic: 4000               # hubs / overviews
     tactical: 10000                # modules

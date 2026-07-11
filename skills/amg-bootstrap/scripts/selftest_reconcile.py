@@ -777,9 +777,12 @@ def case_resolver_backbone() -> None:
 
 
 def case_prefix_repair_sweep() -> None:
-    """Canonical-id repair by unique path suffix — at apply
-    for judgment edges, and by the bootstrap sweep for nodes written earlier; an
-    ambiguous suffix is never repaired; the sweep is idempotent (second run no-op)."""
+    """Canonical-id repair — at apply for judgment edges, and by the bootstrap sweep
+    for nodes written earlier. Two repairs: a unique path suffix, and a bare symbol
+    name (no path at all) by unique qualname. Never repaired: an ambiguous suffix,
+    an ambiguous bare name, and a bare `imports` target (a legitimately dangling
+    external module a same-named in-project symbol must not capture). The sweep is
+    idempotent (second run no-op)."""
     proj = Path(tempfile.mkdtemp(prefix="amg-repair-"))
     try:
         amg = proj / ".claude" / "amg"
@@ -789,32 +792,46 @@ def case_prefix_repair_sweep() -> None:
         src = proj / "src"
         (src / "a").mkdir(parents=True)
         (src / "b").mkdir(parents=True)
-        (src / "app.py").write_text("def top(x):\n    return x\n", encoding="utf-8")
+        # `json` doubles as a stdlib module name: the imports guard below relies on it
+        (src / "app.py").write_text(
+            "def top(x):\n    return x\n\n\ndef json(x):\n    return x\n",
+            encoding="utf-8")
         (src / "a" / "dup.py").write_text("def f():\n    return 1\n", encoding="utf-8")
         (src / "b" / "dup.py").write_text("def f():\n    return 2\n", encoding="utf-8")
         RC.plan(proj, amg)
         top_id = "code:src/app.py::top"
 
-        # apply-time repair: a documents target missing its src/ prefix re-binds
+        # apply-time repair: a target missing its src/ prefix re-binds (path suffix);
+        # a BARE symbol name re-binds by unique qualname; an ambiguous bare name
+        # (f lives in a/ and b/) and a bare imports target stay as written
         work = amg / "work"
         work.mkdir(exist_ok=True)
         (work / "d.json").write_text(json.dumps([
             {"id": "hub:t", "type": "hub", "summary": "T",
              "edges": [{"rel": "documents", "to": "code:app.py::top", "w": 0.9},
-                       {"rel": "documents", "to": "code:dup.py::f", "w": 0.5}]}]),
+                       {"rel": "documents", "to": "code:dup.py::f", "w": 0.5},
+                       {"rel": "relates_to", "to": "code:top", "w": 0.4},
+                       {"rel": "relates_to", "to": "code:f", "w": 0.4},
+                       {"rel": "imports", "to": "code:json", "w": 0.6}]}]),
             encoding="utf-8")
         RC.apply_derivation(proj, work / "d.json", amg)
         hub = RC.load_nodes(gs.GraphStore(amg))["hub:t"]
-        tos = {e["to"] for e in hub["edges"]}
-        assert top_id in tos, tos                      # unique suffix -> repaired
-        assert "code:dup.py::f" in tos, tos            # ambiguous (a/ vs b/) -> untouched
+        tos = {(e["rel"], e["to"]) for e in hub["edges"]}
+        assert ("documents", top_id) in tos, tos       # unique suffix -> repaired
+        assert ("documents", "code:dup.py::f") in tos, tos   # ambiguous suffix -> untouched
+        assert ("relates_to", top_id) in tos, tos      # unique bare qualname -> repaired
+        assert ("relates_to", "code:f") in tos, tos    # ambiguous bare name -> untouched
+        assert ("imports", "code:json") in tos, tos    # bare imports -> never captured
+        assert ("imports", "code:src/app.py::json") not in tos, tos
 
-        # sweep repair: a node written with a broken target BEFORE the resolver era
+        # sweep repair: a node written with broken targets BEFORE the resolver era
         store = gs.GraphStore(amg)
         broken = dict(hub)
         broken.pop("_path"), broken.pop("_body", "")
         broken["id"] = "hub:legacy"
         broken["edges"] = [{"rel": "documents", "to": "code:app.py::top", "w": 0.7,
+                            "coact": 0, "origin": "synthesized"},
+                           {"rel": "exemplifies", "to": "code:top", "w": 0.5,
                             "coact": 0, "origin": "synthesized"}]
         with store.lock():
             store.transaction().write(
@@ -823,11 +840,13 @@ def case_prefix_repair_sweep() -> None:
         s = RC.plan(proj, amg)
         assert s["edges_refreshed"] >= 1, s
         legacy = RC.load_nodes(store)["hub:legacy"]
-        assert legacy["edges"][0]["to"] == top_id, legacy["edges"]
+        legacy_tos = {(e["rel"], e["to"]) for e in legacy["edges"]}
+        assert ("documents", top_id) in legacy_tos, legacy_tos
+        assert ("exemplifies", top_id) in legacy_tos, legacy_tos   # bare name swept too
         s = RC.plan(proj, amg)                         # idempotent: nothing left to fix
         assert s["edges_refreshed"] == 0, s
-        print("PASS  repair: unique suffix re-binds (apply + sweep), ambiguity untouched, "
-              "sweep idempotent")
+        print("PASS  repair: unique suffix + bare qualname re-bind (apply + sweep); "
+              "ambiguity and bare imports untouched; sweep idempotent")
     finally:
         shutil.rmtree(proj, ignore_errors=True)
 

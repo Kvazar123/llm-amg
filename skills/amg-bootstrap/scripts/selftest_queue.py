@@ -116,6 +116,21 @@ def test_caps(tmp: Path) -> None:
     print("PASS  caps: unit/volume chunking with -NN parts; re-run replaces the set")
 
 
+def test_leftover_guard(tmp: Path) -> None:
+    """Unapplied work/derived-*.json parts are counted (and warned about by the CLIs):
+    splitting or nominating while they exist risks paying twice for work already on
+    disk — the resume rule is one apply-derived call first."""
+    amg = tmp / "amg5"
+    (amg / "work").mkdir(parents=True)
+    assert PQ.leftover_derived(amg) == 0
+    assert PQ.leftover_derived(tmp / "nope") == 0, "missing work/ dir -> zero, no crash"
+    (amg / "work" / "derived-x-p01.json").write_text("[]", encoding="utf-8")
+    (amg / "work" / "derived-links-2-p03.json").write_text("[]", encoding="utf-8")
+    assert PQ.leftover_derived(amg) == 2
+    assert PQ.warn_leftover_derived(amg) == 2          # also emits the stderr warning
+    print("PASS  leftover guard: unapplied derived parts counted; missing dir safe")
+
+
 def test_priority(tmp: Path) -> None:
     """Lazy derivation: the priority split derives the structural MAP first
     (module/class/package/file) and defers leaf detail; a used node (usage.log) is
@@ -160,6 +175,7 @@ def main() -> int:
         test_partition(tmp)
         test_inspect(tmp)
         test_caps(tmp)
+        test_leftover_guard(tmp)
         test_priority(tmp)
         print("\nALL QUEUE-HELPER CHECKS PASSED")
     finally:

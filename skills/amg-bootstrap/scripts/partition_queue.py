@@ -46,7 +46,11 @@ except ImportError:                       # pragma: no cover
 
 # One builder batch is bounded two ways: by unit count and by
 # estimated input volume. Symmetric to `linker.batch_nodes` for the linking pass.
-BUILDER_DEFAULTS: Dict[str, Any] = {"batch_units": 40, "batch_max_chars": 120000}
+# Size rationale: the agent environment re-sends a fixed overhead (system prompt +
+# tool schemas) on every step of every agent, so cost scales with the NUMBER of
+# agents, not the work volume — larger batches amortize it, while the ~10-unit
+# checkpoint parts keep the interruption loss bound unchanged.
+BUILDER_DEFAULTS: Dict[str, Any] = {"batch_units": 60, "batch_max_chars": 120000}
 
 # Input estimate for a unit that carries no text (an oversized unit kept as a
 # pointer): the builder will read about this much of the source itself.
@@ -59,6 +63,27 @@ _NO_TEXT_NOMINAL_CHARS = 2000
 # retrieve's strategic/tactical tiers; the synthesis hubs (a separate step) are likewise
 # never deferred. Background fill (phase C) additionally promotes nodes seen in usage.log.
 PRIORITY_KINDS = {"module", "class", "package", "file"}
+
+
+def leftover_derived(amg_root: Path) -> int:
+    """Count of unapplied work/derived-*.json files (checkpoint parts included).
+    Splitting the queue or nominating candidates while these exist risks paying twice
+    for work already sitting on disk: the resume rule is one `reconcile.py
+    apply-derived` call FIRST. Callers surface the count and warn; nothing here
+    consumes the files."""
+    work = amg_root / "work"
+    return len(list(work.glob("derived-*.json"))) if work.exists() else 0
+
+
+def warn_leftover_derived(amg_root: Path) -> int:
+    """stderr warning when unapplied derivation parts exist; returns their count so
+    the CLI can also surface it in its JSON output (the orchestrator reads both)."""
+    n = leftover_derived(amg_root)
+    if n:
+        sys.stderr.write(
+            f"warning: {n} unapplied work/derived-*.json — "
+            "run `reconcile.py apply-derived` first (the resume rule)\n")
+    return n
 
 
 def subtree_key(source_path: str, depth: int) -> str:
@@ -220,7 +245,11 @@ def main(argv: List[str]) -> int:
         args.remove("--priority")
         project_root = Path(args[0]).resolve() if args else Path.cwd()
         amg_root = gs.resolve_amg_root(cli_root, project_root)
-        print(json.dumps(priority_split(amg_root, use_usage), indent=2))
+        result: Dict[str, int] = priority_split(amg_root, use_usage)
+        n_left = warn_leftover_derived(amg_root)
+        if n_left:
+            result["leftover_derived"] = n_left
+        print(json.dumps(result, indent=2))
         return 0
     depth = 2
     if "--depth" in args:
@@ -240,7 +269,11 @@ def main(argv: List[str]) -> int:
     project_root = Path(args[0]).resolve() if args else Path.cwd()
     amg_root = gs.resolve_amg_root(cli_root, project_root)
     counts = partition(amg_root, depth, max_units, max_chars)
-    print(json.dumps({"batches": counts, "total": sum(counts.values())}, indent=2))
+    out: Dict[str, Any] = {"batches": counts, "total": sum(counts.values())}
+    n_left = warn_leftover_derived(amg_root)
+    if n_left:
+        out["leftover_derived"] = n_left
+    print(json.dumps(out, indent=2))
     return 0
 
 

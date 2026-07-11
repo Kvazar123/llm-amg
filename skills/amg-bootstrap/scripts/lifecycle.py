@@ -546,7 +546,8 @@ def status(project_root: Path, amg: Path) -> Dict[str, Any]:
     # Connectivity gate: fragmentation must be visible here,
     # not only in the 3D viewer. Computed over the already-loaded nodes (cheap).
     gate_cfg = cfg.get("connectivity_gate") if isinstance(cfg.get("connectivity_gate"), dict) else {}
-    metrics = rc.graph_metrics(nodes, gate_cfg)
+    metrics = rc.graph_metrics(nodes, gate_cfg,
+                               rc.session_source_prefix(project_root, cfg, amg))
     return {
         "active": _is_active(cfg),
         "automation": _automation_on(cfg),

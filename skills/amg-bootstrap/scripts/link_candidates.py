@@ -49,7 +49,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import graph_store as gs
 from extract_structure import load_config
-from partition_queue import subtree_key
+from partition_queue import subtree_key, warn_leftover_derived
 
 # Cross-skill import of the retrieval layer (established pattern: consolidate ->
 # graph_store, lifecycle -> consolidate). retrieve gives the index-backed node
@@ -60,8 +60,10 @@ import retrieve as rt                                       # noqa: E402
 
 # Tunables of the linking pass, overridable via the `linker` config block: how many
 # candidates each node nominates, the embedding-cosine floor below which a nominee
-# is noise, and how many nodes one linker batch carries (a bounded subagent context).
-LINKER_DEFAULTS: Dict[str, Any] = {"top_k": 5, "min_sim": 0.35, "batch_nodes": 40}
+# is noise, and how many nodes one linker batch carries (a bounded subagent context;
+# larger batches amortize the environment's fixed per-step overhead across fewer
+# agents — the ~10-node checkpoint parts keep the interruption loss bound unchanged).
+LINKER_DEFAULTS: Dict[str, Any] = {"top_k": 5, "min_sim": 0.35, "batch_nodes": 80}
 
 # The lexical fallback nominates only pairs sharing at least this many informative
 # tokens — with no embedding backend a single shared word is noise, not a signal.
@@ -395,14 +397,15 @@ def main(argv: List[str]) -> int:
         args.remove("--synth-input")
     project_root = Path(args[0]).resolve() if args else Path.cwd()
     amg_root = gs.resolve_amg_root(cli_root, project_root)
-    if hubs_mode:
-        print(json.dumps(hub_candidates(amg_root), ensure_ascii=False, indent=2))
-        return 0
-    if synth_mode:
-        print(json.dumps(synth_input(amg_root), ensure_ascii=False, indent=2))
-        return 0
-    print(json.dumps(build_batches(project_root, amg_root, overrides),
-                     ensure_ascii=False, indent=2))
+    # Unapplied derivation parts mean the graph LAGS work already on disk: batches or
+    # the synthesis sheet built now would miss those summaries (and pay for them twice).
+    n_left = warn_leftover_derived(amg_root)
+    result = (hub_candidates(amg_root) if hubs_mode
+              else synth_input(amg_root) if synth_mode
+              else build_batches(project_root, amg_root, overrides))
+    if n_left:
+        result["leftover_derived"] = n_left
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 

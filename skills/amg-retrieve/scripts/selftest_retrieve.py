@@ -16,6 +16,10 @@ check is pure BM25 + PPR with no model download. Covers:
                       too), not a guessed id prefix.
   6. explain        : --explain attributes a multi-hop node's activation to the
                       incoming edge that carried the mass (grounds explainability).
+  7. relative cutoff: activations rescale to max = 1 before pack assembly, so the
+                      activation_threshold reads as a share of the top activation —
+                      a large graph that spreads PPR mass thin keeps a populated
+                      pack instead of dropping everything below an absolute cutoff.
 
 Run:  python selftest_retrieve.py
 """
@@ -204,6 +208,40 @@ def test_explain(tmp: Path) -> None:
           f"({top['share'] * 100:.0f}%)")
 
 
+def test_pack_survives_large_graph(tmp: Path) -> None:
+    """The activation threshold is a SHARE of the top activation, not an absolute
+    cutoff. PPR mass sums to 1 over the whole graph, so on a large graph with a
+    broadly matching query the mass spreads thin and even the top node's absolute
+    activation falls below any fixed constant — the ranking stays correct while an
+    absolute cutoff empties the pack. After rescaling to max = 1 the pack must stay
+    populated at any graph size, and a multi-hop neighbor keeps its place."""
+    store = tmp / "large"
+    words = ["system", "architecture", "overview", "flow"]
+    for i in range(300):        # every filler shares ONE query word -> the seed spreads
+        _write(store, "doc", f"f{i}.md",
+               _node(f"doc:d/f{i}.md::s{i}", "section",
+                     f"{words[i % 4]} filler note number {i}"))
+    _write(store, "code", "t.md",
+           _node("code:src/t.py::main", "function",
+                 "system architecture overview flow entry point",
+                 source_path="src/t.py", lineno=1,
+                 edges=[{"rel": "calls", "to": "code:src/t.py::helper", "w": 0.9}]))
+    _write(store, "code", "h.md",
+           _node("code:src/t.py::helper", "function",
+                 "prepares the launch configuration details",
+                 source_path="src/t.py", lineno=20))
+    res = R.retrieve(store, "system architecture overview flow",
+                     write_pack=False, log_coactivation=False)
+    top_id, top_act = res["ranked"][0]
+    assert top_id == "code:src/t.py::main", res["ranked"][:3]
+    assert abs(top_act - 1.0) < 1e-9, f"activations must rescale to max = 1, got {top_act}"
+    packed = {nid for tier in res["tiers"].values() for nid in tier}
+    assert "code:src/t.py::main" in packed, "the top node must make the pack"
+    assert "code:src/t.py::helper" in packed, \
+        "the multi-hop neighbor (no query words) must stay in the pack"
+    print("PASS  large spread graph: pack non-empty, top rescaled to 1.0, multi-hop kept")
+
+
 def test_intent_and_conflict(tmp: Path) -> None:
     """Intent-driven surfacing, by a caller-supplied intent flag (the model recognizes
     intent in any language; the code only applies it):
@@ -268,6 +306,7 @@ def main() -> int:
         test_stale_is_flagged(tmp)
         test_trust_marks(tmp)
         test_decision_strategic_with_body(tmp)
+        test_pack_survives_large_graph(tmp)
         test_intent_and_conflict(tmp)
         test_config_deep_merge(tmp)
         test_inspect_bucket(tmp)

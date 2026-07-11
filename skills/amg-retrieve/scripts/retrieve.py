@@ -78,6 +78,11 @@ DEFAULTS = {
     "damping": 0.85,
     "max_hops": 30,                 # power-iteration cap (more iters => wider reach)
     "convergence_tol": 1e-6,
+    # Share of the TOP activation below which a node is dropped from the pack.
+    # Activations are rescaled to max = 1 before assembly (see retrieve()), so the
+    # cutoff is scale-free: an absolute cutoff on raw PPR mass (which sums to 1
+    # over ALL nodes) would empty the pack on a large graph, where even the top
+    # node's absolute activation falls below any fixed constant.
     "activation_threshold": 0.02,
     "seed_floor": 0.0,              # teleport mass given to every node (0 = pure relevance)
     "token_budget": {"strategic": 1200, "tactical": 2500,
@@ -520,6 +525,20 @@ def _conflict_nodes(nodes: Dict[str, Dict[str, Any]]) -> Set[str]:
 # Status prior (re-rank by node validity, after spreading)
 # --------------------------------------------------------------------------- #
 
+def _rescale_to_max(activation: Dict[str, float]) -> Dict[str, float]:
+    """Rescale activations so the top node reads 1.0. PPR mass sums to 1 over the
+    whole graph, so absolute activations shrink as the graph grows — the RANKING
+    stays correct, but any absolute cutoff eventually drops everything. After this
+    rescale, `activation_threshold` means "share of the top activation": scale-free,
+    and identical in effect on a small graph (where the top already dwarfed the
+    threshold). An all-zero activation (no seed matched) is returned unchanged —
+    the pack is legitimately empty then."""
+    peak = max(activation.values(), default=0.0)
+    if peak <= 0:
+        return activation
+    return {nid: a / peak for nid, a in activation.items()}
+
+
 def _apply_status_prior(activation: Dict[str, float], nodes: Dict[str, Dict[str, Any]],
                         cfg: Dict[str, Any], lift: bool = False) -> Dict[str, float]:
     """Scale final activation by a per-status prior so a superseded claim never
@@ -711,7 +730,7 @@ def retrieve(store_root: os.PathLike[str] | str, query: str,
 
     adj = build_adjacency(nodes, cfg)
     ppr = personalized_pagerank(teleport, adj, all_ids, cfg)
-    activation = _apply_status_prior(ppr, nodes, cfg, lift=bool(flags))
+    activation = _rescale_to_max(_apply_status_prior(ppr, nodes, cfg, lift=bool(flags)))
 
     pack, tiers = assemble_pack(activation, nodes, cfg)
     ranked = sorted(((nid, activation[nid]) for nid in all_ids),

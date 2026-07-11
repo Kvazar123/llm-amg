@@ -33,8 +33,10 @@ Deterministic edge resolution ("deterministic before the model"): every
 plan() builds cross-file symbol tables from the extracted units and resolves
 `calls`/`inherits` through each file's own imports (never by name coincidence),
 emits the `defines` containment backbone (module -> symbol, class -> method), and
-canonicalizes judgment-layer edge targets by unique path suffix — both on apply and
-in a whole-graph sweep, so a graph built before this pass heals on one bootstrap.
+canonicalizes judgment-layer edge targets — by unique path suffix, and a bare
+symbol name with no path by unique qualname (never for `imports`) — both on apply
+and in a whole-graph sweep, so a graph built before either repair heals on one
+bootstrap; a target neither repair can bind uniquely stays dangling as written.
 
 Reproducibility: applied per-unit derivations are stored in
 a persistent cache under cache/derivations/, keyed by content_sha + the derivation
@@ -72,10 +74,11 @@ import sys
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
 import graph_store as gs
-from extract_structure import extract, load_config, resolve_sources, detect_policy_conflicts
+from extract_structure import (extract, load_config, resolve_sources,
+                               detect_policy_conflicts, session_dir)
 
 try:
     import yaml
@@ -480,6 +483,12 @@ def plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
     if merge_conflicts:
         summary["conflict_markers"] = merge_conflicts[:20]
     summary["queued_for_semantic"] = len(queue)
+    # Unapplied derivation parts from an interrupted run: the queue just written
+    # re-lists their units as underived, so applying them FIRST (one apply-derived
+    # call) is the resume rule — surfacing the count here makes the lag visible.
+    n_left = len(list((store.root / "work").glob("derived-*.json")))
+    if n_left:
+        summary["leftover_derived"] = n_left
     return summary
 
 
@@ -634,19 +643,33 @@ def _structural_edges(unit: Dict[str, Any], symbols: Optional[Dict[str, Any]] = 
     return out
 
 
-def _build_suffix_index(ids: Set[str]) -> Dict[Tuple[str, str], List[Tuple[str, str]]]:
-    """(category, qualifier) -> [(path, id)] over the known node ids, for canonical-id
-    repair: a judgment-layer target written without its leading
-    directories (`code:core/foo.py::bar`) re-binds to the ONE node whose path ends
-    with the written path on a '/' boundary. Ambiguity -> no repair."""
-    out: Dict[Tuple[str, str], List[Tuple[str, str]]] = defaultdict(list)
+class _TargetIndex(NamedTuple):
+    """Lookup tables for canonical-target repair, built once per plan/apply run:
+    `suffix` — (category, qualifier) -> [(path, id)] for the path-suffix repair;
+    `qualname` — (category, qualname) -> [ids] for the bare-name repair (a target
+    written as `code:<qualname>` with no path at all)."""
+    suffix: Dict[Tuple[str, str], List[Tuple[str, str]]]
+    qualname: Dict[Tuple[str, str], List[str]]
+
+
+def _build_suffix_index(ids: Set[str]) -> _TargetIndex:
+    """Both repair indexes over the known node ids (see _TargetIndex): a
+    judgment-layer target written without its leading directories
+    (`code:core/foo.py::bar`) re-binds to the ONE node whose path ends with the
+    written path on a '/' boundary, and a bare symbol name with no path at all
+    (`code:helper`) to the ONE node whose id ends with `::helper`. Ambiguity -> no
+    repair (a wrong edge is worse than a dangling one)."""
+    suffix: Dict[Tuple[str, str], List[Tuple[str, str]]] = defaultdict(list)
+    qualname: Dict[Tuple[str, str], List[str]] = defaultdict(list)
     for nid in ids:
         if ":" not in nid:
             continue
         cat, tail = nid.split(":", 1)
         path, _, qual = tail.partition("::")
-        out[(cat, qual)].append((path, nid))
-    return out
+        suffix[(cat, qual)].append((path, nid))
+        if qual:
+            qualname[(cat, qual)].append(nid)
+    return _TargetIndex(suffix, qualname)
 
 
 def _edges_equivalent(a: List[Dict[str, Any]], b: List[Dict[str, Any]]) -> bool:
@@ -665,36 +688,58 @@ def _edges_equivalent(a: List[Dict[str, Any]], b: List[Dict[str, Any]]) -> bool:
     return sorted(a, key=key) == sorted(b, key=key)
 
 
-def _repair_target(to: str, sfx: Dict[Tuple[str, str], List[Tuple[str, str]]]) -> Optional[str]:
-    """The unique canonical id whose path ends with the written target's path (same
-    category and qualifier), or None. Segment-safe: `core/foo.py` matches
-    `src/pkg/core/foo.py` but a dotted external name (`json`) never matches a real
-    path (`src/json.py` does not end with `/json`)."""
+def _repair_target(to: str, idx: _TargetIndex,
+                   rel: Optional[str] = None) -> Optional[str]:
+    """The unique canonical id for a target that names no existing node, or None.
+    Two repairs, tried in order; both refuse on any ambiguity (a wrong edge is worse
+    than a dangling one):
+
+      * path suffix — the target's path lacks its leading directories
+        (`code:core/foo.py::bar`): the ONE id whose path ends with the written path
+        on a '/' boundary. Segment-safe: a dotted external name (`json`) never
+        matches a real path (`src/json.py` does not end with `/json`).
+      * bare qualname — the target is a bare symbol name with no path at all
+        (`code:helper`, everything lands in the path part): the ONE id ending with
+        `::<name>` (exact qualname, same category). Never for `imports` edges —
+        their dangling targets are legitimate external modules (`code:json`), and a
+        same-named in-project symbol must not capture them — and never when the
+        name could equally be a file (some node path ends with `/<name>`): two
+        readings means no repair."""
     if ":" not in to:
         return None
     cat, tail = to.split(":", 1)
-    path, _, qual = tail.partition("::")
+    path, sep, qual = tail.partition("::")
     if not path:
         return None
-    hits = [nid for p, nid in sfx.get((cat, qual), ())
+    hits = [nid for p, nid in idx.suffix.get((cat, qual), ())
             if p != path and p.endswith("/" + path)]
-    return hits[0] if len(hits) == 1 else None
+    if len(hits) == 1:
+        return hits[0]
+    if hits or sep or "/" in path or rel == "imports":
+        return None                     # ambiguous suffix, or not a bare name
+    cands = idx.qualname.get((cat, path), [])
+    if len(cands) != 1:
+        return None
+    if any(p.endswith("/" + path) for p, _ in idx.suffix.get((cat, ""), ())):
+        return None                     # the name doubles as a filename: two readings
+    return cands[0]
 
 
 def _normalize_edges(edges: List[Dict[str, Any]], ids: Set[str],
-                     sfx: Dict[Tuple[str, str], List[Tuple[str, str]]]) -> List[Dict[str, Any]]:
+                     sfx: _TargetIndex) -> List[Dict[str, Any]]:
     """Re-bind edge targets that name no existing node to their canonical id when
-    exactly one candidate exists (path-suffix repair). Unrepairable
-    targets stay as written — retrieval drops dangling edges, and `imports` to
-    external modules are legitimately dangling. Returns the SAME list object when
-    nothing changed (cheap no-op detection for callers); on a change the result is
-    deduplicated by (rel, to), since a repair may collide with an existing edge."""
+    exactly one candidate exists (path-suffix and bare-qualname repair — see
+    _repair_target). Unrepairable targets stay as written — retrieval drops dangling
+    edges, and `imports` to external modules are legitimately dangling. Returns the
+    SAME list object when nothing changed (cheap no-op detection for callers); on a
+    change the result is deduplicated by (rel, to), since a repair may collide with
+    an existing edge."""
     repaired = False
     out: List[Dict[str, Any]] = []
     for e in edges:
         to = e.get("to") if isinstance(e, dict) else None
         if isinstance(to, str) and to not in ids:
-            fixed = _repair_target(to, sfx)
+            fixed = _repair_target(to, sfx, e.get("rel"))
             if fixed:
                 e = dict(e, to=fixed)
                 repaired = True
@@ -1430,8 +1475,25 @@ def _merge_edges(existing: List[Dict[str, Any]], incoming: List[Dict[str, Any]],
 GATE_DEFAULTS: Dict[str, Any] = {"min_largest_share": 0.9, "max_dangling_internal": 0}
 
 
+def session_source_prefix(project_root: Path, config: Dict[str, Any],
+                          amg_root: Path) -> Optional[str]:
+    """The captured-sessions folder as a source_path prefix (project-relative, with a
+    trailing '/'), for graph_metrics' doc filter — or None when the folder is not
+    under the project root (then no session node exists either: extraction skips
+    them the same way). Uses the shared session_dir resolution, so the filter can
+    never diverge from where the dumps are actually written."""
+    sess = session_dir(project_root, config, amg_root)
+    if sess is None:
+        return None
+    try:
+        return sess.relative_to(Path(project_root).resolve()).as_posix() + "/"
+    except ValueError:
+        return None
+
+
 def graph_metrics(nodes: Dict[str, Dict[str, Any]],
-                  gate_cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                  gate_cfg: Optional[Dict[str, Any]] = None,
+                  session_prefix: Optional[str] = None) -> Dict[str, Any]:
     """Connectivity / build-quality metrics over a loaded node set.
 
     Lives in the reconcile layer deliberately: graph_store is domain-blind, so
@@ -1501,10 +1563,15 @@ def graph_metrics(nodes: Dict[str, Dict[str, Any]],
     # Doc nodes with no outgoing `documents` edge. Advisory: a
     # chat/session turn or a plain note legitimately documents nothing; stale
     # (not-yet-derived) nodes are excluded — they could not have earned one yet.
+    # Session-dump turns (source_path under the sessions dir, via session_prefix)
+    # are excluded too: dialogue turns have no subject by nature, and counting
+    # them drowns the signal this metric carries for REAL documents.
     doc_undocumented = sorted(
         nid for nid, n in nodes.items()
         if (n.get("_path") or "").startswith("nodes/doc/")
         and n.get("status") != "stale"
+        and not (session_prefix
+                 and str(n.get("source_path") or "").startswith(session_prefix))
         and not any(isinstance(e, dict) and e.get("rel") == "documents"
                     for e in n.get("edges") or []))
 
@@ -1607,18 +1674,22 @@ def main(argv: List[str]) -> int:
         # or odd config the way extraction deliberately does.
         project_root = Path(args[1]).resolve() if len(args) > 1 else Path.cwd()
         amg_root = gs.resolve_amg_root(cli_root, project_root)
-        gate_cfg: Dict[str, Any] = {}
+        raw_cfg: Dict[str, Any] = {}
         cfg_file = amg_root / "config.yml"
         if cfg_file.exists():
             try:
-                raw = yaml.safe_load(cfg_file.read_text(encoding="utf-8")) or {}
-                if isinstance(raw, dict) and isinstance(raw.get("connectivity_gate"), dict):
-                    gate_cfg = raw["connectivity_gate"]
+                loaded = yaml.safe_load(cfg_file.read_text(encoding="utf-8")) or {}
+                if isinstance(loaded, dict):
+                    raw_cfg = loaded
             except (OSError, yaml.YAMLError):
-                gate_cfg = {}
+                raw_cfg = {}
+        gate_cfg = raw_cfg.get("connectivity_gate")
         store = gs.GraphStore(amg_root)
-        print(json.dumps(graph_metrics(load_nodes(store), gate_cfg),
-                         ensure_ascii=False, indent=2))
+        print(json.dumps(
+            graph_metrics(load_nodes(store),
+                          gate_cfg if isinstance(gate_cfg, dict) else {},
+                          session_source_prefix(project_root, raw_cfg, amg_root)),
+            ensure_ascii=False, indent=2))
         return 0
 
     print(__doc__)
