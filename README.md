@@ -125,6 +125,13 @@ One screen: whether memory is active, graph size, queue, recent operations. Ever
 
 **Build.** The main one-time step: **`/amg sync`** (the words "build / sync the memory graph") runs the full first build — the structural skeleton, the summaries, the hubs, and the linking pass. With `automation: true` the loop starts it by itself before the first task. From then on `sync` is incremental: it finds the files changed since last time and **finishes them itself** — refreshes the skeleton, re-summarizes the changed units, completes the links; the unchanged is untouched and costs not a token.
 
+**The cost of the first build.** The full first build is the memory's most expensive operation: on a real project of about a megabyte of sources the count runs to millions of tokens (mostly cheap cache reads — but plan limits count those too), and hitting a limit is routine. What makes it cheaper:
+
+- **run the build session on an inexpensive environment model** — the main session only coordinates (prepares batches, spawns the workers, applies results), yet every one of its turns re-sends its whole context, and in a field measurement it accounted for about two thirds of the total spend; lowering *this* session's model does not touch summary quality — summaries are written by the subagents with their own models from the `models` block;
+- **model tiering** (`config.yml → models`): the `discovery` and `module_summary` roles go cheaper, `synthesis` stays strong; do not lower `module_summary` without measuring — its summaries feed retrieval;
+- **batch sizes** (`builder.batch_units`, `linker.batch_nodes`) are already tuned near the optimum — larger batches save almost nothing (the overhead is already amortized) while the cost of losing an interrupted batch grows;
+- **`derivation: lazy`** — start working sooner: only the structural map is built up front and detail is finished as it is touched, but that finishing spreads across working sessions (see the [guide](docs/en/GUIDE.md)).
+
 **Work.** From here, **just ask the model questions about your project** — it assembles the right context from the graph itself (the strategic surround plus the specifics) and files conclusions as it goes. Memory upkeep: the deterministic half (signal folding, the digest, the transcript dump) is done by the hooks at every session's start and end; the judgment half — selecting conclusions into long-term memory, merging duplicates, compacting overgrown branches — is run by the loop at the end of work, and manually by **`/amg consolidate`**.
 
 ## Sources: mirror and absorb
@@ -143,6 +150,8 @@ What feeds memory is listed in `config.yml` under two keys; each file's type (co
 
 A conversation with the model is memory too: decisions and conclusions that surface in the dialogue would be lost on `/clear`. So at the end of a session the `SessionEnd` hook dumps the transcript to `<store>/sessions/YYYY-MM-DD-HHMM.md` — the turns' text with role markers, **with the model's raw thinking cut out**; tool calls and attachments are not reproduced but marked — one numbered marker each. The dump is then ingested like any other source.
 
+A dialogue reaches the memory in three steps: the `SessionEnd` hook writes the transcript when the session closes normally; it becomes graph nodes on the **next** `sync` (the loop runs one at the start of the new session); consolidation then selects what of it deserves long-term memory. A hard kill — a killed terminal, a severed process — leaves no dump: the insurance for that case is the notes captured along the way; a session closed normally (including right before a rate limit) gets its transcript.
+
 The write policy is set by the **`session_policy`** key — the same one sources use: `absorb` (the default) takes the dialogue in as a distillate (the dump file may be deleted later and the summary stays), while `mirror` keeps it as a live projection (nodes live as long as the file does, so any detail stays retrievable in full — the trick for valuable conversations). The folder defaults to `<store>/sessions` and is correct under any agent directory.
 
 The automatic dump relies on Claude Code's hook and transcript format; in an environment without the hook, capturing notes as you go (`notes.py`) takes its place — and that is the portable "don't lose the dialogue" guarantee in any environment.
@@ -153,6 +162,18 @@ How much memory does on its own is set by the `automation` key in the config (on
 
 - **automatic mode** (`automation: true`) — memory runs itself: the `SessionStart`/`SessionEnd` hooks (a Claude Code mechanism) deterministically heal the graph after crashes, fold weights, and dump the session transcript, while the model's loop gathers context before each task, files conclusions along the way, and runs consolidation at the end;
 - **manual mode** (`automation: false`) — memory does nothing on its own, only on a command or an explicit request.
+
+Who starts which operation, and when (note: hooks do only the deterministic steps — a hook cannot spawn a subagent):
+
+| Operation | Started by | When |
+|---|---|---|
+| Crash recovery | the `SessionStart` hook; manually — `/amg repair` | every session start |
+| Build / reconcile (`sync`) | **the model's loop** or a command — a hook does **not** run it | the first build once; then at session start when sources changed |
+| Context pack (`retrieve`) | the loop before a task; manually — `/amg retrieve` | before each task and on a focus shift |
+| Consolidation, the deterministic half (weight folding, digest, transcript dump) | the `SessionEnd` hook | every session end |
+| Consolidation, the judgment half (selection into long-term memory, duplicate merging, branch compaction) | the loop at the end of work; manually — `/amg consolidate` | end of work / on request |
+
+In environments without hooks (Codex, the generic mode) the two "hook" rows are also driven by the model's loop — by the activation block's discipline under `automation: true`.
 
 All control goes through one `/amg <verb>` command (and the same words in an ordinary request: the model matches intent and synonyms, not the exact verb; a verbal request counts as a memory operation only when it explicitly names the memory, the memory graph, or AMG):
 

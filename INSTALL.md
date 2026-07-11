@@ -18,7 +18,15 @@ Unpack AMG into any folder **outside the project** and, in a session inside your
 
 **Survey the project before asking about sources.** List the project's top-level folders (and the notable file kinds in them) and **propose a classification**: which folders look like sources to mirror (code, documentation the user maintains), which look like one-shot material to absorb (chat logs, data dumps, third-party documents), and which deserve extra excludes (generated code, vendored assets — beyond the built-in ignore list). Present the proposal together with questions 3–5, so the user confirms or corrects a concrete list instead of recalling paths from memory.
 
-**Ask every question, one by one.** Do not skip questions and do not collapse them into a single message. An empty answer takes the stated default — but the question must still be asked: silently defaulting the KEY items is how a graph gets built in the wrong language or without embeddings. Questions 6 and 7 are marked **KEY**: their answers are expensive to change after the graph is built (see "Cheap to change later vs decide before building").
+**Ask every question, in fixed series of at most four.** The environment's question tool takes no more than four questions per call, so the flow is a sequence of SERIES — never one collapsed message, and never a series larger than four. An empty answer takes the stated default — but the question must still be asked: silently defaulting the KEY items is how a graph gets built in the wrong language or without embeddings. The series:
+
+- **Series I — placement:** questions 1–2 (scope; environment).
+- **Series II — sources, asked AFTER the survey:** questions 3–5 (mirrors; absorb / absorb_once; excludes). **The absorb question is mandatory even when the survey proposes nothing to absorb** — the user may hold one-shot material the survey cannot see (exported chats, dumps kept elsewhere).
+- **Series III — KEY decisions:** questions 6–7 (working language; embeddings). Their answers are expensive to change after the graph is built (see "Cheap to change later vs decide before building").
+- **Series IV — behavior:** questions 8–11 (automation; session policy; tier budgets; dependencies).
+- **Closing question:** question 12 — activation, with the immediate build (`--build`) folded into its options (activate and build now / activate only / not yet).
+
+On a reinstall, a question whose value in the existing config already differs from the default is **not re-asked** — show it on the `in force:` line instead (see below); ask only what is genuinely undecided.
 
 **If memory is already installed** (the project has `<agent dir>/amg/config.yml`), the model first shows the values in force and asks what to keep and what to change: the installer **never overwrites** an existing config (and prints its values itself on the `in force:` line), so changes are made by editing `config.yml`, not by re-answering. Fresh-install questions:
 
