@@ -81,7 +81,7 @@ Before pack assembly, the final activation is multiplied by the node's **status 
 
 ## Tiered pack assembly
 
-`assemble_pack` turns activation into a pack under the budget. First, nodes below the `activation_threshold` (`0.02`) are dropped; the rest are ranked by descending activation. Every node lands in a **tier by its type** (`TIER_OF_TYPE`): `hub`/`overview`, the authored rulings `decision`/`adr`, and the **pattern nodes** (`architectural_pattern`/`recurring_fix`/`anti_pattern`/`migration_recipe`) → `strategic` (decisions and reusable patterns are valuable strategic knowledge and surface early, like hubs); `module`/`class`/`package` → `tactical`; `function`/`section`/`file`/`method` → `operational` (the default tier is `operational`). Nodes are added **greedily**: while the tier has budget, the node goes into the tier; otherwise into the **periphery** (as a link list). The periphery is trimmed to `periphery_links`.
+`assemble_pack` turns activation into a pack under the budget. Before assembly the activations are **rescaled so the top node reads 1.0** (`_rescale_to_max`, applied right after the status prior), and the `activation_threshold` (`0.02`) reads as a **share of the top activation**: nodes below 2 % of the top are dropped, the rest are ranked by descending activation. The rescale is what makes the cutoff scale-free: PPR mass sums to 1 over the whole graph, so on a large graph even the top node's *absolute* activation falls below any fixed constant while the ranking stays correct — an absolute cutoff would empty the pack exactly where the memory matters most. Ranking order is untouched (a uniform scaling), an all-zero activation stays as is (an unmatched query legitimately yields an empty pack), and the returned `ranked` list carries the rescaled values (the top is always `1.0`, comparable across graphs). Every node lands in a **tier by its type** (`TIER_OF_TYPE`): `hub`/`overview`, the authored rulings `decision`/`adr`, and the **pattern nodes** (`architectural_pattern`/`recurring_fix`/`anti_pattern`/`migration_recipe`) → `strategic` (decisions and reusable patterns are valuable strategic knowledge and surface early, like hubs); `module`/`class`/`package` → `tactical`; `function`/`section`/`file`/`method` → `operational` (the default tier is `operational`). Nodes are added **greedily**: while the tier has budget, the node goes into the tier; otherwise into the **periphery** (as a link list). The periphery is trimmed to `periphery_links`.
 
 ```mermaid
 flowchart LR
@@ -142,7 +142,7 @@ All keys come from the config's `retrieval` block; absent ones fall back to the 
 | `damping` | 0.85 | how far activation spreads |
 | `max_hops` | 30 | the iteration ceiling |
 | `convergence_tol` | 1e-6 | the convergence threshold |
-| `activation_threshold` | 0.02 | the cutoff for weakly activated nodes |
+| `activation_threshold` | 0.02 | the pack cutoff as a **share of the top activation** (activations are rescaled to max = 1 before assembly) |
 | `seed_floor` | 0.0 | base mass for every node (0 = pure relevance) |
 | `token_budget` | 4000 / 10000 / 24000 / 60 | the tier budgets and the periphery cap (the template's values; the code's built-in fallback is more modest — a "code ≠ template" case, see [09-config](./09-config.md)) |
 | `relation_priors`, `relation_prior_default` | see above / 0.5 | the `β` conductance priors by edge type |

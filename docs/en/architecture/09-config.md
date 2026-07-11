@@ -74,7 +74,7 @@ The economical-build keys: how much text travels into the work queue, which unit
 |---|---|---|
 | `queue_text_max_chars` | 20000 | the ceiling (in characters) on a unit's text embedded into a `work/queue.json` item: the builder writes the summary straight from the queue and never re-reads sources; text over the threshold is not embedded — such an item carries only the pointer. `0` — a fully text-less queue (as before the key existed) |
 | `trivial_unit_max_lines` | 3 (template) | a code function whose definition fits within this many lines is derived by the **deterministic auto-summary** (its own code as one line) with no model call and no queue; protocol dunders (`__call__`, `__enter__`, `__getitem__`, …) always go to the model, and a unit with a derivation-cache hit restores its earned summary (the cache beats the template). Another "code ≠ template" case: the built-in code default is `0` (off) — the shipped template is what enables the savings |
-| `builder.batch_units` | 40 | units per builder batch (`partition_queue.py` splits a subtree group into `queue-<batch>-NN.json` parts) |
+| `builder.batch_units` | 60 | units per builder batch (`partition_queue.py` splits a subtree group into `queue-<batch>-NN.json` parts). The size trades the environment's fixed per-step overhead (the system prompt and tool schemas re-sent on every step of every agent — it scales with the agent count, not the work volume) against the cost of losing an interrupted batch; quality does not depend on batch size, and the ~10-unit checkpoint parts keep the loss bound unchanged, so growing far beyond the default buys little |
 | `builder.batch_max_chars` | 120000 | the estimated input volume of one batch — the sum of the embedded texts (a unit without text counts as a 2000 nominal); it bounds one builder's context and, indirectly, its output — symmetric to the linker's `linker.batch_nodes` |
 
 ## Subagent models
@@ -137,7 +137,7 @@ The settings of the deterministic preparation of the global semantic pass (`link
 |---|---|---|
 | `linker.top_k` | 5 | how many candidate neighbors are nominated per node |
 | `linker.min_sim` | 0.35 | the lower cosine-similarity bound for nomination (the embeddings mode; the lexical fallback uses its own threshold — ≥2 shared informative tokens) |
-| `linker.batch_nodes` | 40 | nodes per `work/link-batch-*.json` batch — bounds one `amg-linker` instance's context |
+| `linker.batch_nodes` | 80 | nodes per `work/link-batch-*.json` batch — bounds one `amg-linker` instance's context (sized like `builder.batch_units`: larger batches amortize the environment's fixed per-step overhead across fewer agents, while the ~10-node checkpoint parts keep the interruption loss bound unchanged) |
 
 ## The connectivity acceptance gate (`connectivity_gate`)
 
@@ -156,7 +156,7 @@ The spreading-activation parameters (the mechanics — [Retrieval](./06-retrieva
 |---|---|---|
 | `retrieval.damping` | 0.85 | how far activation spreads |
 | `retrieval.max_hops` | 30 | the power-method iteration ceiling |
-| `retrieval.activation_threshold` | 0.02 | the cutoff below this final activation |
+| `retrieval.activation_threshold` | 0.02 | the pack cutoff as a **share of the top activation** (activations are rescaled to max = 1 before assembly, so the threshold is scale-free — an absolute cutoff would empty the pack on a large graph where PPR mass spreads thin) |
 | `retrieval.token_budget.strategic` | 4000 | the hubs/overviews tier budget |
 | `retrieval.token_budget.tactical` | 10000 | the modules tier budget |
 | `retrieval.token_budget.operational` | 24000 | the budget of the code-pointer and in-focus document/note-body tier |
