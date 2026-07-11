@@ -95,13 +95,15 @@ working_language: ru         # the language of summaries and notes
 mirror_path: [src, doc]      # live projection: you edit a file, the graph follows it
 absorb_path: [data]          # ingest once (the source may be deleted later)
 models:                      # model strength per role; rendered into the subagents
-  synthesis: {model: opus, reasoning_effort: high}
+  discovery:      {model: haiku,  reasoning_effort: low}   # read-only classify/assemble — cheap
+  module_summary: sonnet                                   # bulk summaries (they feed retrieval)
+  synthesis:      {model: opus,   reasoning_effort: high}  # synthesis, gaps, judgment
 retrieval:
   embeddings: {enabled: off} # semantic seeding (optional; needs a backend)
 agent_dir: .claude           # the environment's directory (.agents for Codex, etc.)
 entrypoint: CLAUDE.md        # the entry-point file (AGENTS.md for other envs)
 ```
-The full reference for every key — [09-config](docs/en/architecture/09-config.md).
+A `model` is not limited to the aliases: it is any string your environment accepts — a pinned identifier (`claude-opus-4-8`) or another provider's model (`gpt-5.5`) when the environment points at a gateway/Bedrock/Vertex; AMG passes it through and does no provider routing of its own. Note also that the install flow asks only the most important parameters — for full control over the rest (weights, compaction, batch sizes, the viewer, thresholds) the simplest way is to **edit the template `<amg-dir>/config.yml` beforehand**: the installer writes the project config from it — or to edit `<project>/.claude/amg/config.yml` after the install (almost everything applies on the next run). The full reference for every key — [09-config](docs/en/architecture/09-config.md).
 
 **4. Activation ≠ building the graph.** `/amg on` (or agreeing during install) only raises the `active` flag; the graph is built by the loop in a **new session** — before the first task (with `automation: true`) or via `/amg sync`. Restart the session after the install: the environment registers skills and the `/amg` command at session start. To have the structural skeleton ready at once, build during install (`--build`).
 
@@ -171,9 +173,11 @@ Who starts which operation, and when (note: hooks do only the deterministic step
 | Build / reconcile (`sync`) | **the model's loop** or a command — a hook does **not** run it | the first build once; then at session start when sources changed |
 | Context pack (`retrieve`) | the loop before a task; manually — `/amg retrieve` | before each task and on a focus shift |
 | Consolidation, the deterministic half (weight folding, digest, transcript dump) | the `SessionEnd` hook | every session end |
-| Consolidation, the judgment half (selection into long-term memory, duplicate merging, branch compaction) | the loop at the end of work; manually — `/amg consolidate` | end of work / on request |
+| Consolidation, the judgment half (selection into long-term memory, duplicate merging, branch compaction) | the loop at session end (before `/clear`/exit); manually — `/amg consolidate` | session end / on request (a focus shift does NOT trigger it — that only re-runs retrieval) |
 
-In environments without hooks (Codex, the generic mode) the two "hook" rows are also driven by the model's loop — by the activation block's discipline under `automation: true`.
+In environments without hooks (Codex, the generic mode) the two "hook" rows are also driven by the model's loop — by the activation block's discipline under `automation: true`. On rate limits: hooks are plain scripts with no model — they spend no tokens and cannot hit a plan limit, so on a normal session close the deterministic half always runs, even with the limit exhausted. The judgment half is model work: with the limit gone, the loop simply cannot run it — and that is safe: the notes are already committed transactionally, the hook has done the dump and the weights, and the selection is non-destructively deferred to `/amg consolidate` in any later session.
+
+**`sync` and `consolidate` own different axes — and neither calls the other.** `sync` keeps the graph equal to the **sources**, and that is not "structure only": a content change in a file at the same path is caught by the content hash, the node is updated, its summary is re-derived, its links are completed — `sync` finishes the whole semantics of what changed (summaries, hubs, linking) by itself, needing no consolidation for it. `consolidate` maintains the **memory itself**, regardless of the project files: it folds the accumulated usage signals into weights, selects the dialogues' conclusions into long-term memory, merges duplicates, compacts over-budget branches, arbitrates contradictions. It changes nodes and edges too — but its input is not the sources, it is the accumulated experience of working with the memory (the logs, the notes, the overgrown branches). The short formula: `sync` is "graph ↔ files", `consolidate` is "graph ↔ its own experience".
 
 All control goes through one `/amg <verb>` command (and the same words in an ordinary request: the model matches intent and synonyms, not the exact verb; a verbal request counts as a memory operation only when it explicitly names the memory, the memory graph, or AMG):
 
