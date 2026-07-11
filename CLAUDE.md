@@ -26,11 +26,12 @@ entrypoint/settings.json     session hooks template (rendered into the agent dir
 entrypoint/commands/amg.md   /amg slash-command template (rendered by the installer)
 skills/amg-*/                engine skills; core scripts in skills/*/scripts/*.py
 agents/amg-*.md              subagent prompts
-docs/ru/THEORY.md            theory and concept (read section by section)
-docs/ru/GUIDE.md             user guide
-docs/ru/architecture/01–11   architecture; 11-roadmap.md is the main working document
-docs/ru/architecture/12-install.md  installer architecture (engine/graph planes, env modes, rendering)
-docs/en/                     translations (Stage 21)
+docs/en/THEORY.md            theory and concept (read section by section)
+docs/en/GUIDE.md             user guide
+docs/en/architecture/01–10   architecture;
+docs/en/architecture/12-install.md  installer architecture (engine/graph planes, env modes, rendering)
+docs/ru/                     mirror translations
+docs/ru/architecture/11-roadmap.md  is the main working document (Russian), 
 amg/                         data from local runs; gitignored, never commit
 STATUS.md                    short work-state bridge between sessions
 VERSION                      current SemVer version (bumped only at releases)
@@ -41,7 +42,7 @@ LICENSE                      PolyForm Strict 1.0.0 — noncommercial free; comme
 
 ## 3. Source of truth and forward-written documentation
 
-The only source of truth about what is implemented is `docs/ru/architecture/11-roadmap.md`. Its structure: a preamble (what is already implemented; the legacy-stage ledger) and seven sections:
+The only source of truth about what is implemented is `docs/ru/architecture/11-roadmap.md` (Russian). Its structure: a preamble (what is already implemented; the legacy-stage ledger) and seven sections:
 
 - **Section 1** — audit: known defects in code, prompts, and architecture (items 1.1–1.30);
 - **Section 2** — registry of documentation checkpoints: each item closes at the stage that implements its mechanism, per the section's preamble rules;
@@ -151,7 +152,7 @@ All principles are mandatory not only when writing documentation from scratch, b
 
 - Talk to the user in the user's language — Russian by default in this project.
 - Code comments and docstrings — English only (rule 6.10).
-- Project documentation is Russian-first (`docs/ru`); English appears at Stage 21. This file and `entrypoint/CLAUDE.md` are English as part of the control layer.
+- Project documentation is Russian-first (`docs/ru`) and mirror English-second (`docs/en`). This file and `entrypoint/CLAUDE.md` are English as part of the control layer.
 
 ## 10. Git, commits, and versioning
 
