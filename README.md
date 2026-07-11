@@ -10,6 +10,8 @@
 
 Every language model today shares one architectural limitation: it remembers nothing between sessions, and its working memory — the context window — is finite, so when it overflows or the session ends, the accumulated context is lost. AMG lifts that limitation with an external long-term memory: **a graph of note-nodes joined by typed, weighted edges**, from which what is needed is fetched by **spreading activation along those links**. The graph lives as ordinary files on disk.
 
+And this memory needs virtually no manual upkeep — it looks after itself. The graph continuously reconciles its nodes and links against the current state of the files, recovers from failures, saves your dialogues with the model and enriches the knowledge with their conclusions, while consolidation keeps it fresh: merging duplicates, resolving contradictions, compacting the overgrown. Your part is the ordinary work on the project; the memory keeps pace on its own.
+
 The idea is to take the best of two familiar approaches and sidestep their weaknesses. **RAG** (retrieval-augmented generation) can automatically find and inject what's relevant into the window, but it does so as a flat top-k: it answers multi-hop questions poorly — the ones whose answer must be assembled from several sources — and accumulates nothing across queries. A **hand-kept wiki** (in the spirit of Andrej Karpathy's llm-wiki) gives human-readable linked pages and explicit structure, but needs manual upkeep and drifts away from the source over time. AMG keeps RAG's automation and the wiki's human-readable structure, but retrieves differently: not by flat similarity, but by **spreading activation along the links** — so the window receives a relevant *neighborhood* of the graph (the node you need together with its context), not a scatter of look-alike fragments.
 
 ```mermaid
@@ -112,6 +114,8 @@ A `model` is not limited to the aliases: it is any string your environment accep
 - **other AGENTS.md environments** (`--env generic`, e.g. Qwen Coder) — a portable block **with no skills**, the same loop via direct script calls (the model reads `agents/*.md` as guidance).
 
 Baseline functionality does not depend on the environment; the set of conveniences does. **These modes are untested** on any non-Claude-Code environment so far — all testing was on Claude Code (verifying them is a separate roadmap stage still ahead).
+
+**Updating the engine — without losing the graph.** A new version installs the same way the first one did: unpack the fresh AMG into any folder **outside the project** and run a reinstall — with `python install.py --target /path/to/project`, or in words: "reinstall/update AMG per `<path-to-AMG>/INSTALL.md`". A reinstall is idempotent and **never touches the graph**: only the `amg-*` skills and agents, the activation block between its markers, and the hooks are updated; your `config.yml` is never overwritten — the installer shows the values in force on its `in force:` line. After the update, restart the session and run `/amg sync`: it brings the graph up to the new version cheaply — the unchanged costs not a token, and deterministic-layer improvements (link repair, for example) apply by themselves, with no rebuild.
 
 ## First run and the build
 
