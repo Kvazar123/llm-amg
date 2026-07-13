@@ -137,6 +137,7 @@ The settings of the deterministic preparation of the global semantic pass (`link
 |---|---|---|
 | `linker.top_k` | 5 | how many candidate neighbors are nominated per node |
 | `linker.min_sim` | 0.35 | the lower cosine-similarity bound for nomination (the embeddings mode; the lexical fallback uses its own threshold — ≥2 shared informative tokens) |
+| — | — | the two caps above are field-measured and deliberately not tighter: on a real project graph the defaults nominate 67 % of the confirmed cross-file semantic pairs, while a tightening to `top_k: 3` / `min_sim: 0.5` would drop that coverage to 47 % (measured retrospectively against 2879 confirmed pairs) — a real doc↔code edge often carries only a moderate cosine, so cheaper nomination is bought with lost links; the tightening was rejected |
 | `linker.batch_nodes` | 80 | nodes per `work/link-batch-*.json` batch — bounds one `amg-linker` instance's context (sized like `builder.batch_units`: larger batches amortize the environment's fixed per-step overhead across fewer agents, while the ~10-node checkpoint parts keep the interruption loss bound unchanged) |
 
 ## The connectivity acceptance gate (`connectivity_gate`)
