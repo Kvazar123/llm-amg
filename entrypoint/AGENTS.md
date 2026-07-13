@@ -38,18 +38,27 @@ Check whether `.claude/amg/config.yml` exists with `active: true`.
 ### Operating loop (when AMG is ON)
 There are no hooks here, so **you** run each step at the right moment.
 
-1. **Heal, then sync the graph with disk.** At session start, replay any unfinished write
-   and check the store (cheap; this is how a crash or interrupted session self-recovers):
+1. **Heal, then a deterministic start check — never guess whether sources changed.**
+   At session start run this start check — four cheap, deterministic, model-free
+   commands (batch them into as few tool calls as your shell allows; this is also
+   how a crash or interrupted session self-recovers):
    ```
    python .claude/skills/amg-bootstrap/scripts/graph_store.py recover
    python .claude/skills/amg-bootstrap/scripts/graph_store.py verify --repair
+   python .claude/skills/amg-bootstrap/scripts/reconcile.py plan .
+   python .claude/skills/amg-bootstrap/scripts/lifecycle.py status .
    ```
-   Then, if the source folders (`mirror_path` / `absorb_path`) may have changed since last
-   session — or this is the first session — build/sync the graph:
-   ```
-   python .claude/skills/amg-bootstrap/scripts/reconcile.py bootstrap .
-   ```
-   If it reports `queued_for_semantic > 0`, do the semantic enrichment **yourself**: read
+   `plan` re-syncs the structural skeleton with the sources (free, exact) and prints
+   what the model half still owes; `status` reports, among the rest, whether the
+   judgment consolidation is overdue (a `note:` line — react by offering it at
+   wrap-up, step 3). When `queued_for_semantic` is above zero (or the diff shows
+   added/changed/deleted), **ask the user**: "sources changed — N added / M changed;
+   sync the semantic layer now (~K units) or defer?"; on a defer, say one line ("the
+   graph lags the sources; sync when ready") and honestly ask again next session.
+   Zero diff and zero remainder — say nothing and start working. Never start the
+   model half silently: the deterministic half is automatic by design, the semantic
+   half costs money and is the user's call.
+   On yes, do the semantic enrichment **yourself**: read
    `.claude/amg/work/queue.json` (each unit carries its own `text` — summarize from it,
    do not re-open sources), and for each unit write a 1–3 phrase summary plus the
    meaningful edges, following the guidance in `.claude/agents/amg-builder.md` (per-unit
@@ -89,7 +98,9 @@ There are no hooks here, so **you** run each step at the right moment.
    - **Graph before filesystem search**: open sources point-wise from the pack's
      `path:line` pointers; search the files directly only for what the pack did not
      cover, and say so in one line. A project-wide grep sweep instead of retrieval is
-     the failure mode this loop exists to prevent.
+     the failure mode this loop exists to prevent — and when you do sweep, **exclude
+     the agent directory** (`.claude/` here): the memory store, its caches, and its
+     work files are not project sources and only flood the results.
    - **Make it visible**: tell the user in one line that context came from memory.
    One exception: when the prompt itself hands you the exact entry points — a file
    and line, a ready-made fix to apply, a fully specified local change — a ritual
@@ -108,8 +119,13 @@ There are no hooks here, so **you** run each step at the right moment.
    (types: `note` / `decision` / `adr` / `open_question` / `plan`; cheap, transactional, no
    bootstrap needed). Capture conclusions about the PROJECT only: an observation about
    the AMG engine itself (a suspected bug, a limitation) goes to the user in chat,
-   never into the project's memory — it would pollute the digest. At session end, or
-   before clearing context, maintain memory:
+   never into the project's memory — it would pollute the digest.
+   **The session's end is invisible to you until the user signals it** — so the
+   observable trigger is the user's wrap-up signal: when they say they are
+   finishing, wrapping up, done for today (any language — match the meaning),
+   maintain memory; offer the same when the session was dense with decisions or the
+   start check's `note:` said the judgment pass is overdue. There are no hooks
+   here, so run BOTH halves yourself — the deterministic fold and the judgment pass:
    ```
    python .claude/skills/amg-consolidate/scripts/consolidate.py weights .
    python .claude/skills/amg-consolidate/scripts/consolidate.py plan .

@@ -53,7 +53,9 @@ For each node, judge its candidates (and the hub list) from the summaries:
    `{"id": "<node id>", "edges": [{"rel", "to", "w"}], "part_of": [...]}`. Targets
    must come from your batch (candidates or hubs) — never invent ids; the driver
    re-binds a target written without its leading directories, but a nonexistent
-   symbol stays dangling.
+   symbol stays dangling. A doc target always names a concrete section —
+   `doc:<path>::<slug>` — never the bare file: file-level doc nodes do not exist,
+   so a whole-file `doc:` target is dangling by construction.
    **Edge direction**: the item's `id` is the relation's SOURCE node, `to` is its
    target — the edge lives on `id` and points at `to`. So `documents`/`specifies`:
    id = the doc/ADR node → to = the code/data it describes; `exemplifies`: id = the
@@ -72,12 +74,22 @@ covering the last ~10 judged nodes. A written part is durable: an interruption (
 limit, disconnect, output ceiling) loses at most the nodes since the last part, never
 the batch. Do not grow or rewrite an already-written part — start the next one.
 
+**End every part with its judged record** — one service element listing EVERY node id
+you judged in that part, including nodes where you confirmed nothing:
+`{"judged": ["<node id>", "..."]}` (the last element of the part's array). It never
+touches the graph; the driver uses it to remember which pairs were already ruled on,
+so a rejected candidate is not re-nominated to the next wave. A node you skip
+silently — no record — will be nominated again, so record every node you actually
+ruled on.
+
 **Write parts with the Write tool — never a bash heredoc.** Summaries carry quotes,
 apostrophes, and backticks, and a heredoc tears on them mid-file; the Write tool
 does not. Your write access is for these output parts only (files under `work/`) —
-everything else stays read-only. **Validate without re-reading**: a Read of your own
-part floods your context with JSON you already have; check it instead with
-`python -c "import json;json.load(open('<part>', encoding='utf-8'));print('ok')"`.
+everything else stays read-only. **Validate all parts with ONE call at the end** —
+never a command per part (each command is a turn that re-sends your whole context),
+and never a Read-back (it floods your context with JSON you already have):
+`python -c "import json,glob;[json.load(open(p, encoding='utf-8')) for p in glob.glob('.claude/amg/work/derived-links-<n>-p*.json')];print('ok')"`
+(a torn part is also caught by the driver, which quarantines it without aborting).
 
 Return to the caller ONE line that starts with
 `BATCH COMPLETE: judged N/M nodes` (e.g. "BATCH COMPLETE: judged 40/40 nodes —

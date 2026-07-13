@@ -63,26 +63,42 @@ explicit request.
 
 ### Operating loop (when AMG is ON and automation is on)
 
-1. **Heal, then sync the graph with disk.** At session start, first replay any
-   unfinished write from a previous run — this is cheap and is how the system
-   self-recovers after a crash or an interrupted session:
+1. **Heal, then a deterministic start check — never guess whether sources changed.**
+   With automation on, the SessionStart hook already healed the store (recover +
+   verify --repair) and refreshed the digest; repeat the heal manually only if you
+   suspect the hook did not fire — it is idempotent. Your part at session start,
+   before task work, is ONE cheap deterministic call:
    ```
-   python .claude/skills/amg-bootstrap/scripts/graph_store.py recover
-   python .claude/skills/amg-bootstrap/scripts/graph_store.py verify --repair
+   python .claude/skills/amg-bootstrap/scripts/reconcile.py plan .
    ```
-   With automation on, the SessionStart hook already ran this heal and refreshed the
-   digest; repeat it only if you suspect the hook did not fire — it is idempotent.
-   Then, if the configured source folders (`mirror_path` / `absorb_path`) may have
-   changed since last session (or this is the first session), run the
-   **`amg-bootstrap`** skill before task work. Building from empty and reconciling are
-   the same operation — crash-safe and idempotent, so re-running never duplicates or
-   loses anything.
+   It re-syncs the structural skeleton with the sources (free, exact, no model) and
+   prints what the model half still owes. When `queued_for_semantic` is above zero
+   (or the diff shows added/changed/deleted), **ask the user**: "sources changed —
+   N added / M changed; sync the semantic layer now (~K units) or defer?" — on yes,
+   run the **`amg-bootstrap`** skill; on a defer, say one line ("the graph lags the
+   sources; `/amg sync` when ready") and honestly ask again next session (the
+   remainder does not age away). Zero diff and zero remainder — say nothing and
+   start working. Never start the model half silently: the deterministic half is
+   automatic by design, the semantic half costs money and is the user's call.
+   If the hook's start-of-session output warned that memory upkeep is overdue
+   ("Memory upkeep is overdue: no judgment consolidation …"), acknowledge it and
+   plan the judgment consolidation for wrap-up (step 3) — or offer to run it now.
+   Building from empty and reconciling are the same operation — crash-safe and
+   idempotent, so re-running never duplicates or loses anything.
 
 2. **The graph is the primary context source — retrieve before you work.** Everything
    the graph can give, take from the graph FIRST; only then decide what is left to
-   look up in the files. For each task, assemble context via the **`amg-retrieve`**
-   skill (seed → spreading activation → a budgeted context pack), then work from the
-   pack. The protocol:
+   look up in the files. For each task, retrieve **directly** (the amg-retrieve
+   skill's default path) — one cheap call whose printed pack becomes your working
+   context:
+   ```
+   python .claude/skills/amg-retrieve/scripts/retrieve.py "<query>" --store .claude/amg
+   ```
+   (add `--intent history|conflict` when the question is about history or
+   contradictions — you classify that from meaning, in any language). Spawn the
+   `amg-retriever` subagent instead only when the pack should NOT enter your window
+   — a summary question to the memory, or an already-crowded context; the subagent
+   costs its own fixed overhead, so it is the exception. The protocol:
    - **Decompose a complex prompt.** A request with several distinct topics or
      sub-tasks gets a separate retrieval per topic — run each as you turn to that
      part; the retrieved branches together form the task's context. One vague
@@ -93,7 +109,9 @@ explicit request.
      `path:line` pointers. Search the files directly only for what the pack did not
      cover — and say so in one line (and if the sources may have changed, sync
      first). A project-wide grep/Glob sweep instead of retrieval is the failure
-     mode this loop exists to prevent.
+     mode this loop exists to prevent — and when you do sweep, **exclude the agent
+     directory** (`.claude/` here): the memory store, its caches, and its work files
+     are not project sources and only flood the results.
    - **Make it visible.** Tell the user in one line that context came from memory
      (e.g. "memory pack on X: 12 nodes").
    One exception: when the prompt itself hands you the exact entry points — a
@@ -103,7 +121,8 @@ explicit request.
    what the prompt already gave.
    The pack is memory, not ground truth: before you state a code fact from it —
    especially a node it flags `⟨stale / unverified / contradicted / low confidence⟩` —
-   confirm it against the live source. `verify_claims.py <id> --store .claude/amg`
+   confirm it against the live source.
+   `python .claude/skills/amg-retrieve/scripts/verify_claims.py <id> --store .claude/amg`
    does this cheaply (file/symbol/hash, read-only); on any conflict the current
    source wins.
 
@@ -117,16 +136,20 @@ explicit request.
    transactional, and does NOT require a bootstrap (bootstrap is only for source files,
    not for your reasoning). Capture conclusions about the PROJECT only: an observation
    about the AMG engine itself (a suspected bug, a limitation) goes to the user in
-   chat, never into the project's memory — it would pollute the digest. At session
-   end, or before `/clear`, run the
-   **`amg-consolidate`** skill once to fold the session's co-activations into edge
-   weights and maintain memory. Conclusions that live only in chat are lost on
+   chat, never into the project's memory — it would pollute the digest.
+   **The session's end is invisible to you until the user signals it** — you cannot
+   foresee `/clear` or a closed window. So the observable trigger is the user's
+   wrap-up signal: when they say they are finishing, wrapping up, done for today
+   (any language — match the meaning), run the **`amg-consolidate`** skill once —
+   that is the judgment pass: promote, merge, compact, arbitrate. Offer it likewise
+   when the session was dense with decisions, or when the session-start line warned
+   the judgment pass is overdue. Conclusions that live only in chat are lost on
    `/clear`; the graph is where they survive, so capture before clearing. With
    automation on, the SessionEnd hook already folds weights, refreshes the digest, and
-   dumps the session transcript to `sessions/` deterministically; running the skill
-   adds the consolidator subagent's judgment — promote, merge, compact — which a hook
-   cannot do. (The transcript dump needs Claude Code's SessionEnd hook; in another
-   environment your notes are what preserve the dialogue.)
+   dumps the session transcript to `sessions/` deterministically — those halves need
+   no words from anyone; only the judgment pass waits for a signal, because a hook
+   cannot run a subagent. (The transcript dump needs Claude Code's SessionEnd hook; in
+   another environment your notes are what preserve the dialogue.)
 
 ### Where things are
 - The graph: `.claude/amg/nodes/` — the source of truth, one file per node — plus

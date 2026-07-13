@@ -61,7 +61,10 @@ For each unit:
    Target ids use the `code:<path>::<qual>` form with the most specific source path
    you can determine — the driver re-binds a target written without its leading
    directories (or a bare symbol name) to the canonical id when exactly one exists,
-   but it never resurrects an invented symbol: do not fabricate targets.
+   but it never resurrects an invented symbol: do not fabricate targets. A doc
+   target always names a concrete section — `doc:<path>::<slug>` — never the bare
+   file: file-level doc nodes do not exist, so a whole-file `doc:` target is
+   dangling by construction.
    Cross-domain completeness is NOT
    your job — a global linking pass (amg-linker) runs after all summaries exist;
    assert the links you can see from your batch and leave the rest to it.
@@ -90,9 +93,11 @@ start the next one.
 **Write parts with the Write tool — never a bash heredoc.** Summaries carry quotes,
 apostrophes, and backticks, and a heredoc tears on them mid-file; the Write tool
 does not. Your write access is for these output parts only (files under `work/`) —
-everything else stays read-only. **Validate without re-reading**: a Read of your own
-part floods your context with JSON you already have; check it instead with
-`python -c "import json;json.load(open('<part>', encoding='utf-8'));print('ok')"`.
+everything else stays read-only. **Validate all parts with ONE call at the end** —
+never a command per part (each command is a turn that re-sends your whole context),
+and never a Read-back (it floods your context with JSON you already have):
+`python -c "import json,glob;[json.load(open(p, encoding='utf-8')) for p in glob.glob('.claude/amg/work/derived-<batch>-p*.json')];print('ok')"`
+(a torn part is also caught by the driver, which quarantines it without aborting).
 
 ```json
 [

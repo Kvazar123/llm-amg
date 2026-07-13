@@ -34,9 +34,9 @@ dump the codebase into context; let activation pull the relevant subgraph.
 
 ## Workflow
 
-Keep the main conversation clean by delegating the run to the read-only retriever
-subagent, which works in its own context and returns the pack location plus a short
-summary.
+The default is a **direct call**: one cheap command whose printed pack becomes your
+working context — no subagent round-trip. The isolated retriever subagent is the
+deliberate variant for when the pack itself should NOT enter your window.
 
 1. **Frame the query.** Use the user's task plus any concrete identifiers it names
    (function/module/feature). A query like `"extend charge retries in the billing
@@ -44,23 +44,30 @@ summary.
    paraphrases also work; without it, seeds are purely lexical, so include the words
    that actually appear in the code/docs.
 
-2. **Spawn `amg-retriever`** with the query and the store path. It runs:
+2. **Run the retriever directly** (the default):
    ```bash
-   python .claude/skills/amg-retrieve/scripts/retrieve.py "<query>" \
-       --store .claude/amg
+   python .claude/skills/amg-retrieve/scripts/retrieve.py "<query>" --store .claude/amg
    ```
-   which writes `.claude/amg/cache/pack.md` and returns the ranked nodes. The
-   subagent returns the pack path and a 3–5 line summary. For a **history/audit** query
-   ("what was X before", "why was it changed") or a **contradictions** query ("show the
-   conflicts") it adds `--intent history|conflict`, which surfaces retired/contradicted
-   nodes that are otherwise pushed down (the subagent reads the intent from the query in
-   any language — no keyword list).
+   It prints the tiered pack (your context, in one turn) plus the ranked nodes, and
+   writes the same pack to `.claude/amg/cache/pack.md`. Recognize the query's intent
+   yourself and pass it as a flag: a **history/audit** query ("what was X before",
+   "why was it changed") → `--intent history`; a **contradictions** query ("show the
+   conflicts") → `--intent conflict` — either surfaces retired/contradicted nodes
+   that are otherwise pushed down (you classify the intent from meaning, in any
+   language; the script has no keyword list).
 
-3. **Read the pack** (`.claude/amg/cache/pack.md`) and work from it. The pack has
-   four tiers: *Strategic* (overview/subsystem hubs), *Tactical* (relevant modules),
-   *Operational* (code pointers + the docs/notes text in focus), *Related* (links to
-   follow if needed). For code, the pack gives **pointers** (`path:line`) — open the
-   real file in `src/` to edit; the graph is not a copy of the code.
+   **Spawn `amg-retriever` instead** only when the isolation is the point: the user
+   asks the memory a question whose answer is a short distillate (the full pack in
+   your window would be waste), or your context is already crowded. The subagent
+   runs the same command in its own context and returns the pack path plus a 3–5
+   line summary — at the price of a subagent's fixed per-step overhead, so it is
+   the exception, not the default.
+
+3. **Work from the pack** (printed, or read `.claude/amg/cache/pack.md`). The pack
+   has four tiers: *Strategic* (overview/subsystem hubs), *Tactical* (relevant
+   modules), *Operational* (code pointers + the docs/notes text in focus), *Related*
+   (links to follow if needed). For code, the pack gives **pointers** (`path:line`) —
+   open the real file in `src/` to edit; the graph is not a copy of the code.
 
 4. If the pack misses something you expected, widen the query with more identifiers
    and re-run, or follow a *Related* link. (If misses are systematic, measure and
@@ -125,10 +132,13 @@ python .claude/skills/amg-retrieve/scripts/eval_retrieval.py --make-demo /tmp/am
 
 # On your real graph, with your own labeled cases:
 python .claude/skills/amg-retrieve/scripts/eval_retrieval.py \
-    --store .claude/amg --cases .claude/skills/amg-retrieve/evals/cases.json --out results.json
+    --store .claude/amg --cases .claude/amg/evals/cases.json --out results.json
 ```
 
-`cases.json` is a list of `{"id", "query", "gold_ids": [...]}`. Label a handful of
+`cases.json` is a list of `{"id", "query", "gold_ids": [...]}`. Keep it under the
+store (`.claude/amg/evals/` — the `eval_gate.cases` default), NOT inside the skills
+tree: an engine reinstall replaces the skills wholesale and would wipe your labels,
+while the store is never touched. Label a handful of
 real tasks with the node ids that *should* surface, then tune these knobs in
 `config.yml → retrieval` against the numbers (never by feel):
 `damping` (reach), `activation_threshold` (pack tightness), `token_budget` per tier,

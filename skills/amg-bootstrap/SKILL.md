@@ -202,12 +202,17 @@ delegating per-unit reading to subagents.
    nodes; apply the whole round with one `apply-derived` call (step 4). **Report
    linking progress the same way as building**: after every wave, tell the user
    "X/Y link batches judged" (plus any PARTIAL by name). The pass is
-   incrementally re-runnable: already-linked pairs are never re-nominated, so the
-   **completeness criterion is built in — repeat `link_candidates.py` + the wave
-   until it emits zero new batches, or `metrics` reports `gate: ok`**; re-running
-   after new derivations only adds what is missing.
+   incrementally re-runnable and it CONVERGES: already-linked pairs are never
+   re-nominated, and rejected pairs are remembered too — each linker part ends with
+   a judged record, and `apply-derived` retires a fully judged batch into
+   `work/judged/`, whose pairs the nominator never re-proposes (only a crashed,
+   under-covered batch is re-nominated). So the **completeness criterion is built
+   in — repeat `link_candidates.py` + the wave until it emits zero new batches, or
+   `metrics` reports `gate: ok`**; typically one or two waves suffice, and a second
+   wave carries only genuinely new pairs, never re-rejections.
 
-7. **Acceptance gate (connectivity).** Verify the build is one connected graph:
+7. **Acceptance gate (connectivity) + verification stamp.** Verify the build is one
+   connected graph:
    ```bash
    python .claude/skills/amg-bootstrap/scripts/reconcile.py metrics .
    ```
@@ -216,6 +221,14 @@ delegating per-unit reading to subagents.
    typically the fix is re-running step 6 over the remaining islands (or step 3 for
    still-stale nodes); unresolved `imports` to stdlib/third-party are legitimate
    and never flagged. The same verdict shows in `/amg status`.
+   Then stamp verification in one deterministic sweep (seconds, no model):
+   ```bash
+   python .claude/skills/amg-retrieve/scripts/verify_claims.py --all --write --store .claude/amg
+   ```
+   A just-derived summary matches its live source by construction, so the sweep
+   flips fresh nodes to `verified` — after it, an `unverified`/`stale` flag in a
+   pack means "changed since the last sweep", a signal that actually
+   discriminates, instead of burning on every node.
 
 8. **Log.** The scripts append a txid-stamped line to `.claude/amg/actions.log`. Confirm
    to the user with the counts, the final progress percentage (`inspect_queue.py .`),

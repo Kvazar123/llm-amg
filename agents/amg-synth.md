@@ -110,9 +110,11 @@ independently.
 Summaries carry quotes, apostrophes, and backticks, and a heredoc tears on them
 mid-file; the Write tool does not. Your write access is for the derivation parts
 under `work/` and the gap report at its given path — everything else stays
-read-only. **Validate without re-reading**: a Read of your own part floods your
-context with JSON you already have; check it instead with
-`python -c "import json;json.load(open('<part>', encoding='utf-8'));print('ok')"`.
+read-only. **Validate all parts with ONE call at the end** — never a command per
+part (each command is a turn that re-sends your whole context), and never a
+Read-back (it floods your context with JSON you already have):
+`python -c "import json,glob;[json.load(open(p, encoding='utf-8')) for p in glob.glob('.claude/amg/work/derived-synth-p*.json')];print('ok')"`
+(a torn part is also caught by the driver, which quarantines it without aborting).
 
 ## Rules
 - Work from the two input files only (`synth-input.json` + `hub-candidates.json`) —
