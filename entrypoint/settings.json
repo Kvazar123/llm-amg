@@ -21,6 +21,17 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/skills/amg-bootstrap/scripts/lifecycle.py prompt-hint",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   }
 }

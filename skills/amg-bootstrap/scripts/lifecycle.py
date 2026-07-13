@@ -4,7 +4,7 @@ lifecycle.py — AMG lifecycle & control plane: the session hooks, the /amg comm
 and the status report. Thin orchestration over the existing scripts (graph_store for
 healing, consolidate for weights + the always-on digest); it adds no new graph logic.
 
-Two AUTOMATIC entry points, wired by the installer into the agent dir's settings.json
+Three AUTOMATIC entry points, wired by the installer into the agent dir's settings.json
 as Claude Code hooks. They self-gate on config, so they are no-ops unless AMG is both
 active and `automation: on` (turning automation off leaves only the manual commands):
 
@@ -20,6 +20,10 @@ active and `automation: on` (turning automation off leaves only the manual comma
                   for the outcome-gated Hebbian rule). The JUDGMENT half of consolidation — the
                   amg-consolidator subagent + apply — stays model-driven: a hook cannot
                   run a subagent, so it lives in the activation loop, not here.
+  prompt-hint   : the GATED mid-session reminder under UserPromptSubmit — one short
+                  line only when the memory has demonstrably gone unconsulted while a
+                  task-shaped prompt arrives (see prompt_hint); on every other prompt
+                  it prints nothing and injects zero tokens.
 
 Four MANUAL commands, exposed as the `/amg <sub>` slash command (and reachable by
 verbal intent through the activation block):
@@ -37,8 +41,10 @@ weight folding <-> the amg-consolidate skill, the digest <-> consolidate.py dige
 CLI:
   python lifecycle.py session-start|session-end [<project_root>] [--root <agent_dir>]
   python lifecycle.py status|repair|on|off      [<project_root>] [--root <agent_dir>]
+  python lifecycle.py prompt-hint               [<project_root>] [--root <agent_dir>]
   session-end also accepts the hook's JSON on stdin, or --transcript <path> to dump a
-  session manually in an environment without the SessionEnd hook.
+  session manually in an environment without the SessionEnd hook; prompt-hint reads
+  the UserPromptSubmit payload (the `prompt` field) the same way.
 
 The graph root is <agent_dir>/amg, resolved by graph_store.resolve_amg_root (the same
 chain as reconcile/consolidate/notes).
@@ -449,6 +455,56 @@ def session_end(project_root: Path, amg: Path, transcript_path: Optional[str] = 
             "session": session, "usage": usage}
 
 
+# The mid-session reminder is GATED, never a per-prompt tax. Field evidence: the
+# loop's retrieval discipline decays as a session runs — the "time to consult the
+# graph" moment must arrive from outside, like the digest does at session start —
+# while an unconditional per-prompt line is noise that trains the model to ignore
+# it. So the hint fires only when the memory has DEMONSTRABLY gone unconsulted and
+# the prompt looks like a task; on every other prompt it prints nothing and injects
+# zero tokens. The thresholds are deliberate: a pack older than ~15 min no longer
+# reflects the current focus; prompts under ~200 chars are mostly answers and
+# follow-ups, not new tasks; one reminder per ~10 min keeps the channel quiet
+# enough to stay a signal.
+_HINT_PACK_STALE_S = 15 * 60
+_HINT_MIN_PROMPT_CHARS = 200
+_HINT_COOLDOWN_S = 10 * 60
+
+
+def prompt_hint(amg: Path, prompt: str) -> Optional[str]:
+    """One short line for the UserPromptSubmit hook, or None (silence — the normal
+    outcome). Fires only when ALL gates pass: AMG active + automation on; the prompt
+    is task-shaped (length); the cooldown stamp (work/hint-stamp) has expired; and
+    this session's pack log (work/pack-log.jsonl — consumed by session-end, so its
+    presence and mtime mean "consulted THIS session") is absent or stale. The stamp
+    is touched when a hint is issued."""
+    cfg = _read_config(amg)
+    if not (_is_active(cfg) and _automation_on(cfg)):
+        return None
+    if len(prompt.strip()) < _HINT_MIN_PROMPT_CHARS:
+        return None
+    now = time.time()
+    stamp = amg / "work" / "hint-stamp"
+    try:
+        if stamp.exists() and now - stamp.stat().st_mtime < _HINT_COOLDOWN_S:
+            return None
+        pack_log = amg / "work" / "pack-log.jsonl"
+        age = (now - pack_log.stat().st_mtime) if pack_log.exists() else None
+    except OSError:
+        return None                        # unreadable state: stay silent, never block
+    if age is not None and age < _HINT_PACK_STALE_S:
+        return None                        # the memory was consulted recently
+    try:
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.touch()
+    except OSError:
+        pass                               # the hint is still worth printing once
+    if age is None:
+        return ("AMG: memory has not been consulted this session — "
+                "a new topic starts with a retrieval.")
+    return (f"AMG: the last memory pack is {int(age // 60)} min old — "
+            "if this prompt opens a new topic, start it with a retrieval.")
+
+
 # --------------------------------------------------------------------------- #
 # Manual commands
 # --------------------------------------------------------------------------- #
@@ -712,6 +768,11 @@ def main(argv: List[str]) -> int:
         tp = cli_transcript or payload.get("transcript_path")
         print(json.dumps(session_end(root, amg, transcript_path=tp,
                                      reason=payload.get("reason")), indent=2)); return 0
+    if cmd == "prompt-hint":
+        note = prompt_hint(amg, str(_load_stdin_payload().get("prompt") or ""))
+        if note:
+            print(note)    # UserPromptSubmit: stdout is injected as context
+        return 0           # silence on every gated-out prompt (zero tokens)
     if cmd == "repair":
         res = repair(root, amg)
         print(res.get("note") or "AMG store is consistent; nothing to repair.")

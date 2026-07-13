@@ -13,10 +13,13 @@ Checks:
   6. on/off   : /amg on|off flips `active` in config.yml in place; status reflects it.
   7. heal-note: format_heal_note is silent on a clean heal, summarizes otherwise.
   8. unclean  : session-start reports a healed stale lock (task 9), then stays silent.
+  9. hint     : prompt-hint fires only past ALL gates (active+automation, task-shaped
+                prompt, cooldown, pack log absent/stale); a quiet prompt gets nothing.
 
 Run:  python selftest_lifecycle.py
 """
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -155,6 +158,41 @@ def case_consolidation_nudge() -> None:
         shutil.rmtree(proj, ignore_errors=True)
 
 
+def case_prompt_hint() -> None:
+    """The UserPromptSubmit reminder is gated four ways (active+automation; a
+    task-shaped prompt; the cooldown stamp; this session's pack log absent or stale) —
+    every gated-out prompt gets NOTHING, so the hook stays a signal, not a tax."""
+    task = "x" * 250                                     # task-shaped (length gate)
+    for cfg, why in ((CONFIG.replace("automation: true", "automation: false"), "automation off"),
+                     (CONFIG.replace("active: true", "active: false"), "inactive")):
+        proj = setup_project(cfg)
+        try:
+            assert LC.prompt_hint(amg_root(proj), task) is None, f"must be silent when {why}"
+        finally:
+            shutil.rmtree(proj, ignore_errors=True)
+    proj = setup_project()
+    try:
+        amg = amg_root(proj)
+        assert LC.prompt_hint(amg, "short prompt") is None, "a short prompt is never hinted"
+        n1 = LC.prompt_hint(amg, task)
+        assert n1 and "not been consulted" in n1, n1     # no pack log this session
+        stamp = amg / "work" / "hint-stamp"
+        assert stamp.exists(), "issuing a hint must touch the cooldown stamp"
+        assert LC.prompt_hint(amg, task) is None, "cooldown: no second hint at once"
+        old = time.time() - LC._HINT_COOLDOWN_S - 5
+        os.utime(stamp, (old, old))                      # expire the cooldown
+        pack_log = amg / "work" / "pack-log.jsonl"
+        pack_log.write_text("{}\n", encoding="utf-8")    # a fresh pack: memory in use
+        assert LC.prompt_hint(amg, task) is None, "a fresh pack log silences the hint"
+        stale = time.time() - LC._HINT_PACK_STALE_S - 5
+        os.utime(pack_log, (stale, stale))               # the pack no longer reflects focus
+        n2 = LC.prompt_hint(amg, task)
+        assert n2 and "min old" in n2, n2
+        print("PASS  hint: gated on config/length/cooldown/pack age; quiet prompts stay silent")
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+
 def case_status(proj: Path) -> None:
     rc.plan(proj, amg_root(proj))            # populate nodes + the work queue
     d = LC.status(proj, amg_root(proj))
@@ -274,6 +312,7 @@ if __name__ == "__main__":
         case_session_end(proj)
         case_status(proj)
         case_consolidation_nudge()
+        case_prompt_hint()
         case_on_off(proj)
         case_heal_note()
         case_unclean_shutdown()

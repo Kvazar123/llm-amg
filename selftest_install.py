@@ -63,6 +63,8 @@ def test_local():
         cmds = [h["command"] for ev in st["hooks"].values() for e in ev for h in e["hooks"]]
         assert any("lifecycle.py session-start" in c for c in cmds), st
         assert any("lifecycle.py session-end" in c for c in cmds), st
+        assert any("lifecycle.py prompt-hint" in c for c in cmds), st
+        assert "UserPromptSubmit" in st["hooks"], "the gated prompt hint is wired as a hook"
         assert (t / ".claude/commands/amg.md").exists()
         cfg = _cfg(t)
         assert cfg["active"] is False and cfg["working_language"] == "ru", cfg
