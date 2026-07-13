@@ -83,10 +83,14 @@ There are no SessionStart/SessionEnd hooks here, so **you** run each step at the
    python .claude/skills/amg-retrieve/scripts/retrieve.py "<query>" --store .claude/amg
    ```
    (add `--intent history|conflict` for a history / contradictions question — you
-   classify that from meaning, in any language). Spawn the **amg-retriever**
+   classify that from meaning, in any language; add `--compact` for a targeted
+   pointer lookup — pointer lines instead of unfolded bodies at a fraction of the
+   size; entering an unfamiliar topic keeps the full profile). Spawn the **amg-retriever**
    subagent instead only when the pack should NOT enter your window — a summary
    question to the memory, or an already-crowded context; a subagent costs its own
-   fixed overhead, so it is the exception. The protocol: **decompose a complex
+   fixed overhead, so it is the exception. No mechanism nudges you mid-session here
+   (in Claude Code a gated prompt hook reminds when the memory goes unconsulted) —
+   this retrieval discipline rests on you alone. The protocol: **decompose a complex
    prompt** (a separate retrieval per distinct
    topic, run as you turn to that part — the retrieved branches together form the
    task's context); **a focus shift = a new retrieval**; **graph before filesystem

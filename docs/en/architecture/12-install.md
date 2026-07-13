@@ -68,7 +68,7 @@ The block is injected at the **end** of the entry-point file between the markers
 
 ### Hooks and the command (Claude Code only)
 
-For `--env claude-code` the installer merges the `SessionStart`/`SessionEnd` hooks from the `entrypoint/settings.json` template with the existing `settings.json` (`merge_settings`): foreign hooks and keys are preserved, previous AMG hooks are replaced (matched by the `lifecycle.py` signature in the command). The `entrypoint/commands/amg.md` slash command is rendered into `<agent_dir>/commands/`. For `codex`/`generic` neither the hooks nor the command are written — the activation loop takes their role.
+For `--env claude-code` the installer merges the `SessionStart`/`SessionEnd`/`UserPromptSubmit` hooks from the `entrypoint/settings.json` template with the existing `settings.json` (`merge_settings`): foreign hooks and keys are preserved, previous AMG hooks are replaced (matched by the `lifecycle.py` signature in the command, whatever the event). The `entrypoint/commands/amg.md` slash command is rendered into `<agent_dir>/commands/`. For `codex`/`generic` neither the hooks nor the command are written — the activation loop takes their role.
 
 ### Configuration layers: the global personal-defaults config (`write_global_config`)
 

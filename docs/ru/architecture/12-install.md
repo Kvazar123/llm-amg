@@ -68,7 +68,7 @@ flowchart LR
 
 ### Хуки и команда (только Claude Code)
 
-Для `--env claude-code` установщик сливает хуки `SessionStart`/`SessionEnd` из шаблона `entrypoint/settings.json` с существующим `settings.json` (`merge_settings`): чужие хуки и ключи сохраняются, прежние AMG-хуки заменяются (по сигнатуре `lifecycle.py` в команде). Слэш-команда `entrypoint/commands/amg.md` рендерится в `<agent_dir>/commands/`. Для `codex`/`generic` ни хуки, ни команда не пишутся — их роль берёт петля активации.
+Для `--env claude-code` установщик сливает хуки `SessionStart`/`SessionEnd`/`UserPromptSubmit` из шаблона `entrypoint/settings.json` с существующим `settings.json` (`merge_settings`): чужие хуки и ключи сохраняются, прежние AMG-хуки заменяются (по сигнатуре `lifecycle.py` в команде, независимо от события). Слэш-команда `entrypoint/commands/amg.md` рендерится в `<agent_dir>/commands/`. Для `codex`/`generic` ни хуки, ни команда не пишутся — их роль берёт петля активации.
 
 ### Слои конфигурации: глобальный конфиг личных умолчаний (`write_global_config`)
 

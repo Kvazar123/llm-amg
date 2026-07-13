@@ -90,7 +90,12 @@ There are no hooks here, so **you** run each step at the right moment.
    ```
    python .claude/skills/amg-retrieve/scripts/retrieve.py "<query>" --store .claude/amg
    ```
-   Read the written pack at `.claude/amg/cache/pack.md`. The protocol:
+   Read the written pack at `.claude/amg/cache/pack.md`. Add `--compact` for a
+   targeted pointer lookup ("where is X") — pointer lines instead of unfolded
+   bodies at a fraction of the size; entering an unfamiliar topic keeps the full
+   profile. No mechanism nudges you mid-session here (in Claude Code a gated
+   prompt hook reminds when the memory goes unconsulted) — this retrieval
+   discipline rests on you alone. The protocol:
    - **Decompose a complex prompt**: a request with several distinct topics gets a
      separate retrieval per topic, run as you turn to that part — the retrieved
      branches together form the task's context.

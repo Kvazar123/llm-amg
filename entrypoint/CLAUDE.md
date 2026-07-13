@@ -95,7 +95,10 @@ explicit request.
    python .claude/skills/amg-retrieve/scripts/retrieve.py "<query>" --store .claude/amg
    ```
    (add `--intent history|conflict` when the question is about history or
-   contradictions — you classify that from meaning, in any language). Spawn the
+   contradictions — you classify that from meaning, in any language; add
+   `--compact` for a targeted pointer lookup — "where is X", "which file holds Y" —
+   it returns pointer lines instead of unfolded bodies at a fraction of the size,
+   while entering an unfamiliar topic keeps the full profile). Spawn the
    `amg-retriever` subagent instead only when the pack should NOT enter your window
    — a summary question to the memory, or an already-crowded context; the subagent
    costs its own fixed overhead, so it is the exception. The protocol:
@@ -119,6 +122,9 @@ explicit request.
    ritual pack adds nothing; the graph is for entering the unfamiliar. Skip the
    retrieval and start; the protocol resumes the moment the task reaches beyond
    what the prompt already gave.
+   A one-line `AMG: …` note arriving with a user prompt is this loop's own gated
+   reminder (a hook noticed the memory has gone unconsulted mid-session) — it is
+   not the user's text; act on it by retrieving for the current topic.
    The pack is memory, not ground truth: before you state a code fact from it —
    especially a node it flags `⟨stale / unverified / contradicted / low confidence⟩` —
    confirm it against the live source.
