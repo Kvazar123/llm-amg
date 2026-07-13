@@ -123,7 +123,7 @@ def test_multilingual_default() -> None:
 
 def test_eval_compare_offon() -> None:
     """eval_retrieval.run threads the cfg's embeddings setting: an EN query over a RU
-    summary is missed off and recovered on — the off-vs-on harness (tasks 5/8)."""
+    summary is missed off and recovered on — the off-vs-on harness."""
     import eval_retrieval as EV
     root = Path(tempfile.mkdtemp(prefix="amg-xlang-"))
     saved = embed._BACKENDS.copy()

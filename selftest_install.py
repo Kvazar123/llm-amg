@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-selftest_install.py — proves the Stage 10 installer (install.py) end to end, headless.
+selftest_install.py — proves the installer (install.py) end to end, headless.
 
 Checks:
   1. local      : engine + block (markers, preamble stripped) + merged settings + /amg
@@ -12,14 +12,14 @@ Checks:
                   .agents/AGENTS.md (no leftover .claude) — portability without code edits.
   4. global     : engine in a fake HOME, block carries ABSOLUTE engine paths, the graph
                   + config stay LOCAL to the project, digest seeded locally; the
-                  machine-wide DEFAULTS config (~/<agent_dir>/amg/config.yml, Stage 18)
+                  machine-wide DEFAULTS config (~/<agent_dir>/amg/config.yml)
                   is written and is NOT a store (no nodes/journal); the local config
                   omits the personal blocks (models, retrieval.embeddings) so they
                   inherit, and the loaders see the merged view (local wins per key).
   5. uninstall  : the block is stripped (user content kept), amg-* engine + AMG hooks
                   removed, the graph kept unless --purge-graph.
   6. answers    : --set with a dotted path lands on the nested key (comments kept);
-                  --absorb-once fills absorb_once_path (audit 1.49).
+                  --absorb-once fills absorb_once_path.
 
 Run:  python selftest_install.py
 """
@@ -125,10 +125,10 @@ def test_agents_env():
         assert ".agents/skills" in cmd and ".claude" not in cmd, cmd
         # 1.32: the engine PROMPTS (SKILL.md, agents/*.md) are rendered too, not copied verbatim
         smd = (t / ".agents/skills/amg-bootstrap/SKILL.md").read_text(encoding="utf-8")
-        assert ".agents/skills" in smd and ".claude" not in smd, "SKILL.md prompt rendered (1.32)"
+        assert ".agents/skills" in smd and ".claude" not in smd, "SKILL.md prompt rendered"
         amd = (t / ".agents/agents/amg-builder.md").read_text(encoding="utf-8")
-        assert ".agents/amg" in amd and ".claude" not in amd, "agent prompt rendered (1.32)"
-        assert _cfg(t, ".agents")["eval_gate"]["cases"].startswith(".agents/"), "eval_gate.cases rendered (1.32)"
+        assert ".agents/amg" in amd and ".claude" not in amd, "agent prompt rendered"
+        assert _cfg(t, ".agents")["eval_gate"]["cases"].startswith(".agents/"), "eval_gate.cases rendered"
         assert _cfg(t, ".agents")["agent_dir"] == ".agents", "agent_dir recorded"
         print("PASS  install: .agents renders AGENTS.md + command + SKILL.md + agent prompts + eval cases, no .claude")
     finally:
@@ -150,7 +150,7 @@ def test_global():
         assert (home / ".claude").as_posix() + "/skills" in entry, "absolute engine path in block"
         assert "@.claude/amg/digest.md" not in entry, "global @digest import replaced with a note"
         # the GRAPH stays local; HOME now carries the machine-wide DEFAULTS config
-        # (Stage 18, audit 1.37), which is a config layer, NOT a store
+        # which is a config layer, NOT a store
         assert (t / ".claude/amg/config.yml").exists(), "local project config written"
         assert (t / ".claude/amg/digest.md").exists(), "digest seeded locally"
         g = yaml.safe_load((home / ".claude/amg/config.yml").read_text(encoding="utf-8"))
@@ -345,7 +345,7 @@ def test_nested_set_and_absorb_once():
     t = Path(tempfile.mkdtemp(prefix="amg-inst-nested-"))
     try:
         # a LOCAL install: full self-contained config; a dotted --set lands on the
-        # nested key (the flow's auto-embeddings answer, audit 1.49) and --absorb-once
+        # nested key (the flow's auto-embeddings answer) and --absorb-once
         # fills absorb_once_path
         I.main(["--target", str(t), "--mirror", "src", "--absorb", "logs",
                 "--absorb-once", "snapshots,report.pdf",

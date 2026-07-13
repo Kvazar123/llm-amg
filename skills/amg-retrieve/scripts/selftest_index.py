@@ -131,7 +131,7 @@ def test_trust_fields_roundtrip(tmp: Path) -> None:
     n = via["code:src/m.py::a"]
     assert n["confidence"] == 0.42 and n["line_end"] == 25, n
     assert n["verification"] == {"status": "contradicted", "method": "grep"}, n
-    print("PASS  stage13 fields: confidence/line_end/verification round-trip via the index")
+    print("PASS  trust fields: confidence/line_end/verification round-trip via the index")
 
 
 def main() -> int:

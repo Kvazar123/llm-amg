@@ -171,7 +171,7 @@ def test_overlap_warns():
         conflicts = summ.get("policy_conflicts", [])
         assert any("data/d.json" in c["id"] and set(c["policies"]) == {"absorb", "mirror"}
                    for c in conflicts), summ
-        print("PASS  ignore: a file under both mirror_path and absorb_path is flagged (1.29)")
+        print("PASS  ignore: a file under both mirror_path and absorb_path is flagged")
     finally:
         shutil.rmtree(proj, ignore_errors=True)
 
@@ -216,7 +216,7 @@ def test_missing_in_plan():
         summ = rc.plan(proj, amg)
         assert "nope" in summ.get("missing_sources", []), summ
         assert "src" not in summ.get("missing_sources", []), summ
-        print("PASS  ignore: a non-existent source path is reported in plan (1.30)")
+        print("PASS  ignore: a non-existent source path is reported in plan")
     finally:
         shutil.rmtree(proj, ignore_errors=True)
 

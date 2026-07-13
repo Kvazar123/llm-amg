@@ -147,7 +147,7 @@ def test_plan(proj):
 
 
 def test_near_dup_scope(proj):
-    """near_duplicates is restricted to episodic, non-source-derived nodes (§1.27):
+    """near_duplicates is restricted to episodic, non-source-derived nodes:
     two source-derived code nodes with identical summaries are NOT flagged (merging
     them is futile — reconcile recreates them), while two authored notes ARE."""
     amg = proj / ".claude" / "amg"
@@ -167,7 +167,7 @@ def test_near_dup_scope(proj):
     assert frozenset(("notes:nd/a", "notes:nd/b")) in pairs, "episodic notes must be flagged"
     assert frozenset(("code:nd/a.py::f", "code:nd/b.py::g")) not in pairs, \
         "source-derived code nodes must NOT be near-dup candidates"
-    print("PASS  near-dup: candidates restricted to episodic non-derived nodes (§1.27)")
+    print("PASS  near-dup: candidates restricted to episodic non-derived nodes")
 
 
 def test_apply_and_recall(proj):
@@ -237,7 +237,7 @@ def test_apply_and_recall(proj):
 
 
 def test_protect_and_force(proj):
-    """A protected type (decision/adr) is not shortened/retired without force (1.11)."""
+    """A protected type (decision/adr) is not shortened/retired without force."""
     amg = proj / ".claude" / "amg"
     store = gs.GraphStore(amg)
     write_node(store, "notes:dec/keep", "notes",
@@ -272,7 +272,7 @@ def test_centrality_protect():
 
 
 def test_enabled_gate(proj):
-    """compaction.enabled:false blocks compression actions and over-budget flagging (1.8)."""
+    """compaction.enabled:false blocks compression actions and over-budget flagging."""
     amg = proj / ".claude" / "amg"
     store = gs.GraphStore(amg)
     cfg_path = amg / "config.yml"
@@ -299,7 +299,7 @@ def test_enabled_gate(proj):
 
 
 def test_shorten_idempotent(proj):
-    """A repeated apply of the same shorten must not overwrite the archived original (1.10)."""
+    """A repeated apply of the same shorten must not overwrite the archived original."""
     amg = proj / ".claude" / "amg"
     store = gs.GraphStore(amg)
     write_node(store, "notes:tmp/orig", "notes",
@@ -357,7 +357,7 @@ def test_merge_quality(proj):
 
 
 def test_subhub_keeps_memberships(proj):
-    """introduce_subhub rewrites only the parent topic; other memberships survive (1.21)."""
+    """introduce_subhub rewrites only the parent topic; other memberships survive."""
     amg = proj / ".claude" / "amg"
     store = gs.GraphStore(amg)
     write_node(store, "notes:sh/member", "notes",
@@ -377,7 +377,7 @@ def test_subhub_keeps_memberships(proj):
 
 def test_consolidation_nodes_schema(proj):
     """summarize_episodes / introduce_subhub nodes match the synthesized canon and
-    land in _hubs (task 7, 2.8 p.5)."""
+    land in _hubs."""
     amg = proj / ".claude" / "amg"
     store = gs.GraphStore(amg)
     for i in (1, 2):
@@ -400,7 +400,7 @@ def test_consolidation_nodes_schema(proj):
 
 
 def test_grounded_inbound():
-    """salience counts an inbound documents/implements/specifies edge as provenance (task 8)."""
+    """salience counts an inbound documents/implements/specifies edge as provenance."""
     cfg = C.DEFAULTS
     node = {"id": "n", "type": "note", "source_kind": "authored", "edges": []}
     s_off = C.salience(node, 0, 1, cfg, grounded_inbound=False)
@@ -411,7 +411,7 @@ def test_grounded_inbound():
 
 def test_branch_downward(proj):
     """A hub reaches its branch via containment edges even when leaf part_of is the
-    directory string (not the hub) — so over_budget is computable on a real graph (1.20)."""
+    directory string (not the hub) — so over_budget is computable on a real graph."""
     amg = proj / ".claude" / "amg"
     store = gs.GraphStore(amg)
     write_node(store, "hub:svc", "_hubs",
@@ -428,7 +428,7 @@ def test_branch_downward(proj):
                     "part_of": [{"topic": "svc", "w": 1.0}]})
     branch = set(C._branch_members(C.load_nodes(store)).get("hub:svc", []))
     assert branch >= {"code:svc/m.py", "code:svc/m.py::f", "code:svc/m.py::g"}, branch
-    print("PASS  branch: hub reaches its branch downward via containment edges (1.20)")
+    print("PASS  branch: hub reaches its branch downward via containment edges")
 
 
 def test_contradiction_plan(proj):

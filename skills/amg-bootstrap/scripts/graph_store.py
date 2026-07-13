@@ -170,7 +170,7 @@ def resolve_amg_root(cli_root: os.PathLike[str] | str | None = None,
     for d in (base, *base.parents):
         if d == home:               # the home agent dir is the config-defaults layer
             continue
-        for adir in (".claude", ".agents"):      # presets first (1.32)
+        for adir in (".claude", ".agents"):      # presets first
             cand = d / adir / "amg"
             if (cand / "config.yml").exists() and not _looks_like_engine_checkout(cand):
                 return cand

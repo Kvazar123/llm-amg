@@ -138,7 +138,7 @@ COMPACTION_ACTIONS = {"summarize_episodes", "merge", "introduce_subhub",
 # (2.8 p.6): a code node that a doc documents is grounded even with no outgoing edge.
 GROUND_RELS = {"documents", "implements", "specifies"}
 
-# "Containment-ish" relations a hub follows DOWNWARD to reach its branch (1.20). A
+# "Containment-ish" relations a hub follows DOWNWARD to reach its branch. A
 # leaf's primary part_of points at a directory STRING (not a node), so the upward
 # part_of walk alone leaves over_budget_branches empty on a real graph; following a
 # hub's own outgoing structural edges (and a module's `defines` to its functions)
@@ -224,7 +224,7 @@ def load_config(amg_root: Path) -> Dict[str, Any]:
             cfg["compaction"].update(raw["compaction"] or {})
         if "eval_gate" in raw:
             cfg["eval_gate"].update(raw["eval_gate"] or {})
-        # plan tunables previously frozen in code (1.17): now overridable from config
+        # plan tunables previously frozen in code: now overridable from config
         for key in ("near_duplicate_sim", "episodic_types", "stale_age_days"):
             if key in raw:
                 cfg[key] = raw[key]
@@ -567,7 +567,7 @@ def _is_protected(node: Optional[Dict[str, Any]], degree: Dict[str, int], max_de
     """A node the compaction layer must not collapse/shorten/retire/archive without
     an explicit force: a protected type (decision/adr) or a node whose normalized
     degree centrality exceeds protect_min_centrality. Enforced in code, not only in
-    the consolidator prompt (1.11)."""
+    the consolidator prompt."""
     if node is None:
         return False
     protect = {str(t).lower() for t in cmp_cfg.get("protect_types", [])}
@@ -592,7 +592,7 @@ def _inbound_grounded(nodes: Dict[str, Dict[str, Any]]) -> Set[str]:
 def _combine_part_of(memberships: List[Dict[str, Any]], renormalize: bool) -> List[Dict[str, Any]]:
     """Combine memberships by topic, keeping the strongest weight per topic, then
     renormalize to the simplex (sum <= 1) when asked. Used when merge folds two
-    nodes' memberships and when introduce_subhub rewrites one topic (1.21)."""
+    nodes' memberships and when introduce_subhub rewrites one topic."""
     out: Dict[str, Dict[str, Any]] = {}
     for p in memberships:
         if not (isinstance(p, dict) and p.get("topic")):
@@ -613,7 +613,7 @@ def _combine_part_of(memberships: List[Dict[str, Any]], renormalize: bool) -> Li
 def _dedup_edges(edges: List[Dict[str, Any]], owner_id: str) -> List[Dict[str, Any]]:
     """Collapse edges by (rel, to): keep the max weight and SUM coact; drop a
     self-edge (to == owner). Applied to a neighbor after redirect_inbound so a node
-    that pointed at both the survivor and a dropped node ends with one edge (1.22)."""
+    that pointed at both the survivor and a dropped node ends with one edge."""
     out: Dict[Tuple[Any, Any], Dict[str, Any]] = {}
     for e in edges:
         if not isinstance(e, dict) or not e.get("to") or e["to"] == owner_id:
@@ -707,7 +707,7 @@ def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, 
     cmp_cfg = cfg["compaction"]
     over_budget = []
     # compaction.enabled is a real switch: when off, no branch is ever flagged
-    # over budget, so the consolidator is never handed compression work (1.8).
+    # over budget, so the consolidator is never handed compression work.
     if cmp_cfg.get("enabled", True):
         for hub, mem in members.items():
             budget = nodes[hub].get("branch_budget", cmp_cfg["default_branch_budget_nodes"])
@@ -725,7 +725,7 @@ def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, 
 
     # near-duplicate candidates (lexical Jaccard over summaries). Restricted to the
     # EPISODIC, non-source-derived nodes that merge_near_duplicates can actually merge
-    # (§1.27): the old all-pairs scan was O(n^2) over the WHOLE graph (~5e7 set
+    # the old all-pairs scan was O(n^2) over the WHOLE graph (~5e7 set
     # comparisons at 10^4 nodes) and could even propose merging two mirror nodes —
     # futile, since reconcile just recreates them. Same filter as episodic_candidates
     # below, so the consolidator only ever sees mergeable pairs. (If a real graph ever
@@ -1033,7 +1033,7 @@ def apply_actions(project_root: Path, actions_path: Path,
         def redirect_inbound(old_ids: Set[str], new_id: str) -> None:
             """Repoint every edge/membership that targets an archived id to the
             survivor, then dedup the neighbor's edges by (rel,to) and drop any
-            self-edge the redirect created (1.22)."""
+            self-edge the redirect created."""
             for n in nodes.values():
                 if n["id"] in old_ids:
                     continue
@@ -1085,12 +1085,12 @@ def apply_actions(project_root: Path, actions_path: Path,
             kind = act.get("action")
             force = bool(act.get("force"))
 
-            # compaction.enabled off blocks every compression action unless forced (1.8)
+            # compaction.enabled off blocks every compression action unless forced
             if kind in COMPACTION_ACTIONS and not enabled and not force:
                 counts["skipped_disabled"] += 1
                 continue
             # protected nodes are never collapsed/shortened/retired/archived without
-            # force — enforced here in code, not only in the consolidator prompt (1.11)
+            # force — enforced here in code, not only in the consolidator prompt
             if not force:
                 if kind in ("shorten", "retire"):
                     guard = [act.get("id")]
@@ -1125,7 +1125,7 @@ def apply_actions(project_root: Path, actions_path: Path,
                 if not n:
                     continue
                 # Save the full original ONCE: a repeated apply must not overwrite
-                # the archived original with the already-shortened version (1.10).
+                # the archived original with the already-shortened version.
                 full_rel = f"{archive_dir}/{Path(n['_path']).name}.full"
                 if not store.abspath(full_rel).exists():
                     tx.write(full_rel, serialize(n, n["_body"]))
@@ -1218,7 +1218,7 @@ def apply_actions(project_root: Path, actions_path: Path,
                     if not mn:
                         continue
                     # rewrite ONLY the parent topic to the sub-hub; keep the member's
-                    # other memberships, renormalized (1.21). If it wasn't under the
+                    # other memberships, renormalized. If it wasn't under the
                     # parent topic, just add the sub-hub membership without erasing.
                     new_po, replaced = [], False
                     for p in (mn.get("part_of") or []):

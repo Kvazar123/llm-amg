@@ -77,7 +77,7 @@ def case_chunk_and_ignore(proj, amg):
     assert not any(u["source_path"].endswith("secret.py") for u in units), \
         "gitignore must still guard normal sources"
     assert any(u["source_path"] == "src/app.py" for u in units), "normal source still ingested"
-    print("PASS  sessions: dumps under the store are chunked (1.18); gitignore still guards normal sources")
+    print("PASS  sessions: dumps under the store are chunked; gitignore still guards normal sources")
 
 
 def case_ingest(proj, amg):

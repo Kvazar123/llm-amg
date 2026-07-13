@@ -370,7 +370,7 @@ def classify(path: Path) -> Tuple[str, str, Optional[str], bool]:
 
 
 # --------------------------------------------------------------------------- #
-# Classifier overrides: amg-classifier's verdict made effective in code (1.13)
+# Classifier overrides: amg-classifier's verdict made effective in code
 # --------------------------------------------------------------------------- #
 
 # Categories an override may assign (the amg-classifier subagent picks one of these).

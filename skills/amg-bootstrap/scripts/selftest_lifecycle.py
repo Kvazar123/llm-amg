@@ -12,7 +12,7 @@ Checks:
                 lock, queue, last pack/consolidation) without reading files by hand.
   6. on/off   : /amg on|off flips `active` in config.yml in place; status reflects it.
   7. heal-note: format_heal_note is silent on a clean heal, summarizes otherwise.
-  8. unclean  : session-start reports a healed stale lock (task 9), then stays silent.
+  8. unclean  : session-start reports a healed stale lock, then stays silent.
   9. hint     : prompt-hint fires only past ALL gates (active+automation, task-shaped
                 prompt, cooldown, pack log absent/stale); a quiet prompt gets nothing.
 

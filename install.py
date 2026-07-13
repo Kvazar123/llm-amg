@@ -463,7 +463,7 @@ def write_config(dest_amg: Path, agent_dir: str, entrypoint: str,
         text = _set_list(text, "exclude", exclude)
     text = _set_scalar(text, "agent_dir", agent_dir)
     text = _set_scalar(text, "entrypoint", entrypoint)
-    if agent_dir != ".claude":               # render the one path-valued default (1.32)
+    if agent_dir != ".claude":               # render the one path-valued default
         text = re.sub(r"(?m)^(\s*cases:\s*)\.claude/",
                       lambda m: m.group(1) + agent_dir + "/", text)
     dest.parent.mkdir(parents=True, exist_ok=True)

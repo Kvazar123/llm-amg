@@ -182,7 +182,7 @@ def _default_store() -> Path:
     """Resolve the graph store when --store is not given. Mirrors graph_store.
     resolve_amg_root (kept dependency-free here): walk upward from cwd, probing the
     agent-dir presets (.claude / .agents) FIRST — so a global engine finds the
-    project's LOCAL graph under any preset environment (1.32) — then a bare amg/,
+    project's LOCAL graph under any preset environment — then a bare amg/,
     accepted only when it is an INITIALIZED store (nodes/ + journal/). A candidate
     carrying the engine signature (skills/, agents/ or install.py inside) is the AMG
     source checkout, never a store; the HOME level is skipped —
@@ -499,7 +499,7 @@ def personalized_pagerank(teleport: Dict[str, float],
 # Intent is recognized by the MODEL — the retriever subagent reads the query in ANY
 # language and passes an explicit flag — and the code only APPLIES it (meaning is the
 # model's job, mechanics the code's; the same split as everywhere in AMG). A history or
-# conflict intent lifts the retired-status downrank (§1.12 exception); a conflict intent
+# conflict intent lifts the retired-status downrank (the deliberate-intent exception); a conflict intent
 # also seeds the conflict subgraph (below). No language-specific keywords live here, so
 # this is language- and environment-universal.
 # --------------------------------------------------------------------------- #
@@ -552,7 +552,7 @@ def _apply_status_prior(activation: Dict[str, float], nodes: Dict[str, Dict[str,
 
     `lift` (set for a history/conflict-intent query) skips the downrank entirely: the
     only sub-1.0 priors are the retired statuses (superseded/disputed/rejected), and the
-    user explicitly asked to see them, so they must not be buried (§1.12 exception)."""
+    user explicitly asked to see them, so they must not be buried."""
     prior = cfg.get("status_prior") or {}
     if not prior or lift:
         return activation
@@ -771,7 +771,7 @@ def retrieve(store_root: os.PathLike[str] | str, query: str,
     # the conflict subgraph: conflict nodes get teleport mass (so PPR flows through the
     # conflict region), still on top of the query seed — a topical conflict query stays
     # topical, a bare one surfaces conflicts broadly. A history/conflict intent lifts the
-    # retired-status downrank below (§1.12 exception).
+    # retired-status downrank below (the deliberate-intent exception).
     flags = {f for f in (intent or []) if f in INTENT_FLAGS}
     if "conflict" in flags:
         cnodes = _conflict_nodes(nodes)

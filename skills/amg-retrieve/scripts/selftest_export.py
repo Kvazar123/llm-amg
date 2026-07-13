@@ -10,7 +10,7 @@ Proves the exporter is a faithful, read-only projection of the graph:
                    retrieve does; rel / w / origin survive.
   3. part_of     : membership in a real hub node becomes a part_of link; membership in
                    a directory string does NOT (it is the node's cluster `group`).
-  4. stage14     : disputed / rejected / superseded statuses and contradicts /
+  4. verdicts    : disputed / rejected / superseded statuses and contradicts /
                    supersedes links ride along for the viewer to surface.
   5. read-only   : nodes/ is byte-for-byte unchanged after an export; the only write is
                    the output JSON (under cache/).
@@ -185,7 +185,7 @@ def test_part_of_hub_vs_directory(root: Path) -> None:
     print("PASS  part_of: hub membership is a link; a directory topic is only a group")
 
 
-def test_stage14_statuses_and_conflict_edges(root: Path) -> None:
+def test_verdict_statuses_and_conflict_edges(root: Path) -> None:
     data = E.build_graph_data(root)
     nodes = _by_id(data)
     links = _links(data)
@@ -201,7 +201,7 @@ def test_stage14_statuses_and_conflict_edges(root: Path) -> None:
     assert data["meta"]["statuses"].get("disputed") == 2
     assert data["meta"]["rels"].get("contradicts") == 1
     assert set(data["meta"]["buckets"]) == {"code", "doc", "notes", "_hubs"}
-    print("PASS  stage14: disputed/rejected/superseded + contradicts/supersedes exported")
+    print("PASS  verdicts: disputed/rejected/superseded + contradicts/supersedes exported")
 
 
 def test_viewer_config_in_meta(root: Path) -> None:
@@ -294,7 +294,7 @@ def main() -> int:
         test_shape_and_full_frontmatter(root)
         test_links_and_dangling(root)
         test_part_of_hub_vs_directory(root)
-        test_stage14_statuses_and_conflict_edges(root)
+        test_verdict_statuses_and_conflict_edges(root)
         test_viewer_config_in_meta(root)
         test_read_only(root)
         test_html_self_contained(root)

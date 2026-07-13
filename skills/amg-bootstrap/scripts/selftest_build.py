@@ -27,15 +27,15 @@ Proves, without a single model call:
                   similarity (the lexical fallback path — no embedding backend
                   needed), skips already-linked pairs and stale nodes, batches
                   deterministically with the hub list attached, and --hubs writes
-                  stable directory-anchored hub suggestions (audits 1.45/1.46).
+                  stable directory-anchored hub suggestions.
   7. batch door : apply-derived consumes every work/derived-*.json (checkpoint
                   parts included) in ONE call with one aggregated result, moves the
                   consumed files to work/applied/ and quarantines a torn (invalid
                   JSON) part in work/invalid/; a re-run is a cheap no-op — the
-                  resume path (audit 1.56).
+                  resume path (the batched apply door).
   8. synth sheet: --synth-input writes the whole summary layer as one grouped file
                   (with the deterministic gap material), so the synthesis agent
-                  reads a single input instead of scanning nodes/ (audit 1.55).
+                  reads a single input instead of scanning nodes/.
 
 The fixture is hermetic: config.yml is mandatory (extraction exits without one)
 and the `agent_dir` key is deliberately ABSENT so the machine's global defaults

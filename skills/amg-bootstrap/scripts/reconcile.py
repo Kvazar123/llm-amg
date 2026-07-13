@@ -1342,7 +1342,7 @@ def _apply_items(project_root: Path, items: List[Dict[str, Any]],
         item plus a supersedes-edge item); each accumulates onto it. If content_sha is
         present and no longer equals the node's source_hash (the source changed since
         the item was derived), the item is SKIPPED (skipped_stale) — resumable
-        derivation never applies a summary built against stale content (task 13).
+        derivation never applies a summary built against stale content.
       * create : {id, type, summary?, lang?, part_of?, edges?, body?} -> when no node
         with that id exists, CREATE it. This is how amg-synth materializes hub /
         overview nodes. Created with source_kind 'synthesized' (not derived_from_file)
@@ -1403,7 +1403,7 @@ def _apply_items(project_root: Path, items: List[Dict[str, Any]],
             # cache stays a faithful record of what the model said (cleaned).
             cache_copy = (json.loads(json.dumps(item))
                           if cache_enabled and item.get("content_sha") else None)
-            if item.get("edges"):            # bind targets to canonical ids (1.42)
+            if item.get("edges"):            # bind targets to canonical ids
                 item["edges"] = _normalize_edges(item["edges"], known, sfx)
             try:
                 node = nodes.get(item["id"])
@@ -1433,7 +1433,7 @@ def _apply_items(project_root: Path, items: List[Dict[str, Any]],
                     else:
                         skipped += 1                          # update for an unknown id
                     continue
-                # Resumable derivation (task 13): a derived item echoes the content_sha it was
+                # Resumable derivation: a derived item echoes the content_sha it was
                 # built from. If the source changed since (the node's source_hash moved on),
                 # applying it would attach a summary for STALE content AND mark the node derived
                 # for the NEW hash — a blind stale derivation. Skip it; the node stays stale and
@@ -1470,14 +1470,14 @@ def _apply_items(project_root: Path, items: List[Dict[str, Any]],
                 meta = {k: v for k, v in node.items() if not k.startswith("_")}
                 tx.write(node["_path"], serialize_node(meta, node.get("_body", "")))
                 applied += 1
-                if cache_copy is not None:     # applied update item -> persist (1.46)
+                if cache_copy is not None:     # applied update item -> persist
                     cache_items.setdefault(cache_copy["content_sha"], []).append(cache_copy)
-            except Exception as exc:         # one bad item must not sink the batch (1.43)
+            except Exception as exc:         # one bad item must not sink the batch
                 _note_invalid(f"{item.get('id')}: {type(exc).__name__}: {exc}")
         txid = tx.commit()
         if txid:
             _refresh_index(store.root, tx)     # warm the read-index under the lock
-            store.append_log(                  # transactional audit line (1.15)
+            store.append_log(                  # transactional audit line
                 "reconcile",
                 f"apply: applied={applied} created={created} skipped={skipped} "
                 f"invalid={skipped_invalid}", txid)

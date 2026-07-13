@@ -425,7 +425,7 @@ def case_root_resolution(proj: Path) -> None:
     # 3. config search upward from inside the project finds .claude/amg
     assert gs.resolve_amg_root(start=proj / "src" / "core") == \
         (proj / ".claude" / "amg").resolve()
-    # 3b. the .agents preset is probed too (1.32): a non-.claude project resolves
+    # 3b. the .agents preset is probed too: a non-.claude project resolves
     ag = Path(tempfile.mkdtemp(prefix="amg-agents-"))
     try:
         (ag / ".agents" / "amg").mkdir(parents=True)
@@ -593,7 +593,7 @@ def case_absorb_once() -> None:
 
 
 def case_resume_freshness() -> None:
-    """Resumable derivation (task 13): a derived item echoes content_sha; apply skips it
+    """Resumable derivation: a derived item echoes content_sha; apply skips it
     when the source has changed since (the node's source_hash moved on), so a leftover
     derived-*.json never blindly derives against stale content. An item with NO
     content_sha still applies (back-compat / synthesized hub items)."""
@@ -645,7 +645,7 @@ def case_resume_freshness() -> None:
             [{"id": nid, "summary": "v3 no sha"}]), encoding="utf-8")
         r = RC.apply_derivation(proj, work / "d3.json", amg)
         assert r["applied"] == 1 and r["skipped_stale"] == 0, r
-        print("PASS  resume: stale-sha item skipped; current-sha applies; no-sha back-compat (task 13)")
+        print("PASS  resume: stale-sha item skipped; current-sha applies; no-sha back-compat")
     finally:
         shutil.rmtree(proj, ignore_errors=True)
 
