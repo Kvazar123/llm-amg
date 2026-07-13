@@ -60,7 +60,7 @@ Each module's purpose and command-line interface (details in the per-module docu
 | Read index | `index_store.py` | a generated SQLite cache under `load_nodes` (automatic, disposable, rebuildable) | — (internal) |
 | Verification | `verify_claims.py` | checking a code claim against the live source (file/symbol/hash) before answering; read-only, optional `--write` | `<id>` · `--store` · `--write` |
 | Consolidation | `consolidate.py` | weight folding, salience, branch compaction, digest generation | `weights` · `plan` · `digest` · `apply` |
-| Lifecycle | `lifecycle.py` | a thin orchestrator: session hook entry points (recovery, weight folding, digest, transcript dump) and the `/amg` control operations; duplicates no graph logic — it calls `graph_store` and `consolidate` | `session-start` · `session-end` · `status` · `on` · `off` · `repair` |
+| Lifecycle | `lifecycle.py` | a thin orchestrator: session hook entry points (recovery, weight folding, digest, transcript dump, the gated mid-session reminder) and the `/amg` control operations; duplicates no graph logic — it calls `graph_store` and `consolidate` | `session-start` · `session-end` · `prompt-hint` · `status` · `on` · `off` · `repair` |
 | Schema migration | `migrate_schema.py` | a one-shot pass that brings an old graph to the current schema canon (`source_kind`, grammar-level `type` values, edge `origin`, trust-layer fields) | `[<root>]` |
 | Evaluation | `eval_retrieval.py` | recall / precision / hop-recall against a lexical baseline | `--make-demo` · `--cases` |
 | Benchmark | `bench.py` | speed at scale: scan vs index, `retrieve`/`eval`/bootstrap | `--make-bench` · `--store` |
@@ -118,11 +118,13 @@ The subagent roles (full prompts and instructions — [Subagents and skills](./0
 | Subagent | Model | Tools | Role |
 |---|---|---|---|
 | `amg-classifier` | haiku | Read, Grep, Glob | assigns a type to files the deterministic classifier flagged as ambiguous |
-| `amg-builder` | sonnet | Read, Grep, Glob, Bash | from a batch of queued units, writes a summary and meaning-bearing edges → `derived-*.json` |
-| `amg-synth` | opus | Read, Grep, Glob, Bash | builds the top level (hubs from deterministic anchors, strategic-layer edges, weighted multi-membership) and the gap report |
-| `amg-linker` | sonnet | Read, Grep, Glob, Bash | global linking after synthesis: confirms cross-domain candidates in batches, in parallel |
+| `amg-builder` | sonnet | Read, Grep, Glob, Bash, Write | from a batch of queued units, writes a summary and meaning-bearing edges → `derived-*.json` |
+| `amg-synth` | opus | Read, Grep, Glob, Bash, Write | builds the top level (hubs from deterministic anchors, strategic-layer edges, weighted multi-membership) and the gap report |
+| `amg-linker` | sonnet | Read, Grep, Glob, Bash, Write | global linking after synthesis: confirms cross-domain candidates in batches, in parallel |
 | `amg-retriever` | haiku | Read, Grep, Glob, Bash | assembles the pack (read-only), returns its location and a short summary |
-| `amg-consolidator` | opus | Read, Grep, Glob, Bash | decides what to promote, merge, summarize, group under a sub-hub, shorten, or retire → an actions JSON |
+| `amg-consolidator` | opus | Read, Grep, Glob, Bash, Write | decides what to promote, merge, summarize, group under a sub-hub, shorten, or retire → an actions JSON |
+
+The workers' `Write` is scoped by their prompts to their **own artifacts** under `work/` (checkpoint parts, the gap report, the actions file) — sources and node files stay read-only; the tool exists because writing JSON through a bash heredoc tears on quotes and apostrophes in real summaries.
 
 ## Data flows
 

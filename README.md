@@ -58,7 +58,7 @@ flowchart LR
 
 Memory is tuned cautiously, in a "quality first" spirit:
 
-- **Hebbian weight learning is off** (`weights.apply_hebbian: false`). The blind reinforcement rule **hurt** recall on a large sparse graph (reinforced links become "highways" that pull activation away from multi-hop nodes); the improved rule — reinforcing by the **real task outcome** rather than mere co-display — raises recall on that sparse rig, while on a real, densely linked project graph a field measurement over genuinely accumulated usage moved nothing in either direction: on a well-connected graph the seed decides and the weights are inert. So the flip is harmless but pays off only on sparse, multi-hop-heavy graphs — and the default stays off. When to enable — see the [guide](docs/en/GUIDE.md); details — [theory, §8](docs/en/THEORY.md).
+- **Hebbian weight learning is off** (`weights.apply_hebbian: false`). When enabled, the memory gradually strengthens the links that actually helped you in working sessions and lets the ones that merely flashed by in the output fade — so on a large, sparsely linked graph, where an answer is assembled across several links, the needed nodes surface more reliably over time. It is off by default because on a typical well-connected project graph enabling it measurably changes nothing: the query itself finds the right neighborhood and the weights stay inert, so the default keeps link strengths static and predictable. Enabling is safe and spends no extra model tokens — the weights are folded by a script at session end, with no model involved. When to enable — see the [guide](docs/en/GUIDE.md); details — [theory, §8](docs/en/THEORY.md).
 - **Compaction is idle by default** — it compresses nothing while a branch is within budget; when it does compress, it passes an automatic recall check (an eval guard measures recall on a graph clone before and after and rejects a drop) and archives the originals.
 - **Embeddings are optional, light enrichment** over BM25, not a replacement; with no backend installed, retrieval stays purely lexical.
 - **Semantic enrichment is eager** (`derivation: eager`): summaries and semantic edges are built for every node right at build time, so the memory is complete from the first query. The lazy mode (`lazy`) — build only the structural map up front and finish detail on first touch — exists as an explicit choice for very large graphs queried in small part; on an ordinary project it buys nothing (see the [guide](docs/en/GUIDE.md)).
@@ -166,7 +166,7 @@ The automatic dump relies on Claude Code's hook and transcript format; in an env
 
 How much memory does on its own is set by the `automation` key in the config (on by default):
 
-- **automatic mode** (`automation: true`) — memory runs itself: the `SessionStart`/`SessionEnd` hooks (a Claude Code mechanism) deterministically heal the graph after crashes, fold weights, and dump the session transcript, while the model's loop gathers context before each task, files conclusions along the way, and runs consolidation at the end;
+- **automatic mode** (`automation: true`) — memory runs itself: the session hooks (a Claude Code mechanism) deterministically heal the graph after crashes, fold weights, dump the session transcript, and nudge with one gated line when the memory goes unconsulted mid-session, while the model's loop gathers context before each task, files conclusions along the way, and runs consolidation at the end;
 - **manual mode** (`automation: false`) — memory does nothing on its own, only on a command or an explicit request.
 
 Who starts which operation, and when (note: hooks do only the deterministic steps — a hook cannot spawn a subagent):
@@ -201,7 +201,7 @@ Control verbs (`status`/`on`/`off`/`repair`) are run by a helper script; work ve
 
 **A digest in every session.** The loop's main failure is "the memory exists but was never consulted." So consolidation keeps a small `digest.md` next to the entry point — 5–10 of the most salient decisions and open questions — loaded into **every** session: the essentials are visible at once, before the first retrieval.
 
-> The `SessionStart`/`SessionEnd` hooks, the `/amg` slash command, and the digest `@`-import are Claude Code mechanisms; in other environments what gets deployed depends on the `--env` chosen at install (Codex / generic) — see "Installation", "Other environments."
+> The `SessionStart`/`SessionEnd`/`UserPromptSubmit` hooks, the `/amg` slash command, and the digest `@`-import are Claude Code mechanisms; in other environments what gets deployed depends on the `--env` chosen at install (Codex / generic) — see "Installation", "Other environments."
 
 ## 3D graph viewer
 
