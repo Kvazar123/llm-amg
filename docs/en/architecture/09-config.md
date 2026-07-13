@@ -161,6 +161,7 @@ The spreading-activation parameters (the mechanics — [Retrieval](./06-retrieva
 | `retrieval.token_budget.tactical` | 10000 | the modules tier budget |
 | `retrieval.token_budget.operational` | 24000 | the budget of the code-pointer and in-focus document/note-body tier |
 | `retrieval.token_budget.periphery_links` | 60 | the cap on periphery links |
+| — | — | the budgets count **tokens honestly for any script**: the estimator prices ASCII at ~4 chars/token, other alphabets (Cyrillic, …) at ~2.2, CJK at ~1.5 — so a non-English pack fills the same budgets with proportionally fewer characters instead of silently overflowing them |
 | `retrieval.relation_priors` | a dictionary | the conductance prior `β` by edge type: `documents`/`implements`/`specifies` 0.9, `calls`/`depends_on`/`inherits` 0.8, `defines`/`part_of` 0.7, `imports`/`refines`/`exemplifies` 0.6, `relates_to` 0.5, `follows` 0.4 (chat-turn adjacency — weaker than semantic links), `supersedes`/`contradicts` 0.3 |
 | `retrieval.relation_prior_default` | 0.5 | the prior for types not listed above |
 | `retrieval.status_prior` | a dictionary | the final-activation multiplier by node status: `active`/`stale` 1.0, `superseded` 0.2, `disputed` 0.5, `rejected` 0.1 (arbitration verdicts); `stale` is not penalized but flagged in the pack; a query with `--intent history|conflict` lifts the retired-status demotion (see [Retrieval](./06-retrieval.md)) |
@@ -215,12 +216,12 @@ The guard that keeps compaction from silently degrading retrieval: before applyi
 | Key | Value | Meaning |
 |---|---|---|
 | `eval_gate.enabled` | `true` | enable the check; with `false` compaction applies unmeasured |
-| `eval_gate.cases` | `.claude/skills/amg-retrieve/evals/cases.json` | the labeled-cases file (`{id, query, gold_ids}`); an absolute path or relative to the project root |
+| `eval_gate.cases` | `.claude/amg/evals/cases.json` | the labeled-cases file (`{id, query, gold_ids}`); an absolute path or relative to the project root. It lives **under the store** on purpose: an engine reinstall replaces the skills tree wholesale and would wipe labels kept there, while the store is never touched |
 | `eval_gate.min_recall_delta` | −0.02 | the allowed `pack_recall` drop (the "after − before" delta; below → fail) |
 | `eval_gate.min_hop_recall_delta` | −0.02 | the allowed `hop_recall` drop |
 | `eval_gate.on_fail` | `reject` | the failure reaction: `reject` (do not commit), `warn` (commit + record the drop), `revert` (≡ `reject` — the measurement happens before the commit, so there is nothing to roll back) |
 
-**Robust by default.** If the `cases` file is absent, empty, or none of its `gold_ids` exist in the graph, the check is **skipped** (`status: skipped`) — compaction is never falsely blocked. The shipped `evals/cases.json` is a neutral template (its `gold_ids` do not resolve), so in an unlabeled install the guard is safely inactive. To turn it on, label your own cases (ids from `inspect_graph.py`) and point `eval_gate.cases` at them.
+**Robust by default.** If the `cases` file is absent, empty, or none of its `gold_ids` exist in the graph, the check is **skipped** (`status: skipped`) — compaction is never falsely blocked. On a fresh install the default path simply does not exist yet, so the guard is safely inactive. To turn it on, label your own cases (ids from `inspect_graph.py`) and write the file at the default path under the store.
 
 ## Provenance and verification (`verification`)
 
