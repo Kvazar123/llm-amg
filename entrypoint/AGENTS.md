@@ -77,11 +77,19 @@ There are no hooks here, so **you** run each step at the right moment.
    ```
    Judge each `work/link-batch-*.json` yourself following `.claude/agents/amg-linker.md`
    (confirm only real relations; similarity merely nominates), write the update items to
-   `.claude/amg/work/derived-links-<n>.json`, apply them the same way, and check the
+   `.claude/amg/work/derived-links-<n>.json`, apply them the same way, and repeat the
+   `link_candidates.py` run until it emits no new batches — fully judged batches retire
+   into `work/judged/` and are never re-nominated, so the pass converges. Then check the
    result — `python .claude/skills/amg-bootstrap/scripts/reconcile.py metrics .` should
-   report one dominant component (`gate: ok`). Building from empty and reconciling are
-   the same operation — crash-safe and idempotent, so re-running never duplicates or
-   loses anything.
+   report one dominant component (`gate: ok`) — and stamp verification in one
+   deterministic sweep (seconds, no model; a fresh summary matches its source by
+   construction, so the `unverified` flag goes back to meaning "changed since the last
+   sweep"):
+   ```
+   python .claude/skills/amg-retrieve/scripts/verify_claims.py --all --write --store .claude/amg
+   ```
+   Building from empty and reconciling are the same operation — crash-safe and
+   idempotent, so re-running never duplicates or loses anything.
 
 2. **The graph is the primary context source — retrieve before you work.** Everything
    the graph can give, take from the graph FIRST; only then decide what is left to look
@@ -90,12 +98,15 @@ There are no hooks here, so **you** run each step at the right moment.
    ```
    python .claude/skills/amg-retrieve/scripts/retrieve.py "<query>" --store .claude/amg
    ```
-   Read the written pack at `.claude/amg/cache/pack.md`. Add `--compact` for a
-   targeted pointer lookup ("where is X") — pointer lines instead of unfolded
-   bodies at a fraction of the size; entering an unfamiliar topic keeps the full
-   profile. No mechanism nudges you mid-session here (in Claude Code a gated
-   prompt hook reminds when the memory goes unconsulted) — this retrieval
-   discipline rests on you alone. The protocol:
+   Read the written pack at `.claude/amg/cache/pack.md`. Add `--intent
+   history|conflict` for a question about the past or about contradictions (you
+   classify the intent from meaning, in any language — it surfaces the normally
+   demoted retired/disputed nodes), and `--compact` for a targeted pointer lookup
+   ("where is X") — pointer lines instead of unfolded bodies at a fraction of the
+   size; entering an unfamiliar topic keeps the full profile. No mechanism nudges
+   you mid-session here (in Claude Code a gated prompt hook reminds when the
+   memory goes unconsulted) — this retrieval discipline rests on you alone. The
+   protocol:
    - **Decompose a complex prompt**: a request with several distinct topics gets a
      separate retrieval per topic, run as you turn to that part — the retrieved
      branches together form the task's context.
@@ -112,6 +123,13 @@ There are no hooks here, so **you** run each step at the right moment.
    pack adds nothing; the graph is for entering the unfamiliar. Skip the retrieval
    and start; the protocol resumes the moment the task reaches beyond what the
    prompt already gave.
+   The pack is memory, not ground truth: before you state a code fact from it —
+   especially a node flagged `⟨stale / unverified / contradicted / low confidence⟩` —
+   confirm it against the live source (read-only; on any conflict the current
+   source wins):
+   ```
+   python .claude/skills/amg-retrieve/scripts/verify_claims.py <id> --store .claude/amg
+   ```
    For code the pack gives `path:line` pointers — edit the real file; the graph is not
    a copy of the code.
 

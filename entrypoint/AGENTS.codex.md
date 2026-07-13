@@ -104,7 +104,11 @@ There are no SessionStart/SessionEnd hooks here, so **you** run each step at the
    nothing; the graph is for entering the unfamiliar. Skip the retrieval and start;
    the protocol resumes the moment the task reaches beyond what the prompt gave. For
    code the pack gives `path:line` pointers — edit the real file; the graph is not a
-   copy of the code.
+   copy of the code. The pack is memory, not ground truth: before stating a code
+   fact from it — especially a node flagged `⟨stale / unverified / contradicted /
+   low confidence⟩` — confirm it against the live source with
+   `python .claude/skills/amg-retrieve/scripts/verify_claims.py <id> --store .claude/amg`
+   (read-only; on any conflict the current source wins).
 
 3. **Capture as you go; consolidate at the end.** Capture decisions, conclusions, open
    questions, and forward-looking plans with the safe note API — do NOT hand-edit `nodes/`:
