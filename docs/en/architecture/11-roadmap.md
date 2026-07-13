@@ -1,6 +1,6 @@
 # 11 — Roadmap
 
-> **This is an English snapshot, taken at the v1.12.0 release (the close of Stage 21).**
+> **This is an English snapshot, taken at the v1.13.0 release (the close of Stage 22).**
 > The roadmap is a **living working document**, and its source of truth is maintained in
 > Russian: [`docs/ru/architecture/11-roadmap.md`](../../ru/architecture/11-roadmap.md).
 > Translating it in full would duplicate every per-session edit, so this English page is a
@@ -20,14 +20,14 @@ The roadmap records what is already implemented in AMG, which mismatches an audi
 
 The Russian roadmap is organized as a preamble (what is already implemented; the legacy-stage ledger) plus eight sections:
 
-- **Section 1** — the audit: known defects in code, prompts, and architecture (items 1.1–1.54). As of this snapshot, **no open items remain** — each has been fixed at its stage and collapsed to a one-line "fixed at Stage N; rationale → <doc section / code>".
+- **Section 1** — the audit: known defects in code, prompts, and architecture (items 1.1–1.76). As of this snapshot, **no open items remain** — each has been fixed at its stage and collapsed to a one-line "fixed at Stage N; rationale → <doc section / code>".
 - **Section 2** — the registry of documentation checkpoints: each item closes at the stage that implements its mechanism, when the forward-written place is reconciled against the finished code.
 - **Section 3** — language, terminology, and diagram rules (the anglicism/calque rules, the term table, the "write for humans" readability rule §3.4). These apply mirrored in both translation directions.
 - **Section 4** — the architectural decisions adopted from the audit; the ones referenced from the documentation include §4.1 (markdown canon vs. the generated SQLite index), §4.2 (deterministic edges before the LLM), §4.6 (semantic-drift segmentation, measured and declined), §4.9 (engine portability: the agent directory and entry point as parameters), and §4.10 (lazy / on-demand semantic derivation).
 - **Section 5** — the work stages, each with its tasks and Definition of done.
 - **Section 6** — the execution order.
 - **Section 7** — the Definition of done for the whole roadmap.
-- **Section 8** — possible future directions (ideas, deliberately not stages) with the rationale for rejected ones — for example, cross-repository shared memory (§8.1), considered and rejected.
+- **Section 8** — possible future directions (ideas, deliberately not stages) with the rationale for rejected ones — for example, cross-repository shared memory (§8.1) and "smart" scalar pack cutoffs (§8.5), both considered and rejected with their rationale.
 
 ## The stages
 
@@ -56,10 +56,11 @@ The stabilization stages run before the new features: first bring the current pi
 | 18 | Deployment and store resolution | done (v1.9.0) |
 | 19 | Correct and connected graph building | done (v1.10.0) |
 | 20 | Economical building (tokens and time) | done (v1.11.0) |
-| **21** | **Documentation translation into English** | **this snapshot (v1.12.0)** |
-| 22 | Testing in non-Claude-Code environments | ahead |
+| 21 | Documentation translation into English | done (v1.12.0) |
+| **22** | **Field reliability: the residual build cost and the memory-usage loop** | **this snapshot (v1.13.0)** |
+| 23 | Testing in non-Claude-Code environments | ahead |
 
-Stages 18–20 are a prerequisite for the final translation and environment verification: without a reliable, cheap build there is neither a clean real graph nor a real `usage.log`. Stage 21 (this document set's translation) precedes Stage 22, where the memory's operation is confirmed in environments other than Claude Code (Codex with skills and TOML subagents; other AGENTS.md agents via the portable skill-less block).
+Stages 18–20 and the field Stage 22 are a prerequisite for environment verification: without a reliable, cheap build and a working usage loop there is neither a clean real graph nor a real `usage.log`. Stage 22 closed on four field runs (two installs, an incremental rebuild, fifteen working sessions on a real ~1 MB project): batched application and prepared global-pass inputs, linker checkpoint parts with a judged-pairs memory (the linking pass converges), the scale-free relative pack threshold, the imperative usage loop with the start-of-session diff question and the wrap-up consolidation trigger, two-level retrieval (the direct call is the default), the compact pointer profile (`--compact`), and the gated mid-session reminder (`prompt-hint`). Next is Stage 23, where the memory's operation is confirmed in environments other than Claude Code (Codex with skills and TOML subagents; other AGENTS.md agents via the portable skill-less block).
 
 ## Definition of done for the whole roadmap
 
