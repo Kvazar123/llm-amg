@@ -623,6 +623,14 @@ def _toklen(text: str) -> int:
 
 def assemble_pack(activation: Dict[str, float], nodes: Dict[str, Dict[str, Any]], cfg: Dict[str, Any]
                   ) -> Tuple[str, Dict[str, List[str]]]:
+    """Greedy tiered assembly under the token budgets. The budgets are the size
+    lever, deliberately the only one: an adaptive stop by accumulated activation
+    mass was measured on a real field graph and rejected — PPR mass is spread over
+    the whole connected graph (it sums to 1 across ALL nodes), so the ranked prefix
+    never concentrates enough for a mass cutoff to separate signal from tail
+    (shrink x1.01 at mass_stop 0.9); a Jaccard near-duplicate guard likewise moved
+    nothing (near-dup curation belongs to consolidation). Raising the relative
+    activation threshold trims the pack only where it starts costing recall."""
     thr = cfg["activation_threshold"]
     budget = cfg["token_budget"]
     ranked = sorted((nid for nid, a in activation.items() if a >= thr),
