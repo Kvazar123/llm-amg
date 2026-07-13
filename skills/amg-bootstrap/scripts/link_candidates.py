@@ -30,7 +30,11 @@ Reads the summary layer through retrieve.load_nodes (the SQLite read-index — n
 nodes/*.md rescan). Read-only over the graph; writes only work/ files. Stale
 (not-yet-derived) nodes are skipped: they have no summary to link by — under lazy
 derivation they join the pass as they are derived, so the pass is incrementally
-re-runnable (already-linked pairs are never re-nominated).
+re-runnable. Convergence rests on two memories: already-LINKED pairs (edges in the
+graph) are never re-nominated, and already-JUDGED pairs — link batches whose every
+node the linker ruled on, retired by apply-derived into work/judged/ — are not
+re-proposed either, so repeated passes reach zero new batches instead of sliding
+down the similarity ranking to re-reject the same candidates forever.
 
 CLI:
   python link_candidates.py [<project_root>] [--root <agent_dir>]
@@ -94,6 +98,37 @@ def _linked_pairs(nodes: Dict[str, Dict[str, Any]]) -> Set[frozenset[str]]:
         for e in n.get("edges") or []:
             if isinstance(e, dict) and e.get("to") in nodes:
                 out.add(frozenset((nid, str(e["to"]))))
+    return out
+
+
+def _judged_pairs(work: Path) -> Set[frozenset[str]]:
+    """Unordered pairs a linker has already RULED ON — confirmed or rejected.
+
+    Graph edges remember only the confirmed half; without a memory of rejections the
+    nomination pass cannot converge — similarity re-proposes the very pairs a linker
+    just rejected, wave after wave, sliding down the ranking to ever-weaker
+    candidates. The memory is the judged batches themselves: apply-derived moves a
+    fully covered work/link-batch-*.json into work/judged/ (coverage proven by the
+    parts' judged records), and every (node, candidate) pair of a batch that lives
+    there counts as ruled on. Re-opening judgments is as simple as deleting files
+    from work/judged/ (it is bookkeeping, like every other work/ artifact); a pair
+    whose node leaves the graph expires naturally (nomination needs both ends)."""
+    out: Set[frozenset[str]] = set()
+    judged_dir = work / "judged"
+    if not judged_dir.exists():
+        return out
+    for f in sorted(judged_dir.glob("link-batch-*.json")):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for entry in data.get("nodes", []) if isinstance(data, dict) else []:
+            nid = entry.get("id") if isinstance(entry, dict) else None
+            if not nid:
+                continue
+            for cand in entry.get("candidates") or []:
+                if isinstance(cand, dict) and cand.get("id"):
+                    out.add(frozenset((str(nid), str(cand["id"]))))
     return out
 
 
@@ -197,7 +232,9 @@ def build_batches(project_root: Path, amg_root: Path,
 
     nodes = rt.load_nodes(amg_root)
     eligible = _eligible(nodes)
-    linked = _linked_pairs(nodes)
+    # Never re-nominate what is linked (confirmed) OR judged (ruled on either way):
+    # the judged half is what lets "repeat until zero batches" actually terminate.
+    linked = _linked_pairs(nodes) | _judged_pairs(amg_root / "work")
     order = sorted(eligible)                  # deterministic nomination order
 
     mode = "lexical"

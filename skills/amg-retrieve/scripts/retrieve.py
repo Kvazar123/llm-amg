@@ -601,8 +601,24 @@ def _explain_inflow(ppr: Dict[str, float], adj: Dict[str, List[Tuple[str, float]
 # Pack assembly (budgeted, tiered)
 # --------------------------------------------------------------------------- #
 
+# Script bands for the token estimate. BPE tokenizers spend ~4 chars/token on ASCII
+# text but only ~2.2 on non-Latin alphabetic scripts (Cyrillic, Greek, Arabic, ...)
+# and ~1.5 on CJK, so a flat len//4 undercounts non-English text by ~1.5-2x — and every
+# token budget computed with it silently overflows on a non-English graph.
+_NON_ASCII_RE = re.compile(r"[^\x00-\x7F]")
+# CJK ideographs, kana, and hangul - the ~1.5 chars/token band.
+_CJK_RE = re.compile("[⺀-鿿぀-ヿ가-힯豈-﫿]")
+
+
 def _toklen(text: str) -> int:
-    return max(1, len(text) // 4)         # cheap token estimate (~4 chars/token)
+    """Cheap token estimate, honest across scripts (ASCII ~4 chars/token,
+    other alphabets ~2.2, CJK ~1.5). Pure ASCII takes the fast path unchanged."""
+    non_ascii = _NON_ASCII_RE.findall(text)
+    if not non_ascii:
+        return max(1, len(text) // 4)
+    cjk = sum(1 for ch in non_ascii if _CJK_RE.match(ch))
+    ascii_n = len(text) - len(non_ascii)
+    return max(1, int(ascii_n / 4 + (len(non_ascii) - cjk) / 2.2 + cjk / 1.5))
 
 
 def assemble_pack(activation: Dict[str, float], nodes: Dict[str, Dict[str, Any]], cfg: Dict[str, Any]

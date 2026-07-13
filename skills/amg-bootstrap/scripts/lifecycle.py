@@ -413,6 +413,12 @@ def session_start(project_root: Path, amg: Path) -> Dict[str, Any]:
         cnote = (f"{len(conflicts)} node file(s) carry unresolved git merge markers — the "
                  "graph skips them; resolve the conflicts and re-run the bootstrap.")
         note = f"{note} {cnote}" if note else cnote
+    # Judgment-consolidation nudge: the deterministic folds run themselves, the
+    # judged pass has no event of its own — this line is its mechanical trigger.
+    knote = _consolidation_note(_consolidation_state(amg))
+    if knote:
+        out["consolidation_note"] = knote
+        note = f"{note} {knote}" if note else knote
     if note:
         out["note"] = note
     return out
@@ -504,22 +510,65 @@ def _queue_size(amg: Path) -> Optional[int]:
         return None
 
 
-def _last_consolidation(amg: Path) -> Optional[str]:
-    """The most recent consolidation line from the best-effort action log
-    (actions.log; a graph last written before the rename still has log.md)."""
+# How many deterministic weight folds (one per session end) may pass without a
+# judgment consolidation before the loop starts warning. The deterministic half runs
+# itself; the judgment half (promote / merge / compact / arbitrate) needs the model,
+# has no event of its own, and silently lapses without a nudge — so the nudge is
+# mechanical: one line at session start (and in status), gone once the pass runs.
+_JUDGED_LAG_WARN = 3
+
+
+def _consolidation_state(amg: Path) -> Dict[str, Any]:
+    """Read the consolidation history out of the action log — cheap line arithmetic,
+    no node loading. Distinguishes the two halves by their log messages: the
+    deterministic weight fold writes `weights folded`, the judgment pass writes
+    `consolidation applied`. Returns last lines of each kind, the count of folds
+    since the last judged pass, and whether an unapplied plan/actions file sits in
+    work/ (written after the last judged pass — an interrupted judge run)."""
+    out: Dict[str, Any] = {"last": None, "last_judged": None, "folds_since_judged": 0,
+                           "leftover": []}
     log = amg / "actions.log"
     if not log.exists():
         log = amg / "log.md"                 # legacy name, adopted on the next write
-    if not log.exists():
+    judged_ts: Optional[str] = None
+    if log.exists():
+        try:
+            for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+                if " consolidate |" not in line:
+                    continue
+                out["last"] = line.strip()
+                if "consolidation applied" in line:
+                    out["last_judged"] = line.strip()
+                    out["folds_since_judged"] = 0
+                    judged_ts = line.strip()[1:20]        # "[YYYY-MM-DDThh:mm:ss]"
+                elif "weights folded" in line:
+                    out["folds_since_judged"] += 1
+        except OSError:
+            pass
+    for name in ("consolidation-plan.json", "actions.json"):
+        f = amg / "work" / name
+        if f.exists() and (judged_ts is None or (_mtime(f) or "") > judged_ts):
+            out["leftover"].append(name)     # written after the last judged pass
+    return out
+
+
+def _consolidation_note(state: Dict[str, Any]) -> Optional[str]:
+    """The one-line judgment-consolidation nudge, or None while nothing is overdue.
+    One wording for every environment: the SessionStart hook prints it in Claude
+    Code, and `status` carries it where there are no hooks (Codex / generic — the
+    activation block's start-of-session routine reads status)."""
+    folds, leftover = state["folds_since_judged"], state["leftover"]
+    if folds < _JUDGED_LAG_WARN and not leftover:
         return None
-    last = None
-    try:
-        for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
-            if " consolidate |" in line:
-                last = line.strip()
-    except OSError:
-        return None
-    return last
+    parts = []
+    if folds >= _JUDGED_LAG_WARN:
+        parts.append(f"no judgment consolidation for {folds} session(s) "
+                     "(only the deterministic folds ran)")
+    if leftover:
+        parts.append(f"an unapplied {' / '.join(leftover)} sits in work/")
+    return ("Memory upkeep is overdue: " + "; ".join(parts)
+            + ". Offer the user a consolidation at wrap-up, or run the "
+            "amg-consolidate flow (/amg consolidate where commands exist).")
 
 
 def _eval_summary(amg: Path) -> Optional[Dict[str, Any]]:
@@ -548,6 +597,7 @@ def status(project_root: Path, amg: Path) -> Dict[str, Any]:
     gate_cfg = cfg.get("connectivity_gate") if isinstance(cfg.get("connectivity_gate"), dict) else {}
     metrics = rc.graph_metrics(nodes, gate_cfg,
                                rc.session_source_prefix(project_root, cfg, amg))
+    consolidation = _consolidation_state(amg)
     return {
         "active": _is_active(cfg),
         "automation": _automation_on(cfg),
@@ -562,7 +612,14 @@ def status(project_root: Path, amg: Path) -> Dict[str, Any]:
         "conflicts": rc.find_conflict_markers(store),   # git merge markers in nodes
         "queue_size": _queue_size(amg),
         "last_pack": _mtime(amg / "cache" / "pack.md"),
-        "last_consolidation": _last_consolidation(amg),
+        "last_consolidation": consolidation["last"],
+        # The judgment half tracked apart from the deterministic fold: hooks (or the
+        # loop) fold weights every session, while the judged pass needs the model —
+        # `status` is where a hook-less environment sees the same overdue signal.
+        "last_judged_consolidation": consolidation["last_judged"],
+        "weight_folds_since_judged": consolidation["folds_since_judged"],
+        "consolidation_leftover": consolidation["leftover"],
+        "consolidation_note": _consolidation_note(consolidation),
         "eval_summary": _eval_summary(amg),
         "connectivity": {k: metrics[k] for k in
                          ("components", "largest_component_share", "isolated_nodes",
@@ -585,7 +642,13 @@ def format_status(d: Dict[str, Any]) -> str:
         f"  queue size:           {d['queue_size'] if d['queue_size'] is not None else '-'}",
         f"  last pack:            {d['last_pack'] or '-'}",
         f"  last consolidation:   {d['last_consolidation'] or '-'}",
+        f"  last judged pass:     {d.get('last_judged_consolidation') or '-'}"
+        f"  ({d.get('weight_folds_since_judged', 0)} weight fold(s) since)",
     ]
+    if d.get("consolidation_leftover"):
+        lines.append("  unapplied in work/:   " + ", ".join(d["consolidation_leftover"]))
+    if d.get("consolidation_note"):
+        lines.append(f"  note:                 {d['consolidation_note']}")
     cm = d.get("connectivity")
     if cm:
         lines.append(f"  connectivity:         {cm.get('gate')} "

@@ -84,7 +84,12 @@ class _Model2Vec:
 
     def __init__(self, model: str):
         from model2vec import StaticModel
-        self.m = StaticModel.from_pretrained(model)
+        # Skip a Hub re-download when the model is cached (force_download defaults to
+        # True in model2vec); an older version without the kwarg loads the plain way.
+        try:
+            self.m = StaticModel.from_pretrained(model, force_download=False)
+        except TypeError:
+            self.m = StaticModel.from_pretrained(model)
 
     def encode(self, texts: List[str]) -> List[List[float]]:
         vecs = self.m.encode(texts)
@@ -96,7 +101,15 @@ class _SentenceTransformers:
 
     def __init__(self, model: str):
         from sentence_transformers import SentenceTransformer
-        self.m = SentenceTransformer(model)
+        # Offline-first: every retrieve.py call is a fresh process, and a cached model
+        # must not cost a Hub round-trip per process (measured: the Hub check dwarfed
+        # the model load itself). local_files_only skips the network entirely; when
+        # the model is not cached yet — or the installed version predates the
+        # parameter — fall back to the ordinary, downloading load.
+        try:
+            self.m = SentenceTransformer(model, local_files_only=True)
+        except Exception:
+            self.m = SentenceTransformer(model)
 
     def encode(self, texts: List[str]) -> List[List[float]]:
         vecs = self.m.encode(list(texts), normalize_embeddings=True)

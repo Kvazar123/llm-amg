@@ -342,15 +342,18 @@ connectivity_gate:
 # recall + hop-recall), before vs after.
 #
 # Robust by default: if `cases` is missing / empty / none of its gold_ids resolve
-# in this graph (e.g. the shipped template), the gate SKIPS with a note — it never
-# falsely rejects. Point `cases` at your own labeled file to arm it (ids from
-# inspect_graph.py). Deltas are (after - before): a drop below the threshold fails.
+# in this graph (e.g. on a fresh install, where the file does not exist yet), the
+# gate SKIPS with a note — it never falsely rejects. Write your own labeled file at
+# the path below to arm it (ids from inspect_graph.py). It lives UNDER the store on
+# purpose: an engine reinstall replaces the skills tree wholesale, so labeled cases
+# kept there would be wiped — the store is never touched. Deltas are (after -
+# before): a drop below the threshold fails.
 # on_fail: reject (don't apply) | warn (apply + record warning) | revert (= reject:
 # measuring before commit makes a post-commit rollback unnecessary).
 # -----------------------------------------------------------------------------
 eval_gate:
   enabled: true
-  cases: .claude/skills/amg-retrieve/evals/cases.json   # template ships unresolved -> skip
+  cases: .claude/amg/evals/cases.json   # absent on a fresh install -> gate skips
   min_recall_delta: -0.02       # tolerated pack-recall drop (after - before)
   min_hop_recall_delta: -0.02   # tolerated hop-recall drop
   on_fail: reject               # reject | warn | revert (revert == reject here)

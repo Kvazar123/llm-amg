@@ -112,12 +112,56 @@ def case_session_end(proj: Path) -> None:
     print("PASS  end: session-end folds weights and refreshes the digest")
 
 
+def case_consolidation_nudge() -> None:
+    """The judged pass has no event of its own, so its overdue nudge is mechanical:
+    actions.log arithmetic (weight folds since the last `consolidation applied`) plus
+    a leftover plan/actions check — surfaced identically by session-start (the hook
+    path) and by status (the hook-less path: Codex/generic read it in the loop)."""
+    proj = setup_project()
+    amg = amg_root(proj)
+    try:
+        fold = "[{ts}] tx-{n} consolidate | weights folded: apply_hebbian=False\n"
+        log = amg / "actions.log"
+        log.write_text("".join(fold.format(ts=f"2026-01-0{i}T10:00:00", n=i)
+                               for i in (1, 2)), encoding="utf-8")
+        st = LC._consolidation_state(amg)
+        assert st["folds_since_judged"] == 2 and st["leftover"] == [], st
+        assert LC._consolidation_note(st) is None, "two folds: not overdue yet"
+
+        with open(log, "a", encoding="utf-8") as f:      # third fold crosses the bar
+            f.write(fold.format(ts="2026-01-03T10:00:00", n=3))
+        d = LC.status(proj, amg)
+        assert d["weight_folds_since_judged"] == 3 and d["last_judged_consolidation"] is None, d
+        assert d["consolidation_note"] and "no judgment consolidation for 3" in d["consolidation_note"], d
+        assert "last judged pass" in LC.format_status(d), LC.format_status(d)
+        res = LC.session_start(proj, amg)
+        assert "no judgment consolidation" in res.get("note", ""), res
+
+        with open(log, "a", encoding="utf-8") as f:      # a judged pass resets the count
+            f.write("[2026-01-04T10:00:00] tx-9 consolidate | consolidation applied: {'promote': 1}\n")
+        st = LC._consolidation_state(amg)
+        assert st["folds_since_judged"] == 0 and st["last_judged"], st
+        assert LC._consolidation_note(st) is None, st
+
+        # an unapplied plan WRITTEN AFTER the judged pass = an interrupted judge run
+        (amg / "work").mkdir(exist_ok=True)
+        (amg / "work" / "consolidation-plan.json").write_text("{}", encoding="utf-8")
+        st = LC._consolidation_state(amg)
+        assert st["leftover"] == ["consolidation-plan.json"], st
+        note = LC._consolidation_note(st)
+        assert note and "unapplied" in note, note
+        print("PASS  nudge: fold arithmetic + leftover plan; same note via start and status")
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+
 def case_status(proj: Path) -> None:
     rc.plan(proj, amg_root(proj))            # populate nodes + the work queue
     d = LC.status(proj, amg_root(proj))
     for k in ("active", "automation", "graph_root", "branch", "commit", "nodes", "stale",
               "pending_transactions", "stale_lock", "conflicts", "queue_size",
-              "last_consolidation", "eval_summary"):
+              "last_consolidation", "last_judged_consolidation",
+              "weight_folds_since_judged", "consolidation_leftover", "eval_summary"):
         assert k in d, f"status missing field {k}"
     assert d["active"] is True and d["automation"] is True, d
     assert d["nodes"] >= 1, d
@@ -229,6 +273,7 @@ if __name__ == "__main__":
         case_session_start(proj)
         case_session_end(proj)
         case_status(proj)
+        case_consolidation_nudge()
         case_on_off(proj)
         case_heal_note()
         case_unclean_shutdown()

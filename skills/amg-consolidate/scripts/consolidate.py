@@ -203,10 +203,11 @@ def _global_defaults_raw(local_raw: Dict[str, Any]) -> Dict[str, Any]:
 def load_config(amg_root: Path) -> Dict[str, Any]:
     cfg: Dict[str, Any] = json.loads(json.dumps(DEFAULTS))   # deep copy
     cfg["working_language"] = "en"          # summaries' language for created nodes
-    # Portable default for eval_gate.cases, derived from the store location (1.32): the
-    # shipped template's value is rendered to the agent dir at install; this covers a
-    # config that omits it, with no hard-coded `.claude`.
-    cfg["eval_gate"]["cases"] = str(amg_root.parent / "skills" / "amg-retrieve" / "evals" / "cases.json")
+    # Portable default for eval_gate.cases, derived from the store location: labeled
+    # cases live UNDER the store (<store>/evals/), where an engine reinstall — which
+    # replaces the skills tree wholesale — can never wipe them. Covers a config that
+    # omits the key, with no hard-coded `.claude`; a missing file just disarms the gate.
+    cfg["eval_gate"]["cases"] = str(amg_root / "evals" / "cases.json")
     f = amg_root / "config.yml"
     raw: Dict[str, Any] = {}
     if f.exists():
@@ -265,8 +266,20 @@ def load_nodes(store: gs.GraphStore) -> Dict[str, Dict[str, Any]]:
     return out
 
 
+# Mirrors retrieve._toklen (kept dependency-free): ASCII ~4 chars/token, other
+# alphabets ~2.2, CJK ~1.5 — a flat len//4 undercounts non-Latin text ~1.5-2x, so the
+# branch token budgets would let a non-English branch grow that much past its limit.
+_NON_ASCII_RE = re.compile(r"[^\x00-\x7F]")
+_CJK_RE = re.compile("[⺀-鿿぀-ヿ가-힯豈-﫿]")
+
+
 def _toklen(text: str) -> int:
-    return max(1, len(text) // 4)
+    non_ascii = _NON_ASCII_RE.findall(text)
+    if not non_ascii:
+        return max(1, len(text) // 4)
+    cjk = sum(1 for ch in non_ascii if _CJK_RE.match(ch))
+    ascii_n = len(text) - len(non_ascii)
+    return max(1, int(ascii_n / 4 + (len(non_ascii) - cjk) / 2.2 + cjk / 1.5))
 
 
 # --------------------------------------------------------------------------- #

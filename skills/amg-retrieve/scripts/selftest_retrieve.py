@@ -58,6 +58,17 @@ def _node(nid: str, typ: str, summary: str, status: str = "active",
             **{k: v for k, v in extra.items() if k not in ("edges", "part_of")}}
 
 
+def test_toklen_scripts() -> None:
+    # The pack budgets are TOKEN budgets, so the estimate must not flatter non-Latin
+    # scripts: BPE spends ~4 chars/token on ASCII but ~2.2 on Cyrillic-like alphabets
+    # and ~1.5 on CJK. Exact values pin the float flooring, not tuned constants.
+    assert R._toklen("a" * 440) == 110, "ASCII keeps the len//4 fast path"
+    assert R._toklen("я" * 440) in (199, 200), "Cyrillic costs ~2.2 chars/token"
+    assert R._toklen("语" * 440) == 293, "CJK costs ~1.5 chars/token"
+    assert R._toklen("a" * 220 + "я" * 220) in (154, 155), "mixed text sums per band"
+    print("PASS  toklen: per-script token estimate (ASCII/alphabetic/CJK bands)")
+
+
 def test_status_prior_unit() -> None:
     nodes: Dict[str, Dict[str, Any]] = {"a": {"status": "active"}, "s": {"status": "superseded"},
                                         "t": {"status": "stale"}, "n": {"status": None}}
@@ -301,6 +312,7 @@ def main() -> int:
     embed.get_embedder = lambda cfg: None              # force pure BM25, deterministic
     tmp = Path(tempfile.mkdtemp(prefix="amg-retr-"))
     try:
+        test_toklen_scripts()
         test_status_prior_unit()
         test_superseded_ranks_below_active(tmp)
         test_stale_is_flagged(tmp)

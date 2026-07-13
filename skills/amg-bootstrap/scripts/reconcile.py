@@ -1216,6 +1216,65 @@ def apply_derivation(project_root: Path, derivation_path: Path,
     return _apply_items(project_root, items, amg_root)
 
 
+# A linker part's batch label: derived-links-<batch>[-pNN].json -> <batch>. The label
+# ties the part back to its work/link-batch-<batch>.json for the judged-pair memory.
+_LINKS_PART_RE = re.compile(r"^derived-links-(.+?)(?:-p\d+)?\.json$")
+
+
+def _pop_judged(items: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Split a linker part's item list into (graph items, judged node ids).
+
+    A linker part may end with a service record `{"judged": [<node id>, ...]}` naming
+    EVERY node the linker judged in that part — including nodes where it confirmed
+    nothing (they produce no graph items, so without the record their coverage would
+    be unprovable). The record never touches the graph; it only feeds the judged-pair
+    memory that stops the nomination pass from re-proposing already-rejected pairs."""
+    rest: List[Dict[str, Any]] = []
+    judged: List[str] = []
+    for it in items:
+        if isinstance(it, dict) and "judged" in it and "id" not in it:
+            judged.extend(str(x) for x in (it.get("judged") or []) if isinstance(x, str))
+        else:
+            rest.append(it)
+    return rest, judged
+
+
+def _retire_judged_batches(work: Path, judged_by_batch: Dict[str, Set[str]]) -> List[str]:
+    """Move every FULLY judged link batch to work/judged/, where the nomination pass
+    (link_candidates) reads its pairs as already ruled on and never re-proposes them —
+    without this memory the pass cannot converge: similarity re-nominates the very
+    pairs a linker just rejected, wave after wave.
+
+    Coverage is proven, not assumed: a batch moves only when the judged ids collected
+    from its parts IN THIS CALL cover every node the batch carries. Under-coverage (a
+    crashed linker, a torn part) leaves the batch in work/ to be legitimately
+    re-nominated — the safe direction. Parts applied in EARLIER calls are deliberately
+    not folded in: batch labels are positional (a re-nomination reuses 001, 002, …),
+    so an archived part could falsely cover a renumbered batch — and silently losing
+    nominations is worse than re-judging a tail. A wave's parts all sit on disk when
+    its single apply runs (the SKILL protocol), so real coverage is not lost."""
+    moved: List[str] = []
+    for batch, judged in judged_by_batch.items():
+        batch_file = work / f"link-batch-{batch}.json"
+        if not batch_file.exists():
+            continue
+        try:
+            batch_nodes = {str(n.get("id")) for n in
+                           json.loads(batch_file.read_text(encoding="utf-8")).get("nodes", [])
+                           if isinstance(n, dict) and n.get("id")}
+        except (OSError, ValueError):
+            continue
+        if batch_nodes and batch_nodes <= judged:
+            try:
+                dest = work / "judged"
+                dest.mkdir(parents=True, exist_ok=True)
+                batch_file.replace(dest / batch_file.name)
+                moved.append(batch_file.name)
+            except OSError:
+                pass      # a held file stays put; the next apply-derived retries
+    return moved
+
+
 def apply_derived(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
     """Apply EVERY work/derived-*.json (checkpoint parts included) in one call.
 
@@ -1228,7 +1287,11 @@ def apply_derived(project_root: Path, amg_root: Optional[Path] = None) -> Dict[s
     over what already landed. A file that is not valid JSON (a checkpoint torn by a
     hard kill) is moved to work/invalid/ and reported, never aborting the rest;
     re-applying a moved file by hand stays safe (apply is idempotent and
-    freshness-checked)."""
+    freshness-checked).
+
+    Linker parts additionally feed the judged-pair memory: their `{"judged": [...]}`
+    service records are collected per batch, and a fully covered link batch moves to
+    work/judged/ (see _retire_judged_batches)."""
     amg_root = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
     work = amg_root / "work"
     files = sorted(work.glob("derived-*.json")) if work.exists() else []
@@ -1238,13 +1301,19 @@ def apply_derived(project_root: Path, amg_root: Optional[Path] = None) -> Dict[s
     items: List[Dict[str, Any]] = []
     consumed: List[Path] = []
     malformed: List[str] = []
+    judged_by_batch: Dict[str, Set[str]] = {}
     for f in files:
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             malformed.append(f.name)
             continue
-        items.extend(data if isinstance(data, list) else [data])
+        file_items = data if isinstance(data, list) else [data]
+        m = _LINKS_PART_RE.match(f.name)
+        if m:
+            file_items, judged = _pop_judged(file_items)
+            judged_by_batch.setdefault(m.group(1), set()).update(judged)
+        items.extend(file_items)
         consumed.append(f)
     result = _apply_items(project_root, items, amg_root)
     for f, dest_dir in ([(f, "applied") for f in consumed]
@@ -1255,9 +1324,12 @@ def apply_derived(project_root: Path, amg_root: Optional[Path] = None) -> Dict[s
             f.replace(target_dir / f.name)
         except OSError:
             pass          # a held file (AV/indexer) stays put; the next run retries
+    judged_batches = _retire_judged_batches(work, judged_by_batch)
     result["files"] = len(consumed)
     if malformed:
         result["malformed_files"] = malformed
+    if judged_batches:
+        result["judged_batches"] = judged_batches
     return result
 
 
@@ -1317,6 +1389,11 @@ def _apply_items(project_root: Path, items: List[Dict[str, Any]],
         sfx = _build_suffix_index(known)
         tx = store.transaction()
         for raw_item in items:
+            # A linker part's judged service record ({"judged": [...]}) is consumed by
+            # apply-derived; if one reaches here through a plain `apply <file>` it is
+            # dropped silently — it is bookkeeping, not a malformed graph item.
+            if isinstance(raw_item, dict) and "judged" in raw_item and "id" not in raw_item:
+                continue
             item, reason = _sanitize_item(raw_item)
             if item is None:
                 _note_invalid(reason or "invalid item")

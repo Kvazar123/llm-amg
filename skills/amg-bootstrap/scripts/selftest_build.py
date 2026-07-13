@@ -348,6 +348,32 @@ def main() -> int:
         print("PASS  candidates: cross-domain pair nominated, linked pair excluded, "
               "hubs anchored to directories")
 
+        # 5b. judged-pair memory: a linker part's {"judged": [...]} record retires a
+        # FULLY covered batch to work/judged/, whose pairs are never re-nominated
+        # (rejections remembered -> the pass converges); an under-covered (crashed)
+        # batch stays pending and re-nominates — the safe direction.
+        batch_file = amg / "work" / "link-batch-001.json"
+        batch_ids = [n["id"] for n in
+                     json.loads(batch_file.read_text(encoding="utf-8"))["nodes"]]
+        (amg / "work" / "derived-links-001-p01.json").write_text(
+            json.dumps([{"judged": batch_ids}]), encoding="utf-8")
+        r = RC.apply_derived(proj, amg)
+        assert r.get("judged_batches") == ["link-batch-001.json"], r
+        assert r["applied"] == 0 and r["skipped_invalid"] == 0, r   # record != graph item
+        assert (amg / "work" / "judged" / "link-batch-001.json").exists()
+        assert not batch_file.exists()
+        lc_after = LC.build_batches(proj, amg)
+        assert lc_after["batches"] == 0, lc_after   # rejected pairs stay rejected
+        shutil.rmtree(amg / "work" / "judged")      # re-open the judgments
+        lc_reopen = LC.build_batches(proj, amg)
+        assert lc_reopen["batches"] == 1, lc_reopen
+        (amg / "work" / "derived-links-001-p01.json").write_text(
+            json.dumps([{"judged": batch_ids[:1]}]), encoding="utf-8")
+        r = RC.apply_derived(proj, amg)             # partial coverage: batch survives
+        assert "judged_batches" not in r and batch_file.exists(), r
+        assert LC.build_batches(proj, amg)["batches"] == 1, "crashed batch re-nominates"
+        print("PASS  judged memory: full coverage retires the batch, partial re-nominates")
+
         # 6. derivation cache: wipe the graph, rebuild, restore verbatim
         summaries_before = {nid: n["summary"] for nid, n in
                             RC.load_nodes(gs.GraphStore(amg)).items()
