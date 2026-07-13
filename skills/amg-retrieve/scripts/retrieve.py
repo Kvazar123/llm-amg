@@ -40,6 +40,10 @@ CLI:
         # contradicted nodes for a history/audit or "show contradictions" query. The
         # RETRIEVER SUBAGENT sets this from the query in ANY language (intent is the model's
         # to recognize; the code only applies it), so no language-specific keywords live here.
+    python retrieve.py "<query>" --compact      # the pointer profile: modest built-in
+        # budgets, operational bodies replaced by path:line pointer lines — for a
+        # TARGETED lookup; the full profile is for entering an unfamiliar area. The
+        # CALLER chooses (no activation statistic can tell the two query kinds apart).
 """
 from __future__ import annotations
 
@@ -74,7 +78,7 @@ FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n?(.*)$", re.DOTALL)
 # would seed nothing.
 WORD_RE = re.compile(r"\w+", re.UNICODE)
 
-DEFAULTS = {
+DEFAULTS: Dict[str, Any] = {
     "damping": 0.85,
     "max_hops": 30,                 # power-iteration cap (more iters => wider reach)
     "convergence_tol": 1e-6,
@@ -601,6 +605,14 @@ def _explain_inflow(ppr: Dict[str, float], adj: Dict[str, List[Tuple[str, float]
 # Pack assembly (budgeted, tiered)
 # --------------------------------------------------------------------------- #
 
+# The compact (pointer) profile's budgets are deliberately the CODE defaults above,
+# not the config's token_budget: a targeted lookup must not inherit a config that
+# widened the full profile for deep-context work. The caller chooses the profile
+# (--compact) by the query's nature — a pointer question vs entering the unfamiliar —
+# a distinction no scalar statistic of the activations carries (the seeded head and
+# the inflow tail overlap in value; field gold sits as deep as rank ~222).
+_COMPACT_BUDGET = dict(DEFAULTS["token_budget"])
+
 # Script bands for the token estimate. BPE tokenizers spend ~4 chars/token on ASCII
 # text but only ~2.2 on non-Latin alphabetic scripts (Cyrillic, Greek, Arabic, ...)
 # and ~1.5 on CJK, so a flat len//4 undercounts non-English text by ~1.5-2x — and every
@@ -621,8 +633,8 @@ def _toklen(text: str) -> int:
     return max(1, int(ascii_n / 4 + (len(non_ascii) - cjk) / 2.2 + cjk / 1.5))
 
 
-def assemble_pack(activation: Dict[str, float], nodes: Dict[str, Dict[str, Any]], cfg: Dict[str, Any]
-                  ) -> Tuple[str, Dict[str, List[str]]]:
+def assemble_pack(activation: Dict[str, float], nodes: Dict[str, Dict[str, Any]], cfg: Dict[str, Any],
+                  compact: bool = False) -> Tuple[str, Dict[str, List[str]]]:
     """Greedy tiered assembly under the token budgets. The budgets are the size
     lever, deliberately the only one: an adaptive stop by accumulated activation
     mass was measured on a real field graph and rejected — PPR mass is spread over
@@ -630,9 +642,15 @@ def assemble_pack(activation: Dict[str, float], nodes: Dict[str, Dict[str, Any]]
     never concentrates enough for a mass cutoff to separate signal from tail
     (shrink x1.01 at mass_stop 0.9); a Jaccard near-duplicate guard likewise moved
     nothing (near-dup curation belongs to consolidation). Raising the relative
-    activation threshold trims the pack only where it starts costing recall."""
+    activation threshold trims the pack only where it starts costing recall.
+
+    `compact` is the pointer profile — the CALLER's explicit size choice where the
+    rejected statistics could not be one: the built-in modest budgets (_COMPACT_BUDGET,
+    ignoring the config's token_budget) and no operational bodies — every file-backed
+    node renders as a `path:line — name — summary` pointer line, only the authored
+    rulings (decision/adr) keep their rationale body."""
     thr = cfg["activation_threshold"]
-    budget = cfg["token_budget"]
+    budget = _COMPACT_BUDGET if compact else cfg["token_budget"]
     ranked = sorted((nid for nid, a in activation.items() if a >= thr),
                     key=lambda nid: activation[nid], reverse=True)
 
@@ -644,7 +662,7 @@ def assemble_pack(activation: Dict[str, float], nodes: Dict[str, Dict[str, Any]]
     for nid in ranked:
         node = nodes[nid]
         tier = TIER_OF_TYPE.get(node["type"], "operational")
-        line = _render(node, tier, vcfg)
+        line = _render(node, tier, vcfg, compact)
         cost = _toklen(line)
         if tier in spent and spent[tier] + cost <= budget[tier]:
             tiers[tier].append(nid)
@@ -653,7 +671,7 @@ def assemble_pack(activation: Dict[str, float], nodes: Dict[str, Dict[str, Any]]
             tiers["periphery"].append(nid)
 
     tiers["periphery"] = tiers["periphery"][: int(budget["periphery_links"])]
-    return _render_pack(tiers, nodes, activation, vcfg), tiers
+    return _render_pack(tiers, nodes, activation, vcfg, compact), tiers
 
 
 def _code_pointer(node: Dict[str, Any]) -> str:
@@ -665,12 +683,21 @@ def _code_pointer(node: Dict[str, Any]) -> str:
     return f"{sp}:{ln}"
 
 
-def _render(node: Dict[str, Any], tier: str, vcfg: Dict[str, Any]) -> str:
+def _render(node: Dict[str, Any], tier: str, vcfg: Dict[str, Any],
+            compact: bool = False) -> str:
     nid, summ = node["id"], (node["summary"] or "").strip()
     mark = _trust_marks(node, vcfg)
     if tier == "operational" and node["type"] in CODE_TYPES:
         loc = _code_pointer(node) if node.get("source_path") else nid
         return f"- `{loc}` — {nid.split('::')[-1]} — {summ}{mark}"
+    if compact and tier == "operational" and node["type"] not in DOC_BODY_TYPES:
+        # The pointer profile: no bodies. A doc/data node gets the same pointer line
+        # as code (the summary carries the gist; the model opens the slice if needed);
+        # a node with no source (an authored note) keeps its id line. decision/adr
+        # fall through below — a ruling's value is its rationale, so its body stays.
+        if node.get("source_path") and node.get("lineno"):
+            return f"- `{_code_pointer(node)}` — {nid.split('::')[-1]} — {summ}{mark}"
+        return f"- {nid} — {summ}{mark}"
     if tier == "operational" or node["type"] in DOC_BODY_TYPES:
         # operational docs/notes, and authored rulings in any tier: include the body
         body = node["body"].strip()
@@ -680,8 +707,9 @@ def _render(node: Dict[str, Any], tier: str, vcfg: Dict[str, Any]) -> str:
 
 
 def _render_pack(tiers: Dict[str, List[str]], nodes: Dict[str, Dict[str, Any]],
-                 activation: Dict[str, float], vcfg: Dict[str, Any]) -> str:
-    out: List[str] = ["# Context pack", ""]
+                 activation: Dict[str, float], vcfg: Dict[str, Any],
+                 compact: bool = False) -> str:
+    out: List[str] = ["# Context pack (compact)" if compact else "# Context pack", ""]
     labels = [("strategic", "Strategic — overview & subsystems"),
               ("tactical", "Tactical — relevant modules"),
               ("operational", "Operational — code & detail in focus")]
@@ -690,7 +718,7 @@ def _render_pack(tiers: Dict[str, List[str]], nodes: Dict[str, Dict[str, Any]],
             continue
         out.append(f"## {title}")
         for nid in tiers[key]:
-            out.append(_render(nodes[nid], key, vcfg))
+            out.append(_render(nodes[nid], key, vcfg, compact))
         out.append("")
     if tiers["periphery"]:
         out.append("## Related (follow if needed)")
@@ -707,7 +735,7 @@ def _render_pack(tiers: Dict[str, List[str]], nodes: Dict[str, Dict[str, Any]],
 def retrieve(store_root: os.PathLike[str] | str, query: str,
              config: Optional[Dict[str, Any]] = None, write_pack: bool = True,
              log_coactivation: bool = True, explain: int = 0,
-             intent: Optional[List[str]] = None) -> Dict[str, Any]:
+             intent: Optional[List[str]] = None, compact: bool = False) -> Dict[str, Any]:
     store_root = Path(store_root)
     cfg = config or load_config(store_root)
     nodes = load_nodes(store_root)
@@ -756,7 +784,7 @@ def retrieve(store_root: os.PathLike[str] | str, query: str,
     ppr = personalized_pagerank(teleport, adj, all_ids, cfg)
     activation = _rescale_to_max(_apply_status_prior(ppr, nodes, cfg, lift=bool(flags)))
 
-    pack, tiers = assemble_pack(activation, nodes, cfg)
+    pack, tiers = assemble_pack(activation, nodes, cfg, compact)
     ranked = sorted(((nid, activation[nid]) for nid in all_ids),
                     key=lambda kv: kv[1], reverse=True)
     seeds = sorted((nid for nid in all_ids if seed.get(nid, 0.0) > 0),
@@ -850,6 +878,7 @@ def main(argv: List[str]) -> int:
     store = Path(_default_store())
     write_pack = True
     explain = False
+    compact = False
     top = 15
     intent: List[str] = []                # set by the caller (the model) per its query
     i = 2
@@ -862,6 +891,8 @@ def main(argv: List[str]) -> int:
             write_pack = False; i += 1
         elif argv[i] == "--explain":
             explain = True; i += 1
+        elif argv[i] == "--compact":      # the pointer profile; see header
+            compact = True; i += 1
         elif argv[i] == "--intent":       # history|conflict (comma-separated); see header
             intent = [f.strip() for f in argv[i + 1].split(",") if f.strip()]; i += 2
         else:
@@ -869,7 +900,8 @@ def main(argv: List[str]) -> int:
 
     n_explain = min(top, 10) if explain else 0
     res = retrieve(store, query, write_pack=write_pack,
-                   log_coactivation=write_pack, explain=n_explain, intent=intent)
+                   log_coactivation=write_pack, explain=n_explain, intent=intent,
+                   compact=compact)
     print(res["pack"])
     print("\n--- ranked (top {}) ---".format(top))
     for nid, a in res["ranked"][:top]:

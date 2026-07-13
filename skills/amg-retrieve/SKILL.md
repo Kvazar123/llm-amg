@@ -56,6 +56,14 @@ deliberate variant for when the pack itself should NOT enter your window.
    that are otherwise pushed down (you classify the intent from meaning, in any
    language; the script has no keyword list).
 
+   **Pick the profile by the query's nature — you are the only one who knows it.**
+   A **targeted lookup** — "where is X", "which file holds Y", a pointer question
+   whose answer is a few locations — add **`--compact`**: modest built-in budgets and
+   pointer lines (`path:line — name — summary`) instead of unfolded bodies, at a
+   fraction of the full pack's size (decision/adr keep their rationale). **Entering
+   an unfamiliar topic or subsystem** → the full profile (no flag): deep, multi-hop
+   context is exactly what you came for, and compact's smaller periphery can lose it.
+
    **Spawn `amg-retriever` instead** only when the isolation is the point: the user
    asks the memory a question whose answer is a short distillate (the full pack in
    your window would be waste), or your context is already crowded. The subagent

@@ -20,6 +20,9 @@ check is pure BM25 + PPR with no model download. Covers:
                       activation_threshold reads as a share of the top activation —
                       a large graph that spreads PPR mass thin keeps a populated
                       pack instead of dropping everything below an absolute cutoff.
+  8. compact profile: --compact uses the built-in modest budgets (not the config's)
+                      and renders operational nodes as pointer lines without bodies;
+                      decision/adr keep their rationale body.
 
 Run:  python selftest_retrieve.py
 """
@@ -253,6 +256,49 @@ def test_pack_survives_large_graph(tmp: Path) -> None:
     print("PASS  large spread graph: pack non-empty, top rescaled to 1.0, multi-hop kept")
 
 
+def test_compact_profile(tmp: Path) -> None:
+    """--compact is the CALLER's pointer profile: the built-in modest budgets replace
+    the config's token_budget, and operational bodies are not unfolded — a file-backed
+    doc node renders as a `path:line — name — summary` pointer, a sourceless authored
+    note as an id line; only the rulings (decision/adr) keep their rationale body."""
+    store = tmp / "compact"
+    doc_body = "Long design prose that the compact profile must not unfold into the pack."
+    dec_body = "We chose exponential backoff because retries otherwise stampede the gateway."
+    _write(store, "doc", "d.md", _node(
+        "doc:doc/design.md::retries", "section", "How retries are scheduled",
+        source_path="doc/design.md", lineno=5, line_end=40), body=doc_body)
+    _write(store, "notes", "n.md", _node(
+        "notes:obs-1", "note", "retries observed to cluster at night"))
+    _write(store, "notes", "dec.md", _node(
+        "notes:decisions/retries", "decision", "Retries use exponential backoff"),
+        body=dec_body)
+    _write(store, "code", "c.md", _node(
+        "code:src/r.py::retry", "function", "Retries the failed call with backoff",
+        source_path="src/r.py", lineno=12))
+    query = "how retries are scheduled with backoff"
+    full = R.retrieve(store, query, write_pack=False, log_coactivation=False)
+    comp = R.retrieve(store, query, write_pack=False, log_coactivation=False,
+                      compact=True)
+    assert doc_body in full["pack"], "full profile unfolds the operational doc body"
+    assert comp["pack"].startswith("# Context pack (compact)"), comp["pack"][:50]
+    assert doc_body not in comp["pack"], "compact must not unfold a doc body"
+    assert "`doc/design.md:5-40`" in comp["pack"], "compact renders the doc pointer line"
+    assert dec_body in comp["pack"], "a decision keeps its rationale body in compact"
+    assert "- notes:obs-1 — " in comp["pack"], "a sourceless note renders as an id line"
+    assert len(comp["pack"]) < len(full["pack"]), "the pointer profile must be smaller"
+    # budget independence: a config that starves the full profile's operational tier
+    # must not starve compact — its budgets are built in, not read from the config
+    starved = {**R.load_config(store),
+               "token_budget": {**R.DEFAULTS["token_budget"], "operational": 10}}
+    fs = R.retrieve(store, query, config=starved, write_pack=False, log_coactivation=False)
+    cs = R.retrieve(store, query, config=starved, write_pack=False, log_coactivation=False,
+                    compact=True)
+    assert "doc:doc/design.md::retries" not in fs["tiers"]["operational"], fs["tiers"]
+    assert "doc:doc/design.md::retries" in cs["tiers"]["operational"], \
+        "compact must use the built-in budgets, not the config's"
+    print("PASS  compact: pointer lines instead of bodies, rulings keep body, built-in budgets")
+
+
 def test_intent_and_conflict(tmp: Path) -> None:
     """Intent-driven surfacing, by a caller-supplied intent flag (the model recognizes
     intent in any language; the code only applies it):
@@ -319,6 +365,7 @@ def main() -> int:
         test_trust_marks(tmp)
         test_decision_strategic_with_body(tmp)
         test_pack_survives_large_graph(tmp)
+        test_compact_profile(tmp)
         test_intent_and_conflict(tmp)
         test_config_deep_merge(tmp)
         test_inspect_bucket(tmp)
