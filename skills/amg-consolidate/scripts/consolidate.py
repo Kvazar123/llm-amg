@@ -766,11 +766,37 @@ def make_plan(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, 
             "episodic_candidates": episodic[:50],
             "contradictions": contradictions,
             "source_contradicted": source_contradicted}
+
+    # Stale-graph guard: a judgment pass over a graph that lags its sources judges a
+    # skewed picture (fresh structural skeleton without semantics fragments
+    # connectivity and distorts the gate's baseline). Deterministic and advisory: the
+    # plan carries the backlog and a warning past the threshold; the flow offers a
+    # sync first instead of judging blind.
+    queued = 0
+    qfile = store.root / "work" / "queue.json"
+    if qfile.exists():
+        try:
+            queued = len(json.loads(qfile.read_text(encoding="utf-8")).get("units", []))
+        except (OSError, json.JSONDecodeError):
+            queued = 0
+    plan["queued_for_semantic"] = queued
+    stale_threshold = max(100, len(nodes) // 10)
+    if queued > stale_threshold:
+        plan["warning"] = (
+            f"graph lags the sources: {queued} unit(s) await semantic enrichment "
+            f"(threshold {stale_threshold}) — run a sync first; judging a stale "
+            "picture skews both the consolidator and the eval gate")
+
     gs.atomic_write_text(store.root / "work" / "consolidation-plan.json",
                          json.dumps(plan, ensure_ascii=False, indent=2))
-    return {"over_budget": len(over_budget), "duplicates": len(dups),
-            "episodic": len(episodic), "contradictions": len(contradictions),
-            "source_contradicted": len(source_contradicted)}
+    out: Dict[str, Any] = {
+        "over_budget": len(over_budget), "duplicates": len(dups),
+        "episodic": len(episodic), "contradictions": len(contradictions),
+        "source_contradicted": len(source_contradicted),
+        "queued_for_semantic": queued}
+    if "warning" in plan:
+        out["warning"] = plan["warning"]
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -923,15 +949,19 @@ def _gate_regressions(baseline: Dict[str, Any], after: Dict[str, Any], actions: 
 
 def _gate_decide(baseline: Dict[str, Any], after: Dict[str, Any], gate_cfg: Dict[str, Any],
                  actions: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Compare before/after aggregates and decide. recall is PACK recall (compaction
-    changes pack composition, not just top-K ranking); hop_recall isolates the edge
-    contribution. on_fail reject|revert -> 'rejected' (revert == reject: we measured
-    before commit); warn -> apply anyway with the regression recorded."""
+    """Compare before/after aggregates and decide. BOTH gate metrics live on the
+    PACK — the product surface the model actually receives: pack recall and pack
+    hop-recall (the multi-hop gold subset, frozen from the baseline). The top-K
+    ranking hop-recall stays a tuning metric of the harness, not a gate: legitimate
+    compaction indirection (a sub-hub deepening hub→leaf paths) shifts ranks a
+    little while the pack holds every gold — a gate on ranks would punish
+    indirection, not loss. on_fail reject|revert -> 'rejected' (revert == reject: we
+    measured before commit); warn -> apply anyway with the regression recorded."""
     b, a = baseline["aggregate"], after["aggregate"]
     b_rec, a_rec = b.get("amg_pack_recall"), a.get("amg_pack_recall")
     rec_delta = round((a_rec or 0.0) - (b_rec or 0.0), 4)
-    b_hop = (b.get("amg") or {}).get("hop_recall")
-    a_hop = (a.get("amg") or {}).get("hop_recall")
+    b_hop = b.get("amg_pack_hop_recall")
+    a_hop = a.get("amg_pack_hop_recall")
     hop_delta = (round(a_hop - b_hop, 4)
                  if a_hop is not None and b_hop is not None else None)
     min_rec = gate_cfg.get("min_recall_delta", -0.02)
@@ -946,17 +976,21 @@ def _gate_decide(baseline: Dict[str, Any], after: Dict[str, Any], gate_cfg: Dict
             "regressions": _gate_regressions(baseline, after, actions)}
 
 
-def _eval_gate(project_root: Path, amg: Path, actions_path: Path,
-               actions: List[Dict[str, Any]], cfg: Dict[str, Any], enabled: bool) -> Optional[Dict[str, Any]]:
-    """Run the gate, or return None when it does not apply (disabled, or no compression
-    action will actually run). On a fail it returns a decision dict; callers apply or
-    reject accordingly. Measurement uses a graph clone and never touches the real graph
-    or the co-activation journal (evaluate_case runs retrieve with writes off)."""
+def _eval_gate(project_root: Path, amg: Path,
+               gated: List[Dict[str, Any]], cfg: Dict[str, Any], enabled: bool) -> Optional[Dict[str, Any]]:
+    """Run the gate over the COMPACTION SUBSET of an actions file, or return None when
+    it does not apply (disabled, or no compression action will actually run). The
+    subset — not the whole file — is what the clone applies and what the verdict
+    governs: arbitration verdicts and promotions are non-destructive and must never
+    sit hostage to a compaction the gate rejects. The baseline's per-case hop-gold
+    sets are frozen and reused for the after-run (see evaluate_case). Measurement
+    uses a graph clone and never touches the real graph or the co-activation journal
+    (evaluate_case runs retrieve with writes off)."""
     gate_cfg = cfg.get("eval_gate") or {}
     if not gate_cfg.get("enabled", True):
         return None
     will_compress = any(a.get("action") in COMPACTION_ACTIONS and (enabled or a.get("force"))
-                        for a in actions if isinstance(a, dict))
+                        for a in gated if isinstance(a, dict))
     if not will_compress:
         return None                               # nothing destructive -> no gate needed
     E, R = _load_eval_modules()
@@ -970,13 +1004,17 @@ def _eval_gate(project_root: Path, amg: Path, actions_path: Path,
                           "eval_gate.cases at your own file (ids from inspect_graph.py)"}
     eval_cfg = R.load_config(amg)
     baseline = E.run(amg, cases, eval_cfg)
+    hop_by_case = {str(r["id"]): set(r.get("hop_gold_ids") or [])
+                   for r in baseline["per_case"]}
     clone = _clone_for_eval(amg)
     try:
-        apply_actions(project_root, actions_path, clone, _run_gate=False)
-        after = E.run(clone, cases, eval_cfg)
+        subset = clone.parent / "actions-gated.json"
+        subset.write_text(json.dumps(gated, ensure_ascii=False), encoding="utf-8")
+        apply_actions(project_root, subset, clone, _run_gate=False)
+        after = E.run(clone, cases, eval_cfg, hop_gold_by_case=hop_by_case)
     finally:
         shutil.rmtree(clone.parent, ignore_errors=True)
-    return _gate_decide(baseline, after, gate_cfg, actions)
+    return _gate_decide(baseline, after, gate_cfg, gated)
 
 
 def _write_gate_report(store: gs.GraphStore, report: Dict[str, Any]) -> None:
@@ -1002,23 +1040,31 @@ def apply_actions(project_root: Path, actions_path: Path,
     cmp_cfg = cfg["compaction"]
     enabled = cmp_cfg.get("enabled", True)
 
+    # Partition once: the gate governs only the compaction subset; arbitration
+    # verdicts and promotions are non-destructive and apply regardless of its verdict.
+    gated = [a for a in actions
+             if isinstance(a, dict) and a.get("action") in COMPACTION_ACTIONS]
+
     with store.lock():
         store.recover()
         nodes = load_nodes(store)
 
-        # Eval gate: measure the proposed compaction on a graph clone and reject (or
-        # warn) on a recall drop BEFORE building the real transaction (_run_gate is
-        # off for the clone's own apply, so there is no recursion). Skips robustly.
-        gate = _eval_gate(project_root, amg, actions_path, actions, cfg, enabled) \
-            if _run_gate else None
+        # Eval gate: measure the proposed compaction SUBSET on a graph clone and
+        # reject (or warn) it BEFORE building the real transaction (_run_gate is off
+        # for the clone's own apply, so there is no recursion). Skips robustly. A
+        # rejection drops only the compaction subset — the safe remainder still
+        # applies below: recall safety must not hold arbitration hostage.
+        gate = _eval_gate(project_root, amg, gated, cfg, enabled) if _run_gate else None
+        rejected_compaction = gate is not None and gate["status"] == "rejected"
         if gate is not None:
             _write_gate_report(store, gate)
-            if gate["status"] == "rejected":
+            if rejected_compaction:
                 _log(store, "eval-gate REJECTED compaction "
-                            f"(Δrecall={gate['recall_delta']}, Δhop={gate['hop_recall_delta']})",
-                     None)
-                return {"gate": "rejected", "recall_delta": gate["recall_delta"],
-                        "hop_recall_delta": gate["hop_recall_delta"]}
+                            f"(Δrecall={gate['recall_delta']}, Δhop={gate['hop_recall_delta']}); "
+                            "applying the non-compaction remainder", None)
+                actions = [a for a in actions
+                           if not (isinstance(a, dict)
+                                   and a.get("action") in COMPACTION_ACTIONS)]
 
         tx = store.transaction()
         renorm = bool(cfg.get("part_of_renormalize", True))
@@ -1302,6 +1348,10 @@ def apply_actions(project_root: Path, actions_path: Path,
     result = dict(counts)
     if gate is not None:
         result["gate"] = gate["status"]
+        if rejected_compaction:             # name what was withheld, and why
+            result["rejected_compaction_actions"] = len(gated)
+            result["recall_delta"] = gate["recall_delta"]
+            result["hop_recall_delta"] = gate["hop_recall_delta"]
     return result
 
 

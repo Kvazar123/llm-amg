@@ -67,7 +67,13 @@ import retrieve as rt                                       # noqa: E402
 # is noise, and how many nodes one linker batch carries (a bounded subagent context;
 # larger batches amortize the environment's fixed per-step overhead across fewer
 # agents — the ~10-node checkpoint parts keep the interruption loss bound unchanged).
-LINKER_DEFAULTS: Dict[str, Any] = {"top_k": 5, "min_sim": 0.35, "batch_nodes": 80}
+LINKER_DEFAULTS: Dict[str, Any] = {"top_k": 5, "min_sim": 0.35, "batch_nodes": 80,
+                                   # Ceiling (chars) on ONE synthesis-input file.
+                                   # Over it the sheet splits into whole-group parts
+                                   # (synth-input-pNN.json) so a small-window model
+                                   # still sees complete rows; trimming summaries is
+                                   # the last resort within a single oversized group.
+                                   "synth_input_max_chars": 800_000}
 
 # The lexical fallback nominates only pairs sharing at least this many informative
 # tokens — with no embedding backend a single shared word is noise, not a signal.
@@ -287,11 +293,10 @@ def _hub_slug(topic: str) -> str:
     return s[:48] or "root"
 
 
-# Budget for the one-file synthesis input. Well above a real project's summary layer
-# (hundreds of KB) yet a hard stop against a degenerate graph: over it, summaries are
-# trimmed first, then each group keeps a counted sample — the sheet always stays one
-# readable file for the synthesis agent.
-_SYNTH_INPUT_MAX_CHARS = 800_000
+# Ladder constants for an oversized synthesis sheet. The primary answer to "over the
+# cap" is splitting into whole-group PARTS (config: linker.synth_input_max_chars);
+# trimming summaries and counted group samples remain the last resort for one group
+# that alone outgrows a part.
 _SYNTH_TRIM_SUMMARY = 160
 _SYNTH_GROUP_SAMPLE = 40
 
@@ -349,45 +354,92 @@ def _synth_gaps(nodes: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
             "drifted_doc_refs": drifted, "contradiction_pairs": pairs}
 
 
+def _shrink_group(g: Dict[str, Any], cap: int) -> None:
+    """Last-resort ladder for ONE group that alone outgrows a part: trim long
+    summaries, then keep a counted sample (`count` stays exact). Mutates in place."""
+    def size() -> int:
+        return len(json.dumps(g, ensure_ascii=False))
+    if size() > cap:
+        for row in g["nodes"]:
+            if len(row["summary"]) > _SYNTH_TRIM_SUMMARY:
+                row["summary"] = row["summary"][:_SYNTH_TRIM_SUMMARY]
+        g["trimmed"] = "summaries"
+    if size() > cap and len(g["nodes"]) > _SYNTH_GROUP_SAMPLE:
+        g["nodes"] = g["nodes"][:_SYNTH_GROUP_SAMPLE]
+        g["sampled"] = True
+
+
 def synth_input(amg_root: Path) -> Dict[str, Any]:
-    """Write work/synth-input.json — the compact one-file input of the synthesis pass.
+    """Write the synthesis pass's prepared input: work/synth-input.json, or — when the
+    summary layer outgrows `linker.synth_input_max_chars` — whole-group parts
+    work/synth-input-pNN.json, each under the cap with a shared header
+    ({part, parts, groups_total, nodes_total}), so a model with a smaller context
+    window processes the layer part by part instead of losing rows to overflow. The
+    gap material rides in part 1 only (one gap report per pass).
 
     The whole point is turn economy: amg-synth used to scan nodes/*.md itself, and an
     isolated agent pays its entire accumulated context again on every read. This sheet
-    is the same summary layer (via the index-backed loader, no scan) delivered once,
-    plus the deterministic gap material (undocumented code, drifted doc references,
-    contradiction pairs) the gap report is written from.
+    is the same summary layer (via the index-backed loader, no scan) delivered once.
     """
     nodes = rt.load_nodes(amg_root)
-    groups = _synth_rows(nodes)
-    payload: Dict[str, Any] = {
-        "nodes_total": len(nodes),
-        "stale_total": sum(1 for n in nodes.values() if n.get("status") == "stale"),
-        "truncated": False,
-        "gaps": _synth_gaps(nodes),
-        "groups": [{"subtree": k, "count": len(rows), "nodes": rows}
-                   for k, rows in sorted(groups.items())],
-    }
+    lcfg = {**LINKER_DEFAULTS, **(load_config(amg_root).get("linker") or {})}
+    cap = int(lcfg.get("synth_input_max_chars") or LINKER_DEFAULTS["synth_input_max_chars"])
+    stale_total = sum(1 for n in nodes.values() if n.get("status") == "stale")
+    gaps = _synth_gaps(nodes)
+    group_rows = [{"subtree": k, "count": len(rows), "nodes": rows}
+                  for k, rows in sorted(_synth_rows(nodes).items())]
 
-    def _size() -> int:
-        return len(json.dumps(payload, ensure_ascii=False))
+    work = amg_root / "work"
+    for old in work.glob("synth-input-p*.json"):     # stale parts of a previous run
+        old.unlink()
 
-    if _size() > _SYNTH_INPUT_MAX_CHARS:      # step 1: trim long summaries
-        for g in payload["groups"]:
-            for row in g["nodes"]:
-                if len(row["summary"]) > _SYNTH_TRIM_SUMMARY:
-                    row["summary"] = row["summary"][:_SYNTH_TRIM_SUMMARY]
-        payload["truncated"] = "summaries"
-    if _size() > _SYNTH_INPUT_MAX_CHARS:      # step 2: counted samples per group
-        for g in payload["groups"]:
-            if len(g["nodes"]) > _SYNTH_GROUP_SAMPLE:
-                g["nodes"] = g["nodes"][:_SYNTH_GROUP_SAMPLE]
-                g["sampled"] = True
-        payload["truncated"] = True
-    gs.atomic_write_text(amg_root / "work" / "synth-input.json",
-                         json.dumps(payload, ensure_ascii=False, indent=1))
-    return {"nodes": len(nodes), "groups": len(payload["groups"]),
-            "chars": _size(), "truncated": payload["truncated"]}
+    def _payload(rows: List[Dict[str, Any]], part: int = 0, parts: int = 1,
+                 with_gaps: bool = True) -> Dict[str, Any]:
+        p: Dict[str, Any] = {"nodes_total": len(nodes), "stale_total": stale_total,
+                             "truncated": any("trimmed" in g or "sampled" in g
+                                              for g in rows)}
+        if parts > 1:
+            p.update({"part": part, "parts": parts, "groups_total": len(group_rows)})
+        if with_gaps:
+            p["gaps"] = gaps
+        p["groups"] = rows
+        return p
+
+    single = _payload(group_rows)
+    text = json.dumps(single, ensure_ascii=False, indent=1)
+    if len(text) <= cap:
+        gs.atomic_write_text(work / "synth-input.json", text)
+        return {"nodes": len(nodes), "groups": len(group_rows),
+                "chars": len(text), "truncated": single["truncated"], "parts": 1}
+
+    # Split into whole-group parts under the cap (header room reserved); a group that
+    # alone exceeds a part goes through the trim/sample ladder first.
+    body_cap = max(cap - len(json.dumps(gaps, ensure_ascii=False)) - 2000, cap // 2)
+    chunks: List[List[Dict[str, Any]]] = [[]]
+    used = 0
+    for g in group_rows:
+        gsize = len(json.dumps(g, ensure_ascii=False))
+        if gsize > body_cap:
+            _shrink_group(g, body_cap)
+            gsize = len(json.dumps(g, ensure_ascii=False))
+        if chunks[-1] and used + gsize > body_cap:
+            chunks.append([])
+            used = 0
+        chunks[-1].append(g)
+        used += gsize
+    total = 0
+    for i, rows in enumerate(chunks, start=1):
+        text = json.dumps(_payload(rows, part=i, parts=len(chunks), with_gaps=i == 1),
+                          ensure_ascii=False, indent=1)
+        gs.atomic_write_text(work / f"synth-input-p{i:02d}.json", text)
+        total += len(text)
+    # No stale single sheet next to the parts — the SKILL feeds the parts explicitly.
+    plain = work / "synth-input.json"
+    if plain.exists():
+        plain.unlink()
+    return {"nodes": len(nodes), "groups": len(group_rows), "chars": total,
+            "truncated": any("trimmed" in g or "sampled" in g for g in group_rows),
+            "parts": len(chunks)}
 
 
 def hub_candidates(amg_root: Path) -> Dict[str, Any]:

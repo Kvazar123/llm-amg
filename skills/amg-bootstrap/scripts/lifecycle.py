@@ -25,23 +25,29 @@ active and `automation: on` (turning automation off leaves only the manual comma
                   task-shaped prompt arrives (see prompt_hint); on every other prompt
                   it prints nothing and injects zero tokens.
 
-Four MANUAL commands, exposed as the `/amg <sub>` slash command (and reachable by
+The MANUAL commands, exposed as the `/amg <sub>` slash command (and reachable by
 verbal intent through the activation block):
 
-  on / off : flip `active` in config.yml (turn AMG on/off for this project).
-  repair   : recover + verify --repair (heal on demand; the manual analog of the
-             session-start hook — and it runs regardless of the automation gate).
-  status   : a one-screen report (active, automation, graph root, node/stale counts,
-             pending transactions, stale lock, queue size, last pack, last
-             consolidation, eval summary) so the user sees state without reading files.
+  on / off   : flip `active` in config.yml (turn AMG on/off for this project).
+  repair     : recover + verify --repair (heal on demand; the manual analog of the
+               session-start hook — and it runs regardless of the automation gate).
+  status     : a one-screen report (engine version, active, automation, graph root,
+               node/stale counts, pending transactions, stale lock, semantic queue,
+               sync deferral, last sync/pack/consolidation, eval summary) so the user
+               sees state without reading files; presented verbatim by every env.
+  version    : the installed engine version (VERSION shipped inside this skill).
+  sync-defer : record "the user deferred the offered sync" with the backlog size, so
+               the start-of-session question is not repeated at the same size.
+  help       : the user-facing verb list (control verbs here, work verbs = skills/loop).
 
 Every automatic operation thus has a manual analog (DoD): healing <-> /amg repair,
 weight folding <-> the amg-consolidate skill, the digest <-> consolidate.py digest.
 
 CLI:
-  python lifecycle.py session-start|session-end [<project_root>] [--root <agent_dir>]
-  python lifecycle.py status|repair|on|off      [<project_root>] [--root <agent_dir>]
-  python lifecycle.py prompt-hint               [<project_root>] [--root <agent_dir>]
+  python lifecycle.py session-start|session-end     [<project_root>] [--root <agent_dir>]
+  python lifecycle.py status|repair|on|off          [<project_root>] [--root <agent_dir>]
+  python lifecycle.py version|help|sync-defer       [<project_root>] [--root <agent_dir>]
+  python lifecycle.py prompt-hint                   [<project_root>] [--root <agent_dir>]
   session-end also accepts the hook's JSON on stdin, or --transcript <path> to dump a
   session manually in an environment without the SessionEnd hook; prompt-hint reads
   the UserPromptSubmit payload (the `prompt` field) the same way.
@@ -509,6 +515,71 @@ def prompt_hint(amg: Path, prompt: str) -> Optional[str]:
 # Manual commands
 # --------------------------------------------------------------------------- #
 
+def _engine_version() -> str:
+    """The installed engine's version. The installer ships the repo's VERSION inside
+    the amg-bootstrap skill (next to scripts/); a dev checkout falls back to the
+    repository-root VERSION. Unknown when neither exists (a hand-copied engine)."""
+    here = Path(__file__).resolve()
+    for cand in (here.parents[1] / "VERSION",      # <skill>/VERSION (installed)
+                 here.parents[3] / "VERSION"):     # repo root (dev checkout)
+        try:
+            if cand.exists():
+                return cand.read_text(encoding="utf-8").strip()
+        except OSError:
+            pass
+    return "unknown"
+
+
+def sync_defer(amg: Path) -> Dict[str, Any]:
+    """Record that the user deferred the offered semantic sync, together with the
+    backlog size it was deferred at (work/sync-defer.json). The start-of-session
+    routine re-asks only when the backlog has grown noticeably past this mark, so a
+    standing deferral stops costing the user the same question every session. The
+    stamp is consumed implicitly: a sync drains the queue, the next non-zero backlog
+    starts a fresh comparison."""
+    queued = _queue_size(amg) or 0
+    stamp = amg / "work" / "sync-defer.json"
+    try:
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        gs.atomic_write_text(stamp, json.dumps(
+            {"queued": queued, "ts": time.strftime("%Y-%m-%dT%H:%M:%S")}) + "\n")
+    except OSError as exc:
+        return {"error": f"cannot write {stamp}: {exc}"}
+    return {"action": "sync-defer", "queued": queued, "stamp": str(stamp)}
+
+
+def _sync_deferred(amg: Path) -> Optional[Dict[str, Any]]:
+    """The recorded sync deferral ({queued, ts}) or None."""
+    stamp = amg / "work" / "sync-defer.json"
+    if not stamp.exists():
+        return None
+    try:
+        d = json.loads(stamp.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+HELP_TEXT = """\
+AMG operations (any verb also works as plain words that name the memory / AMG):
+  status       one-screen state report (engine version, graph size, semantic queue,
+               last sync / pack / consolidation, connectivity) — deterministic script
+  version      the installed engine version
+  on / off     enable / disable AMG (flips `active` in config.yml; takes effect at once)
+  repair       recover + verify --repair (heal after a crash) — deterministic script
+  sync         build or reconcile the graph with the sources (model-driven: the
+               amg-bootstrap flow / skill)
+  retrieve <q> assemble a context pack for a query (direct retrieve.py call; --compact
+               for a targeted pointer lookup, --intent history|conflict by meaning)
+  consolidate  fold weights, select conclusions, compact over-budget branches
+               (model-driven: the amg-consolidate flow / skill)
+  view         export + open the read-only 3D graph viewer (export_graph.py --open)
+  sync-defer   record "sync deferred" so later sessions stop re-asking at the same size
+  help         this list
+Control verbs (status/version/on/off/repair/sync-defer/help) run via lifecycle.py;
+work verbs (sync/retrieve/consolidate/view) belong to the skills / activation loop."""
+
+
 def repair(project_root: Path, amg: Path) -> Dict[str, Any]:
     healed = _heal(amg)
     out = {"action": "repair", **healed}
@@ -564,6 +635,24 @@ def _queue_size(amg: Path) -> Optional[int]:
         return len(json.loads(q.read_text(encoding="utf-8")).get("units", []))
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def _last_sync(amg: Path) -> Optional[str]:
+    """The last reconciliation line from the action log (bootstrap or apply) — the
+    honest 'when did the graph last move toward the sources' answer for status."""
+    log = amg / "actions.log"
+    if not log.exists():
+        log = amg / "log.md"                 # legacy name, adopted on the next write
+    if not log.exists():
+        return None
+    last: Optional[str] = None
+    try:
+        for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+            if " reconcile |" in line:
+                last = line.strip()
+    except OSError:
+        return None
+    return last
 
 
 # How many deterministic weight folds (one per session end) may pass without a
@@ -655,6 +744,7 @@ def status(project_root: Path, amg: Path) -> Dict[str, Any]:
                                rc.session_source_prefix(project_root, cfg, amg))
     consolidation = _consolidation_state(amg)
     return {
+        "engine_version": _engine_version(),
         "active": _is_active(cfg),
         "automation": _automation_on(cfg),
         "graph_root": str(amg),
@@ -667,6 +757,8 @@ def status(project_root: Path, amg: Path) -> Dict[str, Any]:
         "stale_lock": problems.get("stale_lock", []),
         "conflicts": rc.find_conflict_markers(store),   # git merge markers in nodes
         "queue_size": _queue_size(amg),
+        "sync_deferred": _sync_deferred(amg),
+        "last_sync": _last_sync(amg),
         "last_pack": _mtime(amg / "cache" / "pack.md"),
         "last_consolidation": consolidation["last"],
         # The judgment half tracked apart from the deterministic fold: hooks (or the
@@ -684,9 +776,13 @@ def status(project_root: Path, amg: Path) -> Dict[str, Any]:
 
 
 def format_status(d: Dict[str, Any]) -> str:
-    """One-screen human-readable status (DoD: the user sees state without reading files)."""
+    """One-screen human-readable status (DoD: the user sees state without reading
+    files). Environments are told to present this report VERBATIM — the layout is
+    the contract, so the same facts read the same everywhere."""
+    q = d.get("queue_size")
+    deferred = d.get("sync_deferred") or {}
     lines = [
-        "AMG status",
+        f"AMG status (engine v{d.get('engine_version', 'unknown')})",
         f"  active:               {d['active']}",
         f"  automation:           {d['automation']}",
         f"  graph root:           {d['graph_root']}",
@@ -695,7 +791,13 @@ def format_status(d: Dict[str, Any]) -> str:
         f"  pending transactions: {len(d['pending_transactions'])}",
         f"  stale lock:           {'yes' if d['stale_lock'] else 'no'}",
         f"  conflicts:            {len(d.get('conflicts') or [])}",
-        f"  queue size:           {d['queue_size'] if d['queue_size'] is not None else '-'}",
+        "  semantic queue:       "
+        + (f"{q} unit(s) awaiting enrichment" if q else "0 — graph matches the sources"),
+    ]
+    if deferred.get("queued"):
+        lines.append(f"  sync deferred at:     {deferred['queued']} unit(s) ({deferred.get('ts', '-')})")
+    lines += [
+        f"  last sync:            {d.get('last_sync') or '-'}",
         f"  last pack:            {d['last_pack'] or '-'}",
         f"  last consolidation:   {d['last_consolidation'] or '-'}",
         f"  last judged pass:     {d.get('last_judged_consolidation') or '-'}"
@@ -781,6 +883,12 @@ def main(argv: List[str]) -> int:
         print(json.dumps(set_active(amg, cmd == "on"), indent=2)); return 0
     if cmd == "status":
         print(format_status(status(root, amg))); return 0
+    if cmd == "version":
+        print(f"AMG engine v{_engine_version()}"); return 0
+    if cmd == "sync-defer":
+        print(json.dumps(sync_defer(amg), indent=2)); return 0
+    if cmd == "help":
+        print(HELP_TEXT); return 0
     print(__doc__); return 0
 
 

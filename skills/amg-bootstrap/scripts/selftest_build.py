@@ -302,7 +302,40 @@ def main() -> int:
         assert CORE not in gaps["undocumented_code"], gaps["undocumented_code"]
         assert f"{CORE}::Widget" not in gaps["undocumented_code"], gaps["undocumented_code"]
         assert gaps["drifted_doc_refs"] == [] and gaps["contradiction_pairs"] == [], gaps
+        assert si["parts"] == 1 and not list((amg / "work").glob("synth-input-p*.json")), \
+            "under the cap: one sheet, no part files"
         print("PASS  synth-input: one-file sheet with grouped summaries + gap material")
+
+        # over the cap the sheet splits into WHOLE-GROUP parts (a small-window model
+        # reads complete rows part by part); gaps ride in part 1 only, headers carry
+        # {part, parts, groups_total}, and the plain sheet is removed
+        cfgp = amg / "config.yml"
+        cfg_text = cfgp.read_text(encoding="utf-8")
+        cfgp.write_text(cfg_text + "\nlinker:\n  synth_input_max_chars: 1500\n",
+                        encoding="utf-8")
+        try:
+            sp = LC.synth_input(amg)
+            assert sp["parts"] > 1, sp
+            parts = sorted((amg / "work").glob("synth-input-p*.json"))
+            assert len(parts) == sp["parts"], (len(parts), sp)
+            assert not (amg / "work" / "synth-input.json").exists(), \
+                "no stale single sheet next to the parts"
+            p1 = json.loads(parts[0].read_text(encoding="utf-8"))
+            p2 = json.loads(parts[1].read_text(encoding="utf-8"))
+            assert p1["part"] == 1 and p1["parts"] == sp["parts"] \
+                and p1["groups_total"] == sp["groups"], p1
+            assert "gaps" in p1 and "gaps" not in p2, "gap material rides in part 1 only"
+            covered = [g["subtree"] for p in parts
+                       for g in json.loads(p.read_text(encoding="utf-8"))["groups"]]
+            assert sorted(covered) == sorted(sgroups), \
+                "the parts together cover every group exactly once"
+        finally:
+            cfgp.write_text(cfg_text, encoding="utf-8")
+        si = LC.synth_input(amg)                      # back under the default cap
+        assert si["parts"] == 1 and (amg / "work" / "synth-input.json").exists()
+        assert not list((amg / "work").glob("synth-input-p*.json")), \
+            "stale parts are cleared when the sheet fits again"
+        print("PASS  synth-input parts: whole-group split over the cap, part-1 gaps, clean revert")
 
         # 4. idempotency: the re-run bootstrap is a strict no-op
         s = RC.plan(proj, amg)

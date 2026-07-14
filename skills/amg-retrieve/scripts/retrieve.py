@@ -40,10 +40,11 @@ CLI:
         # contradicted nodes for a history/audit or "show contradictions" query. The
         # RETRIEVER SUBAGENT sets this from the query in ANY language (intent is the model's
         # to recognize; the code only applies it), so no language-specific keywords live here.
-    python retrieve.py "<query>" --compact      # the pointer profile: modest built-in
-        # budgets, operational bodies replaced by path:line pointer lines — for a
-        # TARGETED lookup; the full profile is for entering an unfamiliar area. The
-        # CALLER chooses (no activation statistic can tell the two query kinds apart).
+    python retrieve.py "<query>" --compact      # the pointer profile: tier budgets at
+        # `compact_ratio` (default 0.25) of the effective token_budget, operational
+        # bodies replaced by path:line pointer lines — for a TARGETED lookup; the full
+        # profile is for entering an unfamiliar area. The CALLER chooses (no
+        # activation statistic can tell the two query kinds apart).
 """
 from __future__ import annotations
 
@@ -91,6 +92,12 @@ DEFAULTS: Dict[str, Any] = {
     "seed_floor": 0.0,              # teleport mass given to every node (0 = pure relevance)
     "token_budget": {"strategic": 1200, "tactical": 2500,
                      "operational": 6000, "periphery_links": 40},
+    # The compact (pointer) profile's tier budgets = this share of the EFFECTIVE
+    # token_budget (so compact scales with a config that widened or narrowed the
+    # full profile, staying proportionally small). periphery_links is deliberately
+    # NOT scaled: periphery lines are one-liners, and the field measurement showed
+    # they carry the compact profile's recall.
+    "compact_ratio": 0.25,
     "relation_priors": {
         "documents": 0.9, "specifies": 0.9, "implements": 0.9,
         "calls": 0.8, "depends_on": 0.8, "inherits": 0.8,
@@ -605,14 +612,6 @@ def _explain_inflow(ppr: Dict[str, float], adj: Dict[str, List[Tuple[str, float]
 # Pack assembly (budgeted, tiered)
 # --------------------------------------------------------------------------- #
 
-# The compact (pointer) profile's budgets are deliberately the CODE defaults above,
-# not the config's token_budget: a targeted lookup must not inherit a config that
-# widened the full profile for deep-context work. The caller chooses the profile
-# (--compact) by the query's nature — a pointer question vs entering the unfamiliar —
-# a distinction no scalar statistic of the activations carries (the seeded head and
-# the inflow tail overlap in value; field gold sits as deep as rank ~222).
-_COMPACT_BUDGET = dict(DEFAULTS["token_budget"])
-
 # Script bands for the token estimate. BPE tokenizers spend ~4 chars/token on ASCII
 # text but only ~2.2 on non-Latin alphabetic scripts (Cyrillic, Greek, Arabic, ...)
 # and ~1.5 on CJK, so a flat len//4 undercounts non-English text by ~1.5-2x — and every
@@ -645,12 +644,18 @@ def assemble_pack(activation: Dict[str, float], nodes: Dict[str, Dict[str, Any]]
     activation threshold trims the pack only where it starts costing recall.
 
     `compact` is the pointer profile — the CALLER's explicit size choice where the
-    rejected statistics could not be one: the built-in modest budgets (_COMPACT_BUDGET,
-    ignoring the config's token_budget) and no operational bodies — every file-backed
-    node renders as a `path:line — name — summary` pointer line, only the authored
-    rulings (decision/adr) keep their rationale body."""
+    rejected statistics could not be one (a pointer question vs entering the
+    unfamiliar is a distinction no scalar of the activations carries): tier budgets
+    scaled down to `compact_ratio` of the effective token_budget (periphery_links
+    kept whole — its one-liners carry the compact recall) and no operational
+    bodies — every file-backed node renders as a `path:line — name — summary`
+    pointer line, only the authored rulings (decision/adr) keep their rationale."""
     thr = cfg["activation_threshold"]
-    budget = _COMPACT_BUDGET if compact else cfg["token_budget"]
+    budget = cfg["token_budget"]
+    if compact:
+        ratio = float(cfg.get("compact_ratio", 0.25))
+        budget = {k: (v if k == "periphery_links" else max(1, int(v * ratio)))
+                  for k, v in budget.items()}
     ranked = sorted((nid for nid, a in activation.items() if a >= thr),
                     key=lambda nid: activation[nid], reverse=True)
 

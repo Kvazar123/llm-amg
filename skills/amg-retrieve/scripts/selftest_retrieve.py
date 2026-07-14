@@ -257,10 +257,11 @@ def test_pack_survives_large_graph(tmp: Path) -> None:
 
 
 def test_compact_profile(tmp: Path) -> None:
-    """--compact is the CALLER's pointer profile: the built-in modest budgets replace
-    the config's token_budget, and operational bodies are not unfolded — a file-backed
-    doc node renders as a `path:line — name — summary` pointer, a sourceless authored
-    note as an id line; only the rulings (decision/adr) keep their rationale body."""
+    """--compact is the CALLER's pointer profile: tier budgets at `compact_ratio`
+    (default 0.25) of the EFFECTIVE token_budget (periphery_links kept whole), and
+    operational bodies are not unfolded — a file-backed doc node renders as a
+    `path:line — name — summary` pointer, a sourceless authored note as an id line;
+    only the rulings (decision/adr) keep their rationale body."""
     store = tmp / "compact"
     doc_body = "Long design prose that the compact profile must not unfold into the pack."
     dec_body = "We chose exponential backoff because retries otherwise stampede the gateway."
@@ -286,17 +287,27 @@ def test_compact_profile(tmp: Path) -> None:
     assert dec_body in comp["pack"], "a decision keeps its rationale body in compact"
     assert "- notes:obs-1 — " in comp["pack"], "a sourceless note renders as an id line"
     assert len(comp["pack"]) < len(full["pack"]), "the pointer profile must be smaller"
-    # budget independence: a config that starves the full profile's operational tier
-    # must not starve compact — its budgets are built in, not read from the config
-    starved = {**R.load_config(store),
-               "token_budget": {**R.DEFAULTS["token_budget"], "operational": 10}}
-    fs = R.retrieve(store, query, config=starved, write_pack=False, log_coactivation=False)
-    cs = R.retrieve(store, query, config=starved, write_pack=False, log_coactivation=False,
+    # ratio semantics: compact budgets = compact_ratio x the EFFECTIVE token_budget
+    # (scaling with a widened/narrowed config), periphery_links NOT scaled. A config
+    # whose operational tier is big enough at ratio x keeps the doc pointer line;
+    # shrinking the ratio to ~0 starves compact while the full profile is unchanged.
+    wide = {**R.load_config(store),
+            "token_budget": {**R.DEFAULTS["token_budget"], "operational": 400},
+            "compact_ratio": 0.25}
+    cs = R.retrieve(store, query, config=wide, write_pack=False, log_coactivation=False,
                     compact=True)
-    assert "doc:doc/design.md::retries" not in fs["tiers"]["operational"], fs["tiers"]
     assert "doc:doc/design.md::retries" in cs["tiers"]["operational"], \
-        "compact must use the built-in budgets, not the config's"
-    print("PASS  compact: pointer lines instead of bodies, rulings keep body, built-in budgets")
+        "compact at ratio 0.25 of operational=400 holds the pointer line"
+    tiny = {**wide, "compact_ratio": 0.001}
+    ct = R.retrieve(store, query, config=tiny, write_pack=False, log_coactivation=False,
+                    compact=True)
+    ft = R.retrieve(store, query, config=tiny, write_pack=False, log_coactivation=False)
+    assert "doc:doc/design.md::retries" not in ct["tiers"]["operational"], \
+        "a tiny compact_ratio starves the compact operational tier"
+    assert "doc:doc/design.md::retries" in ft["tiers"]["operational"], \
+        "compact_ratio must not touch the full profile"
+    assert ct["tiers"]["periphery"], "periphery_links is not scaled by compact_ratio"
+    print("PASS  compact: pointer lines instead of bodies, rulings keep body, ratio budgets")
 
 
 def test_intent_and_conflict(tmp: Path) -> None:

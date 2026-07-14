@@ -218,6 +218,11 @@ linker:
   top_k: 5              # candidate nominees per node
   min_sim: 0.35         # embedding-cosine floor for a nomination (embeddings mode)
   batch_nodes: 80       # nodes per link batch (bounds one linker's context)
+  # Ceiling (chars) on ONE synthesis-input sheet (work/synth-input.json). Above it the
+  # sheet splits into whole-group parts (synth-input-pNN.json) processed one spawn at
+  # a time — lower this for a model with a smaller context window (e.g. 300000 for a
+  # 256k-token window on non-English summaries) instead of losing rows to overflow.
+  synth_input_max_chars: 800000
 
 # -----------------------------------------------------------------------------
 # Spreading-activation retrieval (amg-retrieve). Query-biased Personalized PageRank.
@@ -235,6 +240,11 @@ retrieval:
     tactical: 10000                # modules
     operational: 24000             # code pointers + doc/notes bodies in focus
     periphery_links: 60           # link-only references to the next ring
+  # The compact (--compact) pointer profile: its tier budgets are this share of the
+  # effective token_budget above, so compact stays proportionally small when you widen
+  # or narrow the full profile. periphery_links is NOT scaled — the one-line periphery
+  # is what carries the compact profile's recall (measured).
+  compact_ratio: 0.25
   relation_priors:                # how strongly each edge type conducts (beta)
     documents: 0.9
     implements: 0.9

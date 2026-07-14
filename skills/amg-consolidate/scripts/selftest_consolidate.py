@@ -587,6 +587,66 @@ def test_gate_robust():
     print("PASS  eval-gate: unresolved cases -> skip + apply (no false reject when disarmed)")
 
 
+def test_gate_split():
+    """The gate governs ONLY the compaction subset: in a mixed actions file a harmful
+    compaction is rejected while the non-compaction remainder (promote) still applies —
+    recall safety must not hold the safe half hostage. The report names both halves.
+    Also the wiring of the frozen hop-gold: the after-run reuses the baseline's per-case
+    hop_gold (an override empties the denominator -> pack_hop_recall None)."""
+    gold = "code:src/billing.py::compute_total"
+    safe_id = "doc:doc/refunds.md::overview"
+    proj, amg = _armed_demo("reject")
+    try:
+        res = C.apply_actions(proj, _write_actions(amg, [
+            {"action": "retire", "id": gold, "force": True},
+            {"action": "promote", "id": safe_id, "status": "active"}]))
+        assert res.get("gate") == "rejected", res
+        assert res.get("promote") == 1, f"safe half must apply on a rejected compaction: {res}"
+        assert res.get("rejected_compaction_actions") == 1, res
+        nodes = C.load_nodes(gs.GraphStore(amg))
+        assert gold in nodes, "the rejected compaction must not touch the graph"
+        assert nodes[safe_id].get("status") == "active", "promote landed despite the reject"
+
+        # hop-gold freeze wiring: an override replaces the per-graph recomputation
+        cases = json.loads((amg / "cases.json").read_text(encoding="utf-8"))
+        cfg = R.load_config(amg)
+        base = E.run(amg, cases, cfg)
+        row = base["per_case"][0]
+        assert "hop_gold_ids" in row and "pack_hop_recall" in row, sorted(row)
+        empty = E.run(amg, cases, cfg,
+                      hop_gold_by_case={str(r["id"]): set() for r in base["per_case"]})
+        assert all(r["pack_hop_recall"] is None for r in empty["per_case"]), \
+            "an empty frozen hop-gold must empty the denominator"
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+    print("PASS  gate split: rejected compaction withheld, safe half applied; hop-gold freeze wired")
+
+
+def test_plan_backlog_warning():
+    """A judgment pass over a graph that lags its sources judges a skewed picture, so
+    the plan carries the semantic backlog and warns past the threshold (max(100, 10%
+    of nodes)) — the flow then offers a sync first."""
+    proj = Path(tempfile.mkdtemp(prefix="amg-lag-"))
+    amg = proj / ".claude" / "amg"
+    amg.mkdir(parents=True)
+    E.build_demo_store(amg)
+    (amg / "work").mkdir(exist_ok=True)
+    units = [{"id": f"code:src/x.py::f{i}", "kind": "function"} for i in range(150)]
+    (amg / "work" / "queue.json").write_text(json.dumps({"units": units}), encoding="utf-8")
+    try:
+        res = C.make_plan(proj, amg)
+        assert res.get("queued_for_semantic") == 150, res
+        assert "warning" in res and "lags the sources" in res["warning"], res
+        plan = json.loads((amg / "work" / "consolidation-plan.json").read_text(encoding="utf-8"))
+        assert plan.get("queued_for_semantic") == 150 and "warning" in plan
+        (amg / "work" / "queue.json").write_text(json.dumps({"units": units[:3]}), encoding="utf-8")
+        res2 = C.make_plan(proj, amg)
+        assert res2.get("queued_for_semantic") == 3 and "warning" not in res2, res2
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+    print("PASS  plan: large semantic backlog surfaces a stale-graph warning; small one stays quiet")
+
+
 def test_hebbian_demo():
     """Mechanism correctness of the improved rule (NOT a default-on justification): a gold
     node behind a WEAK edge is missed with static weights (hop-recall 0) and recovered when
@@ -684,6 +744,8 @@ if __name__ == "__main__":
         test_arbitration(proj)
         test_eval_gate()
         test_gate_robust()
+        test_gate_split()
+        test_plan_backlog_warning()
         test_hebbian_demo()
         test_conflict_skip()
         print("\nALL CONSOLIDATION CHECKS PASSED")

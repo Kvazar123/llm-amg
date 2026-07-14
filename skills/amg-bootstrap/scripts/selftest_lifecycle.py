@@ -20,6 +20,7 @@ Run:  python selftest_lifecycle.py
 """
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -196,18 +197,44 @@ def case_prompt_hint() -> None:
 def case_status(proj: Path) -> None:
     rc.plan(proj, amg_root(proj))            # populate nodes + the work queue
     d = LC.status(proj, amg_root(proj))
-    for k in ("active", "automation", "graph_root", "branch", "commit", "nodes", "stale",
-              "pending_transactions", "stale_lock", "conflicts", "queue_size",
+    for k in ("engine_version", "active", "automation", "graph_root", "branch", "commit",
+              "nodes", "stale", "pending_transactions", "stale_lock", "conflicts",
+              "queue_size", "sync_deferred", "last_sync",
               "last_consolidation", "last_judged_consolidation",
               "weight_folds_since_judged", "consolidation_leftover", "eval_summary"):
         assert k in d, f"status missing field {k}"
     assert d["active"] is True and d["automation"] is True, d
     assert d["nodes"] >= 1, d
     assert d["queue_size"] is not None, "bootstrap wrote a queue -> size is known"
+    assert d["last_sync"] and "reconcile" in d["last_sync"], \
+        "plan wrote nodes -> the action log carries a reconcile line"
     text = LC.format_status(d)
-    assert "AMG status" in text and "automation:" in text, text
+    assert "AMG status (engine v" in text and "automation:" in text, text
     assert "git branch" in text and "conflicts:" in text, text
-    print("PASS  status: every field present; renders a one-screen report")
+    assert "semantic queue:" in text and "last sync:" in text, text
+    print("PASS  status: every field present (version, semantic queue, last sync); one-screen report")
+
+
+def case_version_and_help() -> None:
+    v = LC._engine_version()
+    assert v and v != "unknown", "dev checkout: repo-root VERSION resolves"
+    assert re.match(r"^\d+\.\d+\.\d+", v), f"SemVer expected, got {v!r}"
+    assert "status" in LC.HELP_TEXT and "sync-defer" in LC.HELP_TEXT \
+        and "retrieve" in LC.HELP_TEXT and "view" in LC.HELP_TEXT, "help lists every verb"
+    print(f"PASS  version/help: engine v{v} resolves; help lists control and work verbs")
+
+
+def case_sync_defer(proj: Path) -> None:
+    amg = amg_root(proj)
+    rc.plan(proj, amg)                        # ensure a queue exists
+    res = LC.sync_defer(amg)
+    assert res.get("action") == "sync-defer" and "queued" in res, res
+    d = LC.status(proj, amg)
+    sd = d.get("sync_deferred")
+    assert sd and sd.get("queued") == res["queued"], (sd, res)
+    if res["queued"]:
+        assert "sync deferred at:" in LC.format_status(d), "deferral surfaces in the report"
+    print("PASS  sync-defer: deferral recorded with the backlog size; status carries it")
 
 
 def case_on_off(proj: Path) -> None:
@@ -311,6 +338,8 @@ if __name__ == "__main__":
         case_session_start(proj)
         case_session_end(proj)
         case_status(proj)
+        case_version_and_help()
+        case_sync_defer(proj)
         case_consolidation_nudge()
         case_prompt_hint()
         case_on_off(proj)

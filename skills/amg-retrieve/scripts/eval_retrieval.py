@@ -52,7 +52,8 @@ def lexical_topk(rel: Dict[str, float], k: int) -> List[str]:
     return [nid for nid, _ in sorted(rel.items(), key=lambda kv: kv[1], reverse=True)][:k]
 
 
-def evaluate_case(store_root: Path, case: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, Any]:
+def evaluate_case(store_root: Path, case: Dict[str, Any], cfg: Dict[str, Any],
+                  hop_gold_override: Optional[Set[str]] = None) -> Dict[str, Any]:
     gold = set(case["gold_ids"])
     res = R.retrieve(store_root, case["query"], config=cfg,
                      write_pack=False, log_coactivation=False)
@@ -68,8 +69,13 @@ def evaluate_case(store_root: Path, case: Dict[str, Any], cfg: Dict[str, Any]) -
     lex_set = set(lex_rank[:K])
 
     # Gold nodes that are NOT lexically reachable within K -> the multi-hop subset.
+    # A before/after comparison (the consolidation gate) passes the BASELINE's set as
+    # hop_gold_override: the lexical ranking is graph-dependent (new hub nodes shift
+    # BM25), so recomputing it on the mutated graph would move the denominator and
+    # turn set drift into a phantom metric delta.
     rank_of = {nid: i for i, nid in enumerate(lex_rank)}
-    hop_gold = {g for g in gold if rank_of.get(g, 10**9) >= K}
+    hop_gold = (set(hop_gold_override) if hop_gold_override is not None
+                else {g for g in gold if rank_of.get(g, 10**9) >= K})
 
     # Secondary: does the assembled pack itself contain the gold?
     tiers = res["tiers"]
@@ -86,20 +92,30 @@ def evaluate_case(store_root: Path, case: Dict[str, Any], cfg: Dict[str, Any]) -
         "K": K,
         "gold": len(gold),
         "hop_gold": len(hop_gold),
+        "hop_gold_ids": sorted(hop_gold),       # lets a gate freeze the baseline's set
         "amg":     {"recall": recall(amg_set), "precision": prec(amg_set),
                     "hop_recall": hoprec(amg_set)},
         "lexical": {"recall": recall(lex_set), "precision": prec(lex_set),
                     "hop_recall": hoprec(lex_set)},
         "pack_recall": recall(pack_set),
+        # Multi-hop recall over the PRODUCT surface (the assembled pack), not the
+        # top-K ranking: the consolidation gate compares this one — legitimate
+        # indirection (a sub-hub deepening a path) may shift ranks a little while
+        # the pack, which is what the model actually receives, holds every gold.
+        "pack_hop_recall": hoprec(pack_set),
         "pack_gold": sorted(pack_set & gold),   # gold present in the pack (gate attribution)
         "missed_by_amg": sorted(gold - amg_set),
     }
 
 
 def run(store_root: Path, cases: List[Dict[str, Any]],
-        cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        cfg: Optional[Dict[str, Any]] = None,
+        hop_gold_by_case: Optional[Dict[str, Set[str]]] = None) -> Dict[str, Any]:
     cfg = cfg or R.load_config(store_root)
-    rows = [evaluate_case(store_root, c, cfg) for c in cases]
+    overrides = hop_gold_by_case or {}
+    rows = [evaluate_case(store_root, c, cfg,
+                          overrides.get(str(c.get("id", c["query"][:30]))))
+            for c in cases]
 
     def mean(getter: Callable[[Dict[str, Any]], Any],
              where: Callable[[Dict[str, Any]], bool] = lambda r: True) -> Optional[float]:
@@ -115,6 +131,7 @@ def run(store_root: Path, cases: List[Dict[str, Any]],
                     "precision": mean(lambda r: r["lexical"]["precision"]),
                     "hop_recall": mean(lambda r: r["lexical"]["hop_recall"])},
         "amg_pack_recall": mean(lambda r: r["pack_recall"]),
+        "amg_pack_hop_recall": mean(lambda r: r["pack_hop_recall"]),
     }
     return {"per_case": rows, "aggregate": agg}
 
