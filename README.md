@@ -4,7 +4,7 @@
 
 > Documentation: [Theory](docs/en/THEORY.md) · [Architecture](docs/en/architecture/README.md) · [Guide](docs/en/GUIDE.md) · [Install](INSTALL.md) · [Roadmap](docs/en/architecture/11-roadmap.md) · Русский: [README_RU.md](README_RU.md)
 
-> ⚠️ **TESTED ON CLAUDE CODE ONLY.** The installer can also set the memory up in other agent environments: **Codex** — with skills and TOML subagents (`--env codex`, the `.agents`/`.codex` directories); other AGENTS.md agents (Qwen Coder, etc.) — via a portable skill-less block (`--env generic`). But **functionality and stability on any non-Claude-Code environment are NOT yet tested or guaranteed** — all testing so far was on Claude Code. Verifying these environments is a separate roadmap stage still ahead.
+> ⚠️ **TESTED ON CLAUDE CODE ONLY.** The installer can also set the memory up in other agent environments, each with its own mode: **Codex** (`--env codex`, skills + TOML subagents), **OpenCode** (`--env opencode`, skills discovered by the environment itself + subagents in `.opencode/agent`), **Qwen Code** (`--env qwen`, skills + subagents + session hooks, the `.qwen` directory), and **any unknown AGENTS.md environment** (`--env generic`, a portable skill-less block). But **functionality and stability on any non-Claude-Code environment are NOT yet tested or guaranteed** — all testing so far was on Claude Code. Verifying these environments is the roadmap stage now in progress.
 
 ## What it is
 
@@ -23,6 +23,8 @@ flowchart LR
 
 **The consolidated memory AMG builds is for more than code.** You can feed it **any** information from text files: source code, documentation and notes (Markdown, reStructuredText), plain text, data (JSON/YAML/NDJSON, CSV tables), logs, chat exports, and binary documents — PDF, DOCX, XLSX, PPTX (via optional pure-Python libraries). Each file's type is detected automatically and routed to the right chunker: code by functions, documents by headings, JSON by records (deep nesting is split recursively), logs by episodes, chat by messages. **Python is parsed natively** — by the `ast` module, along its structure (module → classes → functions, with imports and calls), not as flat text; other languages (`.js`, `.ts`, `.php`, `.c`, `.cpp`, `.go`, `.rs`, `.java`, `.rb`, and more) get the same function-level granularity through the optional `tree-sitter`. So one memory holds a codebase's architecture, your text notes, third-party documents, and dumped dialogues alike — linking them into a single graph.
 
+**Weaker models feel this memory the most.** A strong model can reconstruct the project's picture empirically over and over — sweeping the structure with search and reads, with omissions and at a steep price; a weaker model gets lost on that same path and misses what matters. From the graph, any model receives ready, objective data instead — the gist of every part of the project and its place among the rest — rather than its own guesses over search fragments: for a weak model the memory restores the bearings it lacks, for a strong one it saves the cost of re-scouting.
+
 **What sets AMG apart among LLM memory systems:**
 
 - **retrieval by neighborhood, not flat top-k** — Personalized PageRank assembles multi-hop answers that vector search cannot reach, and the advantage is measured by a built-in harness (the hop-recall metric), not merely claimed;
@@ -36,7 +38,7 @@ flowchart LR
 - **reproducible, economical building** — summaries written once restore verbatim from a cache, each unit's text is handed to the builders inside the assignment, and trivial units are summarized by code with no model; every worker records its output in durable checkpoint parts, so an interruption costs minutes of work, never the batch;
 - **quality as a number, not a feeling** — recall and graph connectivity are measured by built-in metrics, and compaction passes an automatic recall guard;
 - **controlled, reversible forgetting** — memory is compressed only past a branch budget, with originals archived;
-- **portability** — the installer deploys the right mechanism per environment (Claude Code, Codex, other AGENTS.md agents; see the warning above), with a 3D graph viewer and a team mode included.
+- **portability** — the installer deploys the right mechanism per environment (Claude Code, Codex, OpenCode, Qwen Code, other AGENTS.md agents; see the warning above), with a 3D graph viewer and a team mode included.
 
 ## How it works
 
@@ -109,11 +111,13 @@ A `model` is not limited to the aliases: it is any string your environment accep
 
 **4. Activation ≠ building the graph.** `/amg on` (or agreeing during install) only raises the `active` flag; the graph is built by the loop in a **new session** — before the first task (with `automation: true`) or via `/amg sync`. Restart the session after the install: the environment registers skills and the `/amg` command at session start. To have the structural skeleton ready at once, build during install (`--build`).
 
-**5. Other environments (`--env`).** Portability is more than renaming a folder: slash commands, hooks, and the digest `@`-import are Claude Code mechanisms, so the installer deploys a different mechanism per environment:
-- **Codex** (`--env codex`) — with skills and **TOML subagents** in `.codex/agents` (with a per-role `model` and reasoning effort from the `models` block), a skill-aware `AGENTS.md` block, and no Claude hooks or command;
-- **other AGENTS.md environments** (`--env generic`, e.g. Qwen Coder) — a portable block **with no skills**, the same loop via direct script calls (the model reads `agents/*.md` as guidance).
+**5. Other environments (`--env`).** Portability is more than renaming a folder: the SKILL.md skill format itself is a cross-tool standard (Agent Skills), but the `/amg` slash command, hooks, and the digest `@`-import differ per environment, so the installer deploys a different mechanism for each:
+- **Codex** (`--env codex`) — with skills and **TOML subagents** in `.codex/agents` (with a per-role `model` and reasoning effort from the `models` block) and a skill-aware `AGENTS.md` block; no hooks are written until Codex's hook surface is confirmed live;
+- **OpenCode** (`--env opencode`) — the environment **discovers** the skills in `.agents/skills` itself, subagents are rendered to `.opencode/agent` (a real model id from `models` passes through, a Claude alias is omitted), the same skill-aware block; no hooks (OpenCode's analogue is a JS plugin API);
+- **Qwen Code** (`--env qwen`) — the `.qwen` directory and the `QWEN.md` entry point: skills, native markdown subagents in `.qwen/agents` (the model from `models` — as a real id), **and session hooks** in `.qwen/settings.json` — Qwen reads a hooks block of the same shape Claude Code does;
+- **an unknown AGENTS.md environment** (`--env generic`) — a portable block **with no skills**, the same loop via direct script calls (the model reads `agents/*.md` as guidance); the skills still land in `.agents/skills`, and the block says to prefer them if the environment turns out to discover them.
 
-Baseline functionality does not depend on the environment; the set of conveniences does. **These modes are untested** on any non-Claude-Code environment so far — all testing was on Claude Code (verifying them is a separate roadmap stage still ahead).
+Baseline functionality does not depend on the environment; the set of conveniences does. **These modes are untested live** so far — all testing was on Claude Code (verifying them is the roadmap stage now in progress).
 
 **Updating the engine — without losing the graph.** A new version installs the same way the first one did: unpack the fresh AMG into any folder **outside the project** and run a reinstall — with `python install.py --target /path/to/project`, or in words: "reinstall/update AMG per `<path-to-AMG>/INSTALL.md`". A reinstall is idempotent and **never touches the graph**: only the `amg-*` skills and agents, the activation block between its markers, and the hooks are updated; your `config.yml` is never overwritten — the installer shows the values in force on its `in force:` line. After the update, restart the session and run `/amg sync`: it brings the graph up to the new version cheaply — the unchanged costs not a token, and deterministic-layer improvements (link repair, for example) apply by themselves, with no rebuild.
 
@@ -127,7 +131,7 @@ From install to memory's first answer is a couple of steps; no manual scripts �
 ```
 /amg status
 ```
-One screen: whether memory is active, graph size, queue, recent operations. Every operation is available through the single `/amg <verb>` command — or the same words in an ordinary request.
+One screen: the engine version, whether memory is active, graph size, the semantic queue (units awaiting enrichment), recent operations. Every operation is available through the single `/amg <verb>` command — or the same words in an ordinary request.
 
 **Build.** The main one-time step: **`/amg sync`** (the words "build / sync the memory graph") runs the full first build — the structural skeleton, the summaries, the hubs, and the linking pass. With `automation: true` the loop starts it by itself before the first task. From then on `sync` is incremental: it finds the files changed since last time and **finishes them itself** — refreshes the skeleton, re-summarizes the changed units, completes the links; the unchanged is untouched and costs not a token.
 
@@ -160,7 +164,7 @@ A dialogue reaches the memory in three steps: the `SessionEnd` hook writes the t
 
 The write policy is set by the **`session_policy`** key — the same one sources use: `absorb` (the default) takes the dialogue in as a distillate (the dump file may be deleted later and the summary stays), while `mirror` keeps it as a live projection (nodes live as long as the file does, so any detail stays retrievable in full — the trick for valuable conversations). The folder defaults to `<store>/sessions` and is correct under any agent directory.
 
-The automatic dump relies on Claude Code's hook and transcript format; in an environment without the hook, capturing notes as you go (`notes.py`) takes its place — and that is the portable "don't lose the dialogue" guarantee in any environment.
+The automatic transcript dump works where the environment provides both a `SessionEnd` hook and access to the transcript itself — natively that is Claude Code (Qwen Code gets the hook wired by the installer, but its transcript format differs — the dump there will be confirmed by live testing). In every other environment the dialogue is preserved by the **notes captured along the way** (`notes.py`) — the portable "don't lose the dialogue" guarantee everywhere: an environment that can dump the transcript dumps it, one that cannot keeps the conclusions as notes. That is also why, in environments without the dump, it pays to say the wrap-up out loud ("wrapping up the session") — on that signal the model first files the session's conclusions as notes, then runs consolidation.
 
 ## Modes and control
 
@@ -173,35 +177,37 @@ Who starts which operation, and when (note: hooks do only the deterministic step
 
 | Operation | Started by | When |
 |---|---|---|
-| Crash recovery | the `SessionStart` hook; manually — `/amg repair` | every session start |
-| Build / reconcile (`sync`) | **the model's loop** or a command — a hook does **not** run it | the first build once; then via the session-start check: a free deterministic diff, and when something changed the model **asks** whether to sync now or defer — the paid half never starts silently |
-| Context pack (`retrieve`) | the loop before a task; manually — `/amg retrieve` | before each task and on a focus shift |
-| Consolidation, the deterministic half (weight folding, digest, transcript dump) | the `SessionEnd` hook | every session end |
+| Crash recovery | the `SessionStart` hook (in hook-less environments — the loop's start check); manually — `/amg repair` | every session start |
+| Build / reconcile (`sync`) | **the model's loop** or a command — a hook does **not** run it | the first build once; then via the session-start check: a free deterministic diff, and when something changed the model **asks** whether to sync now or defer — the paid half never starts silently. Answer "defer" and the memory records the deferred volume: later sessions stop re-asking until the backlog grows noticeably (or you ask yourself) |
+| Memory search / context pack (`retrieve`) | the loop before a task; manually — `/amg retrieve` | before each task and on a focus shift |
+| Consolidation, the deterministic half (weight folding, digest, transcript dump) | the `SessionEnd` hook (in hook-less environments — the loop, on the wrap-up signal) | every session end |
 | Consolidation, the judgment half (selection into long-term memory, duplicate merging, branch compaction) | the loop — on **your words about finishing the work** ("let's wrap up", "closing the session"); manually — `/amg consolidate` | when you mention wrapping up / on request; if it lapses for a few sessions, the next session start reminds you in one line |
 
-In environments without hooks (Codex, the generic mode) the two "hook" rows are also driven by the model's loop — by the activation block's discipline under `automation: true`. On rate limits: hooks are plain scripts with no model — they spend no tokens and cannot hit a plan limit, so on a normal session close the deterministic half always runs, even with the limit exhausted. The judgment half is model work: with the limit gone, the loop simply cannot run it — and that is safe: the notes are already committed transactionally, the hook has done the dump and the weights, and the selection is non-destructively deferred to `/amg consolidate` in any later session.
+In environments without hooks (Codex, OpenCode, the generic mode) the two "hook" rows are also driven by the model's loop — by the activation block's discipline under `automation: true` — and there the **wrap-up signal is essential**: the session's end is invisible to the model, so the words "wrapping up" are the one event on which it can still file the conclusions as notes and run consolidation. On rate limits: hooks are plain scripts with no model — they spend no tokens and cannot hit a plan limit, so on a normal session close the deterministic half always runs, even with the limit exhausted. The judgment half is model work: with the limit gone, the loop simply cannot run it — and that is safe: the notes are already committed transactionally, the hook has done the dump and the weights, and the selection is non-destructively deferred to `/amg consolidate` in any later session.
 
 **Consolidation is hygiene, not saving.** Nothing is lost while you skip it — notes commit transactionally as you work, and the hook dumps the transcript regardless; what consolidation buys is sharpness: without it the graph slowly bloats and retrieval grows noisier. Its three phases: **weights** — deterministic, no model: it maintains the edges — reinforcing those whose both ends genuinely served an accepted session, fading those surfaced in the output but left unused, pruning the feeble (the logic: what helped the task wires together, what was shown and unused weakens; the weight update itself acts only with `weights.apply_hebbian` enabled — by default only the counters accrue); **plan** — read-only: it counts branch-budget overflows, near-duplicate candidates, and note salience, and hands the plan to the subagent; **apply** — the judgment pass (promote / merge / summarize / shorten / retire), with originals archived reversibly and decisions protected in code. Run it after a session dense with decisions, or when retrieval output has noticeably drifted — not after every touch.
 
 **`sync` and `consolidate` own different axes — and neither calls the other.** `sync` keeps the graph equal to the **sources**, and that is not "structure only": a content change in a file at the same path is caught by the content hash, the node is updated, its summary is re-derived, its links are completed — `sync` finishes the whole semantics of what changed (summaries, hubs, linking) by itself, needing no consolidation for it. `consolidate` maintains the **memory itself**, regardless of the project files: it folds the accumulated usage signals into weights, selects the dialogues' conclusions into long-term memory, merges duplicates, compacts over-budget branches, arbitrates contradictions. It changes nodes and edges too — but its input is not the sources, it is the accumulated experience of working with the memory (the logs, the notes, the overgrown branches). The short formula: `sync` is "graph ↔ files", `consolidate` is "graph ↔ its own experience".
 
-All control goes through one `/amg <verb>` command (and the same words in an ordinary request: the model matches intent and synonyms, not the exact verb; a verbal request counts as a memory operation only when it explicitly names the memory, the memory graph, or AMG):
+All control goes through one `/amg <verb>` command (and the same words in an ordinary request: the model matches intent and synonyms, not the exact verb; a verbal request counts as a memory operation only when it explicitly names the memory, the memory graph, or AMG). **The commands work in every environment**: where slash commands do not exist (Codex, OpenCode, Qwen Code, generic), a typed `/amg status` — or the same request in words — is executed by the loop itself; the activation block carries the mapping table, so the syntax is one and the same everywhere:
 
 | Command | Action |
 |---|---|
-| `/amg status` | state on one screen: active flag, automation, graph size, `stale`, pending operations, lock, queue, last pack and last consolidation |
+| `/amg status` | state on one screen (presented verbatim, not paraphrased): engine version, active flag, automation, graph size, `stale`, pending operations, lock, the semantic queue (units awaiting enrichment) and any deferred sync, last sync, last pack and last consolidation, connectivity |
+| `/amg version` | the installed engine version |
 | `/amg on` · `off` | enable / disable AMG |
 | `/amg repair` | restore consistency with disk (`recover` + `verify --repair`) |
 | `/amg sync` | build or reconcile the graph with the sources |
 | `/amg retrieve <query>` | assemble a context pack |
 | `/amg consolidate` | fold weights, file conclusions, compact over-budget branches |
 | `/amg view` | open the 3D graph viewer — an offline HTML, read-only (the words "open / show the memory graph", "visualize the memory") |
+| `/amg help` | the full verb list with what each does |
 
-Control verbs (`status`/`on`/`off`/`repair`) are run by a helper script; work verbs (`sync`/`retrieve`/`consolidate`) delegate to the dedicated skills (also invocable directly); `view` is a direct run of the exporter, no model involved. Every automatic operation has such a manual counterpart. Note: `on` only enables memory — **the graph is built by `sync`**. `on`/`off` write the `active` flag straight into the config and take effect **immediately**, no session restart — handy for switching the memory off over a run of simple tasks and back on. A single task can bypass the memory with plain words too ("skip AMG for this one") — the loop obeys a direct request.
+Control verbs (`status`/`version`/`on`/`off`/`repair`/`help`) are run by a helper script; work verbs (`sync`/`retrieve`/`consolidate`) delegate to the dedicated skills (also invocable directly); `view` is a direct run of the exporter, no model involved. Every automatic operation has such a manual counterpart. Note: `on` only enables memory — **the graph is built by `sync`**. `on`/`off` write the `active` flag straight into the config and take effect **immediately**, no session restart — handy for switching the memory off over a run of simple tasks and back on. A single task can bypass the memory with plain words too ("skip AMG for this one") — the loop obeys a direct request.
 
 **A digest in every session.** The loop's main failure is "the memory exists but was never consulted." So consolidation keeps a small `digest.md` next to the entry point — 5–10 of the most salient decisions and open questions — loaded into **every** session: the essentials are visible at once, before the first retrieval.
 
-> The `SessionStart`/`SessionEnd`/`UserPromptSubmit` hooks, the `/amg` slash command, and the digest `@`-import are Claude Code mechanisms; in other environments what gets deployed depends on the `--env` chosen at install (Codex / generic) — see "Installation", "Other environments."
+> The `SessionStart`/`SessionEnd`/`UserPromptSubmit` hooks, the `/amg` slash command, and the digest `@`-import are Claude Code mechanisms (hooks of the same shape are also read by Qwen Code); in other environments the set of conveniences depends on the `--env` chosen at install (Codex / OpenCode / Qwen / generic) — see "Installation", "Other environments."
 
 ## 3D graph viewer
 
@@ -271,6 +277,19 @@ The memory mechanism is implemented in full — from the store to the trust laye
 - **A 3D graph viewer** and **team work** (a shared folder and an optional graph-in-git) — covered in their own sections above.
 
 Version 1.0 fixed a stable data schema and a working install; later releases are additive or come with a migration (under SemVer, breaking the data contract without a migration would be a MAJOR bump).
+
+## What the memory keeps on disk
+
+The memory directory (`.claude/amg/`) is not a black box: besides the nodes themselves, the graph maintains several human-readable files worth looking into. The most valuable:
+
+- **`digest.md`** — the living digest: the 5–10 most salient standing decisions and open questions, loaded into every session;
+- **`gap-report.md`** — the post-build gap report: undocumented code, drifted documentation references, discovered contradictions — a ready list of what the project is missing;
+- **`arbitration.md`** — the arbitration log: every contradiction verdict with its reason and the sources compared — you can see why the memory considers one fact to have displaced another;
+- **`actions.log`** — the flat operations log: what the build and consolidation did, and when;
+- **`cache/pack.md`** — the last assembled context pack: exactly what the memory handed the model;
+- **`cache/graph.html`** — the last 3D viewer export (the section above).
+
+The full table of every file and directory in the store — what each shows and which are safe to delete — is in the [guide](docs/en/GUIDE.md), section "The memory directory's files".
 
 ## License
 

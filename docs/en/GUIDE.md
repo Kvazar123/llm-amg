@@ -42,13 +42,15 @@ The main flags: `--scope local|global`; `--agent-dir`/`--entrypoint` (the enviro
 
 ### Environments other than Claude Code (`--env`)
 
-Hooks, slash commands, and the digest `@`-import are Claude Code mechanisms; so the installer deploys **a different mechanism** per environment, not just substituted paths:
+The SKILL.md skill format is a cross-tool standard (Agent Skills) read by Codex, OpenCode, and Qwen Code alike; what differs per environment is the rest of the control surface — hooks, slash commands, the digest `@`-import, the subagent format. So the installer deploys **a different mechanism** per environment, not just substituted paths:
 
-- **`claude-code`** (the default) — the skill-aware block + the `SessionStart`/`SessionEnd` hooks + the `/amg` command; the models render into the `agents/amg-*.md` frontmatter.
-- **`codex`** — OpenAI Codex with skills and subagents: the skills go to `.agents/skills`, the subagents as **TOML in `.codex/agents`** (with `model`/`model_reasoning_effort` from the `models` block), the skill-aware `AGENTS.md` block is injected; the Claude hooks and `/amg` are not written — the model drives the loop itself.
-- **`generic`** — other AGENTS.md environments (Qwen Coder and the like) without skills: the portable skill-less block, the same loop by direct script calls (the model reads the `agents/*.md` prompts as instructions).
+- **`claude-code`** (the default) — the skill-aware block + the `SessionStart`/`SessionEnd`/`UserPromptSubmit` hooks + the `/amg` command; the models render into the `agents/amg-*.md` frontmatter.
+- **`codex`** — OpenAI Codex with skills and subagents: the skills go to `.agents/skills`, the subagents as **TOML in `.codex/agents`** (with `model`/`model_reasoning_effort` from the `models` block), the skill-aware `AGENTS.md` block is injected. No hooks are written — Codex's hook surface is unconfirmed and being verified live; the block's start check covers the session halves.
+- **`opencode`** — OpenCode discovers the skills in `.agents/skills` **natively**; the subagents render to `.opencode/agent/*.md` (`mode: subagent`; a real model id from `models` passes through, a Claude alias is omitted — OpenCode model ids are `provider/model` strings), and the portable skill-aware block is injected. No hooks (OpenCode's analogue is a JS plugin API — a future adaptation, not needed for the baseline).
+- **`qwen`** — Qwen Code, preset `.qwen` / `QWEN.md`: the skills go to `.qwen/skills`, the worker prompts land in `.qwen/agents/*.md` — Qwen's **native markdown subagents** — with the Claude-only frontmatter sanitized (`tools`/`effort` dropped; a Claude-alias model dropped, a real id such as `qwen3-coder-plus` passes through), and the session hooks merge into `.qwen/settings.json`, which Qwen reads in the same shape Claude Code does.
+- **`generic`** — an **unknown** AGENTS.md environment: the portable skill-less block, the same loop by direct script calls (the model reads the `agents/*.md` prompts as instructions). The skills still land in `.agents/skills` — the cross-tool location — and the block says to prefer them if the environment turns out to discover them (that is exactly how OpenCode behaved before it had its own mode).
 
-Baseline functionality does not depend on the environment; the set of conveniences does. **Modes other than Claude Code are not yet tested, stability is not guaranteed** — all testing was on Claude Code (verifying these environments is a separate roadmap stage ahead).
+Baseline functionality does not depend on the environment; the set of conveniences does. **Modes other than Claude Code are not yet tested live, stability is not guaranteed** — verifying these environments is the roadmap stage now in progress.
 
 ### The key `config.yml` keys
 
@@ -74,7 +76,7 @@ Under a global install the personal blocks (`models`, `retrieval.embeddings`) li
 
 ### Reinstall, engine updates, and uninstall
 
-**A reinstall** is simply another `install.py` run, idempotent: it replaces only the block between the markers and the `amg-*` engine, and **spares** your instructions in `CLAUDE.md`, the existing `config.yml`, the graph, and foreign skills/hooks. **Updating the engine to a new version is that same reinstall.** Unpack the fresh AMG into any folder outside the project (as for the first install; the source folder is again disposable afterwards) and run `python install.py --target /path/to/project` — or ask the model: "reinstall/update AMG per `<path>/INSTALL.md`". There is no special "update" mode and none is needed: the installer reads the facts on disk — an existing `config.yml` is returned untouched unconditionally (the output says `kept existing`, with the values in force on the `in force:` line; even `--set` flags do not apply to it — settings change by editing the file, or from scratch by deleting the config before the run), while the `models` block is re-rendered into the agents' frontmatter from **your** config, so the tiering carries over into the updated agents by itself. After the update, restart the session (skills register at start) and run `/amg sync`: unchanged nodes cost not a token, deterministic improvements (link repair and the like) apply by themselves, and you pay only for the files that genuinely changed since the last reconciliation. One consequence of sparing the config: **the fresh version's new template defaults do not reach your config** — if a release changed, say, the batch sizes (`builder.batch_units`, `linker.batch_nodes`), your config keeps the old values; after an update, compare against the new version's template and raise the keys you want by hand. **Uninstall** — `python install.py --target . --uninstall [--scope global] [--purge-graph]`: it cuts out the activation block (your content stays), removes the `amg-*` skills/agents/command and the AMG hooks; the graph is **kept** unless `--purge-graph` is given.
+**A reinstall** is simply another `install.py` run, idempotent: it replaces only the block between the markers and the `amg-*` engine, and **spares** your instructions in `CLAUDE.md`, the existing `config.yml`, the graph, and foreign skills/hooks. **Updating the engine to a new version is that same reinstall.** Unpack the fresh AMG into any folder outside the project (as for the first install; the source folder is again disposable afterwards) and run `python install.py --target /path/to/project` — or ask the model: "reinstall/update AMG per `<path>/INSTALL.md`". There is no special "update" mode and none is needed: the installer reads the facts on disk — an existing `config.yml` is never rewritten wholesale (the output says `kept existing`, with the values in force on the `in force:` line), but the keys **explicitly passed on the run** — `--set`, `--mirror`, `--absorb`, `--absorb-once`, `--exclude` — are applied to it as surgical line edits and echoed as `updated keys:`, so an answer collected by the install flow lands instead of silently vanishing; everything not passed stays as it was (or change it by editing the file). The `models` block is re-rendered into the agents' frontmatter from **your** config, so the tiering carries over into the updated agents by itself. After the update, restart the session (skills register at start) and run `/amg sync`: unchanged nodes cost not a token, deterministic improvements (link repair and the like) apply by themselves, and you pay only for the files that genuinely changed since the last reconciliation. One consequence of sparing the config: **the fresh version's new template defaults do not reach your config** — if a release changed, say, the batch sizes (`builder.batch_units`, `linker.batch_nodes`), your config keeps the old values; after an update, compare against the new version's template and raise the keys you want by hand. **Uninstall** — `python install.py --target . --uninstall [--scope global] [--purge-graph]`: it cuts out the activation block (your content stays), removes the `amg-*` skills/agents/command and the AMG hooks; the graph is **kept** unless `--purge-graph` is given.
 
 ### Activation ≠ building the graph
 
@@ -414,6 +416,42 @@ By default the memory derives (writes summaries and semantic edges for) **all** 
 ## The graph as plain files
 
 The graph is a set of markdown files under `.claude/amg/nodes/` (one file per node) plus service directories. It is versioned by git as ordinary text: node history shows in diffs, and rolling back a compaction is trivial (the originals sit in `archive/`, plus git history). The sources (what `mirror_path`/`absorb_path` point at) are changed by the system only when your task changes them — memory upkeep never touches them as a side effect.
+
+## The memory directory's files
+
+Everything the memory keeps lives under one directory (`.claude/amg/`), and none of it is opaque. The rule of thumb: the **canon** — the nodes, the configuration, and your own labeled data — must not be deleted; everything **generated** (the `work/` and `cache/` directories, an idle journal) is rebuildable, and deleting it costs at most a re-computation. The full inventory:
+
+| Path | What it holds and shows | Safe to delete? |
+|---|---|---|
+| `config.yml` | the configuration and the memory's master switch (`active`) | no — the canon |
+| `nodes/<bucket>/*.md` | the graph's nodes — the memory itself, one file each | no — the canon |
+| `digest.md` | the always-on digest: the most salient standing decisions and open questions, loaded into every session | regenerated by the next consolidation |
+| `gap-report.md` | the post-build gap report: undocumented code, drifted doc references, contradictions | yes — informational; rewritten by the next synthesis |
+| `arbitration.md` | the arbitration audit: every contradiction verdict with its reason and compared sources | deleting loses the audit history |
+| `actions.log` | the flat operations log (txid-deduped; rotated into `archive/`) | rotation is automatic; deleting loses the local history |
+| `journal/` | write-ahead transactions; empty when idle | no — managed by recovery |
+| `LOCK` | the single writer lock | managed automatically (`/amg repair` clears a stale one) |
+| `sessions/` | auto-dumped session transcripts, ingested as a source | under `absorb` the distillate survives deletion; under `mirror` deleting purges the nodes |
+| `evals/cases.json` | your labeled eval cases — what arms the recall gate | no — your data (an engine reinstall never touches the store) |
+| `work/queue.json` | the semantic queue: units awaiting enrichment | rebuilt by the next `plan`/`bootstrap` |
+| `work/queue-*.json` | builder batches cut from the queue | regenerated by `partition_queue` |
+| `work/derived-*.json` | worker checkpoint parts awaiting application | consumed by `apply-derived`; deleting loses unapplied judgments |
+| `work/applied/` · `work/invalid/` | consumed parts; quarantined torn files | yes — bookkeeping |
+| `work/judged/` | fully judged link batches — the linking pass's **memory of rejections** | deleting deliberately re-opens the judgments (they will be re-judged at model price) |
+| `work/link-batch-*.json` | linking nomination batches | regenerated by `link_candidates` |
+| `work/hub-candidates.json` · `work/synth-input*.json` | prepared inputs of the global passes (hub anchors; the synthesis sheet, split into `-pNN` parts when over the cap) | regenerated |
+| `work/consolidation-plan.json` · `work/actions.json` | the consolidation plan; the judge's actions awaiting apply | plan is regenerated; unapplied actions are the judge's paid output |
+| `work/eval-gate-report.json` | the last recall-gate verdict (deltas, regressions, attribution) | yes — informational |
+| `work/pack-log.jsonl` | this session's served packs (usage attribution; consumed at session end) | managed automatically |
+| `work/coactivation.log` | the exposure signal awaiting the next weight fold | consumed by the fold |
+| `work/usage.log` | the outcome signal (nodes co-used in accepted sessions) — the honest Hebbian substrate | consumed when `apply_hebbian` is on; accrues otherwise |
+| `work/hint-stamp` · `work/sync-defer.json` | the reminder cooldown; the recorded sync deferral | managed automatically |
+| `cache/pack.md` | the last assembled context pack — exactly what the model received | disposable |
+| `cache/embeddings.json` | the node-vector cache for semantic seeding | disposable — re-encoded on demand |
+| `cache/index.sqlite` | the generated read-index under `load_nodes` | disposable — rebuilt on the next read |
+| `cache/graph.html` / `graph.json` | the 3D viewer export / raw JSON | disposable |
+| `cache/derivations/` | the derivation cache: applied summaries/edges by content hash — a rebuild restores them verbatim | deletable at the price of re-deriving |
+| `archive/` | compaction originals (reversible forgetting) + rotated `coactivation-*` / `usage-*` logs | deleting loses restore and replay ability |
 
 ## Team work
 
