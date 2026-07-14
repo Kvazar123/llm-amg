@@ -57,7 +57,7 @@ The `plan` step (`make_plan`) is a deterministic analysis of the graph; it does 
 - **Merge candidates** (`near_duplicates`): pairs of **episodic** nodes (a type from `episodic_types`, not file-projected — exactly what `merge_near_duplicates` merges) whose lexical Jaccard similarity (over "summary + the first 400 characters of the body") is at least `near_duplicate_sim` (`0.82`). The comparison is narrowed to episodic nodes: the old full pair scan was O(n²) over the whole graph and could propose merging two mirrors — futile, since reconciliation recreates them.
 - **Episodic candidates and salience**: nodes with a `type` from `episodic_types` (`section`, `note`, `open_question`, `plan`) that are not file-projected (`source_kind` ≠ `derived_from_file`); each gets a salience score and a "protected" flag (the type is in `protect_types`). The list is sorted by ascending salience (least valuable first) and trimmed to 50.
 
-The result — `{generated, n_nodes, over_budget_branches, near_duplicates, episodic_candidates}`.
+The result — `{generated, n_nodes, over_budget_branches, near_duplicates, episodic_candidates, queued_for_semantic}`. The last field is the **stale-graph guard**: the plan reads the semantic queue's size, and past the threshold (`max(100, 10 % of nodes)`) it carries a `warning` — a judgment pass over a graph that lags its sources judges a skewed picture (a fresh structural skeleton without semantics fragments connectivity and distorts the gate's baseline), so the flow offers a sync first instead of judging blind. Advisory, not blocking: the user may still say "proceed".
 
 ## The salience rubric
 
@@ -101,24 +101,25 @@ The most valuable is never compressed first, and this is **guaranteed by code** 
 
 ## The automatic recall check (the eval guard)
 
-Compaction changes the graph itself, so it must not silently degrade retrieval. Before applying compaction actions, `apply` measures recall **on a clone of the graph** and touches the real graph only if recall held.
+Compaction changes the graph itself, so it must not silently degrade retrieval. Before applying the compaction actions, `apply` measures recall **on a clone of the graph** and lets them touch the real graph only if recall held. The guard governs **only the compaction subset** of the actions file: arbitration verdicts and promotions are non-destructive (a status change plus a linking edge) and apply regardless of the verdict — a rejected compaction must not hold the safe half hostage (a field consolidation once lost five sound verdicts to a 0.27-point compaction margin).
 
 ```mermaid
 flowchart LR
-    A["actions with compaction"] --> B["baseline: recall<br/>on the real graph"]
-    B --> C["apply on a CLONE"]
+    A["actions file"] --> S["split: safe half /<br/>compaction subset"]
+    S --> B["baseline: recall<br/>on the real graph"]
+    B --> C["compaction subset<br/>applied on a CLONE"]
     C --> D["re-measure: recall<br/>on the clone"]
     D --> E{drop below<br/>the threshold?}
-    E -->|no| OK["commit to the real graph"]
-    E -->|yes| F["reject / warn"]
+    E -->|no| OK["commit everything"]
+    E -->|yes| F["reject the compaction;<br/>the safe half still applies"]
 ```
 
 The mechanism (`_eval_gate` inside `apply_actions`):
 
 - the **baseline** is measured on the real graph under the lock, before the transaction is built, by the `eval_retrieval` harness (see [Evaluation and tools](./10-eval-tools.md));
-- the **candidate state** — the same actions are applied to a temporary **clone** of the graph (`_clone_for_eval`; a recursive `apply` with the guard off), and recall is measured on it. The real graph does not change until the check passes — so a "rollback of the already applied" is unnecessary and deliberately not implemented (it would be brittle: merging and inbound redirection would already have rewritten the neighbors);
-- the **metrics** — `pack_recall` (the share of the gold set in the *assembled pack*: compaction changes the pack's composition, not just top-K ranking) under the `min_recall_delta` threshold, and the aggregate `hop_recall` under `min_hop_recall_delta`; the "after − before" delta is compared;
-- the **`on_fail` reaction**: `reject` — no transaction is built, the graph is intact; `warn` — the changes are committed but the drop is recorded in the log and the report; `revert` — a synonym of `reject` (by construction there is nothing to roll back);
+- the **candidate state** — the compaction subset is applied to a temporary **clone** of the graph (`_clone_for_eval`; a recursive `apply` with the guard off), and recall is measured on it. The real graph does not change until the check passes — so a "rollback of the already applied" is unnecessary and deliberately not implemented (it would be brittle: merging and inbound redirection would already have rewritten the neighbors);
+- the **metrics** live on the pack — the product surface the model actually receives: `pack_recall` (the share of the gold set in the *assembled pack*) under the `min_recall_delta` threshold, and `pack_hop_recall` (the multi-hop gold subset within the pack) under `min_hop_recall_delta`; the "after − before" delta is compared. Two deliberate details: the hop metric is **pack-based, not rank-based** — legitimate compaction indirection (a sub-hub deepening hub→leaf paths) shifts rankings a little while the pack holds every gold node, and a gate on ranks would punish indirection rather than loss; and each case's **hop-gold set is frozen from the baseline** — the lexical ranking that defines "multi-hop" is graph-dependent (new hub nodes shift BM25), so recomputing it on the mutated clone would move the denominator and turn set drift into a phantom delta. The rank-based `hop_recall` remains a tuning metric of the harness, not a gate input;
+- the **`on_fail` reaction**: `reject` — the compaction subset is withheld while the non-compaction remainder applies (the result names both halves: `gate: rejected` plus the applied counts); `warn` — everything is committed but the drop is recorded in the log and the report; `revert` — a synonym of `reject` (by construction there is nothing to roll back);
 - the **report** `work/eval-gate-report.json` — the status, deltas, thresholds, and `regressions`: per case, which gold nodes fell out of the pack and which actions touched them (attribution).
 
 The guard is **robust to missing labels**: if the cases file (`eval_gate.cases`) is absent, empty, or none of its `gold_ids` exist in the graph, the check is **skipped** with a `skipped` mark — compaction is never falsely blocked. The shipped `cases.json` is a neutral template (its `gold_ids` do not resolve), so an install without labels is safely inactive until the user labels their own cases (ids from `inspect_graph.py`) or points `eval_gate.cases` at their file. The guard runs only when there is an **actually applied** compaction action. The `eval_gate` block keys — in the [Configuration reference](./09-config.md).
@@ -170,7 +171,7 @@ Parameters come from the config's `weights` and `compaction` blocks (plus the mo
 | `eval_gate.enabled` | true | enable the automatic recall check before compaction |
 | `eval_gate.cases` | a path | the labeled cases; unresolvable/missing → the check is skipped |
 | `eval_gate.min_recall_delta` | −0.02 | the allowed `pack_recall` drop (after − before) |
-| `eval_gate.min_hop_recall_delta` | −0.02 | the allowed `hop_recall` drop |
+| `eval_gate.min_hop_recall_delta` | −0.02 | the allowed `pack_hop_recall` drop (the multi-hop gold within the pack; hop-gold frozen from the baseline) |
 | `eval_gate.on_fail` | reject | `reject` (do not commit) / `warn` (commit + record) / `revert` (≡ reject) |
 
 ## Command line
