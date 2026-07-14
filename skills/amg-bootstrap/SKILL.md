@@ -183,7 +183,13 @@ delegating per-unit reading to subagents.
    cross-cutting topics, pattern nodes, and a **gap report** — undocumented code,
    drifted docs, and contradictions (from the sheet's `gaps` block). Give it the
    two input paths, the output paths, and the `working_language` value in the
-   assignment. Apply its
+   assignment. **When `--synth-input` reports `parts: N > 1`** (the layer outgrew
+   `linker.synth_input_max_chars` — e.g. a smaller-window model), run the synth
+   SEQUENTIALLY, one spawn per `synth-input-pNN.json`: part 1 does the full job
+   (hubs + gap report), then apply its derivation (step 4) so the next spawn's
+   `existing_hubs` already carries the taxonomy; each later part only attaches its
+   rows (memberships, edges, patterns) to the existing hubs — never a second
+   taxonomy. With one file (the normal case) it is a single spawn. Apply each
    derivation with the same single `apply-derived` call (step 4) and surface the
    gap report to the user.
 

@@ -69,6 +69,10 @@ changes; nothing is compacted).
    salience score (recency, frequency, bridging, provenance, type), and — for
    arbitration — `contradictions` (conflict pairs with comparison inputs) and
    `source_contradicted` (nodes whose live-source check failed).
+   **If the plan carries a `warning`** (a large semantic backlog — the graph lags its
+   sources), stop and offer the user a sync first: judging a stale picture skews
+   both the consolidator and the eval gate; proceed anyway only on the user's
+   explicit say-so.
 
 4. **Judge** — spawn the `amg-consolidator` subagent with the plan path **and the
    `working_language` value in the assignment** (you read the config once; the judge
@@ -104,14 +108,19 @@ or shortened.
 - Steps run bottom-up and stop the moment the branch is back under budget:
   `summarize_episodes → merge_near_duplicates → introduce_subhub → lossy_shorten`.
 - Lossy shortening is the last resort and archives the full text first.
-- **Compaction is auto-gated by recall.** `consolidate.py apply` measures a labeled-case
-  eval on a *clone* of the graph and commits the compaction to the real graph only if
-  recall holds (`pack_recall` + `hop_recall`); on a drop it rejects — or warns and applies —
-  per `eval_gate.on_fail`, writing `work/eval-gate-report.json` (which cases regressed,
-  which gold ids were lost, which actions caused it). It needs labeled cases
-  (`eval_gate.cases`); with none/empty/unresolved cases it skips safely — never a false
-  reject. You can still run the eval by hand (`../amg-retrieve/scripts/eval_retrieval.py`)
-  to tune budgets; the archive and git history make any revert trivial. Safety here is a
+- **Compaction is auto-gated by recall — and only compaction.** `consolidate.py apply`
+  measures the COMPACTION SUBSET of the actions on a *clone* of the graph and commits
+  it to the real graph only if the pack holds its gold (`pack_recall` +
+  `pack_hop_recall`, the multi-hop subset frozen from the baseline); on a drop it
+  rejects the compaction subset — or warns and applies — per `eval_gate.on_fail`,
+  writing `work/eval-gate-report.json` (which cases regressed, which gold ids were
+  lost, which actions caused it). The non-compaction remainder — arbitration
+  verdicts, promotions — is non-destructive and applies regardless of the verdict,
+  so a rejected compaction never holds the safe half hostage (the result names both:
+  `gate: rejected` + the applied counts). It needs labeled cases (`eval_gate.cases`);
+  with none/empty/unresolved cases it skips safely — never a false reject. You can
+  still run the eval by hand (`../amg-retrieve/scripts/eval_retrieval.py`) to tune
+  budgets; the archive and git history make any revert trivial. Safety here is a
   measured number, not a hope.
 
 ## Reference

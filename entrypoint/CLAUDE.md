@@ -42,12 +42,14 @@ conversation) must NOT trigger one; when unsure, just answer normally.
 
 | Operation | `/amg` verb (synonyms) | Skill / script | Verbal intent (names the memory) |
 |---|---|---|---|
-| Show status | `status` | `lifecycle.py status` | "memory status", "how is the memory graph" |
+| Show status | `status` (state, info) | `lifecycle.py status` — present its report verbatim | "memory status", "how is the memory graph" |
+| Engine version | `version` | `lifecycle.py version` | "which AMG version is installed" |
 | Enable / disable | `on` / `off` (activate, start · stop) | `lifecycle.py on`/`off` | "turn AMG on / off", "enable the memory" |
 | Repair the graph | `repair` (fix, heal) | `lifecycle.py repair` | "repair / check the memory graph" |
 | Build / sync the graph | `sync` (build, index, reconcile) | **amg-bootstrap** | "index the project into memory", "sync the memory graph" |
 | Retrieve context | `retrieve <q>` (recall, context) | **amg-retrieve** | "pull context on X from memory", "what does the memory hold on X" |
 | Consolidate memory | `consolidate` (maintain, compact) | **amg-consolidate** | "consolidate the memory", "wrap up and save to memory" |
+| Re-check unlinked nodes | — | re-run the linking pass (amg-bootstrap step 6); to re-open past rejections, delete `work/judged/`, then sync | "re-link the isolated memory nodes" |
 | Open the graph viewer | `view` (show graph, visualize) | `export_graph.py --open` | "open / show the memory graph", "visualize the memory" |
 | Capture a note | — | `notes.py add` | "remember (in memory) that …" |
 
@@ -73,13 +75,18 @@ explicit request.
    ```
    It re-syncs the structural skeleton with the sources (free, exact, no model) and
    prints what the model half still owes. When `queued_for_semantic` is above zero
-   (or the diff shows added/changed/deleted), **ask the user**: "sources changed —
-   N added / M changed; sync the semantic layer now (~K units) or defer?" — on yes,
-   run the **`amg-bootstrap`** skill; on a defer, say one line ("the graph lags the
-   sources; `/amg sync` when ready") and honestly ask again next session (the
-   remainder does not age away). Zero diff and zero remainder — say nothing and
-   start working. Never start the model half silently: the deterministic half is
-   automatic by design, the semantic half costs money and is the user's call.
+   (or the diff shows added/changed/deleted), **ask the user** — "sources changed —
+   N added / M changed; sync the semantic layer now (~K units) or defer?" — unless
+   a recorded deferral stands (`/amg status` shows the volume it was recorded at)
+   and the backlog has not grown noticeably since (about ×1.5, or +50 units): then
+   say one quiet line at most. On yes, run the **`amg-bootstrap`** skill; on a
+   defer, record it so later sessions stop re-asking:
+   ```
+   python .claude/skills/amg-bootstrap/scripts/lifecycle.py sync-defer .
+   ```
+   Zero diff and zero remainder — say nothing and start working. Never start the
+   model half silently: the deterministic half is automatic by design, the semantic
+   half costs money and is the user's call.
    If the hook's start-of-session output warned that memory upkeep is overdue
    ("Memory upkeep is overdue: no judgment consolidation …"), acknowledge it and
    plan the judgment consolidation for wrap-up (step 3) — or offer to run it now.
@@ -98,7 +105,9 @@ explicit request.
    contradictions — you classify that from meaning, in any language; add
    `--compact` for a targeted pointer lookup — "where is X", "which file holds Y" —
    it returns pointer lines instead of unfolded bodies at a fraction of the size,
-   while entering an unfamiliar topic keeps the full profile). Spawn the
+   while entering an unfamiliar topic keeps the full profile). **Read the printed
+   pack in full** — it is already the selection, assembled under a token budget;
+   skimming its head loses exactly the tiers the budget paid for. Spawn the
    `amg-retriever` subagent instead only when the pack should NOT enter your window
    — a summary question to the memory, or an already-crowded context; the subagent
    costs its own fixed overhead, so it is the exception. The protocol:

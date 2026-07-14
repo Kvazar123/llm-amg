@@ -1,6 +1,6 @@
 ---
-description: AMG memory — one front door for every operation (status, on/off, repair, sync, retrieve, consolidate, view).
-argument-hint: status | on | off | repair | sync | retrieve <query> | consolidate | view
+description: AMG memory — one front door for every operation (status, version, on/off, repair, sync, retrieve, consolidate, view, help).
+argument-hint: status | version | on | off | repair | sync | retrieve <query> | consolidate | view | help
 disable-model-invocation: true
 allowed-tools: Bash(python *)
 ---
@@ -14,14 +14,18 @@ close synonyms, not the exact word.
 
     python .claude/skills/amg-bootstrap/scripts/lifecycle.py <verb>
 
-- `status` (state, info) — the one-screen report: active, automation, graph root, git
-  branch/commit, node and stale counts, pending transactions, stale lock, merge
-  conflicts, queue size, last pack, last consolidation and last judged pass (with an
-  overdue note when the judgment half has lagged), connectivity verdict, eval
-  summary. Present it as-is.
+- `status` (state, info) — the one-screen report: engine version, active, automation,
+  graph root, git branch/commit, node and stale counts, pending transactions, stale
+  lock, merge conflicts, the semantic queue (units awaiting enrichment) and any
+  recorded sync deferral, last sync, last pack, last consolidation and last judged
+  pass (with an overdue note when the judgment half has lagged), connectivity
+  verdict, eval summary. **Present the report verbatim, exactly as printed** — its
+  layout is the contract; do not paraphrase or reorder it.
+- `version` — the installed engine version.
 - `on` (enable, activate, start) / `off` (disable, stop) — flip `active` in config.yml;
   confirm the new state. Note: `on` only enables AMG — building the graph is `sync`.
 - `repair` (fix, heal) — recover + verify --repair; confirm what was healed.
+- `help` — print the verb list (`lifecycle.py help`), or summarize this file.
 
 **Work verbs** — use the matching skill (it orchestrates the scripts and subagents; a
 hook or a deterministic script cannot, because these need model judgment):

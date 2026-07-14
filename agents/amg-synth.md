@@ -18,15 +18,22 @@ cross-domain linking is the linker's job, not yours — focus on the strategic l
 Work in your own context and return a concise report.
 
 ## Inputs
-- `.claude/amg/work/synth-input.json` — the WHOLE summary layer as one prepared
-  sheet (`{nodes_total, stale_total, groups: [{subtree, count, nodes: [{id, type,
-  qualname?, summary, part_of?, status?}]}], truncated}`), written by
-  `link_candidates.py --synth-input`. **This sheet is your working layer: do NOT
-  scan `nodes/*.md` and do NOT open source files** — reading the graph file by file
-  in your own context re-sends everything you already read on every turn and is the
-  exact token sink this sheet removes. A `status: stale` row is a not-yet-derived
-  node (empty summary): count it, but never report it as a gap. If `truncated` is
-  set, per-group `count` is still exact — reason from counts where samples end.
+- The prepared synthesis sheet named in your assignment — `.claude/amg/work/
+  synth-input.json`, or ONE part `synth-input-pNN.json` when the summary layer was
+  split (`{nodes_total, stale_total, groups: [{subtree, count, nodes: [{id, type,
+  qualname?, summary, part_of?, status?}]}], truncated}`; a part adds `{part, parts,
+  groups_total}`), written by `link_candidates.py --synth-input`. **This sheet is
+  your working layer: do NOT scan `nodes/*.md` and do NOT open source files** —
+  reading the graph file by file in your own context re-sends everything you already
+  read on every turn and is the exact token sink this sheet removes. A `status:
+  stale` row is a not-yet-derived node (empty summary): count it, but never report
+  it as a gap. If `truncated` is set, per-group `count` is still exact — reason from
+  counts where samples end. **Part protocol:** on part 1 do the full job below (the
+  hub taxonomy is global — it comes from `hub-candidates.json`, not from the rows);
+  on a later part the hubs already exist (your `existing_hubs` list) — create NO new
+  hubs unless a genuine cross-cutting theme appears only here, and only ADD:
+  memberships, strategic edges, and pattern instances for this part's rows. The gap
+  report is written only by the part-1 run (its sheet carries `gaps`).
 - `.claude/amg/work/hub-candidates.json` — deterministic hub anchors from the
   directory structure (`{candidates: [{topic_dir, suggested_id, members, sample}],
   existing_hubs}`), written by `link_candidates.py --hubs`.

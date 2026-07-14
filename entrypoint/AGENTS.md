@@ -1,13 +1,13 @@
 # Project memory
 
-<!-- Universal (skill-less) AMG activation block for ANY agent environment that reads an
-     instruction file (AGENTS.md) and can run shell/Python but lacks Claude Code's specific
-     skills / subagents / slash commands / hooks — e.g. OpenAI Codex, Qwen Coder, and other
-     AGENTS.md-based agents. Here the model itself drives the loop with direct script calls.
-     Loaded at the start of every session. The installer writes this variant for `--env`
-     other than claude-code; the paths below are rendered to the configured agent dir /
-     entry point. NOTE: this portable mode is experimental — not yet verified on
-     non-Claude-Code environments, so stability is not guaranteed. -->
+<!-- Universal (skill-less) AMG activation block for an UNKNOWN agent environment that
+     reads an instruction file (AGENTS.md) and can run shell/Python. Environments with a
+     KNOWN surface get their own install mode (claude-code / codex / opencode / qwen);
+     this variant assumes nothing — the model itself drives the loop with direct script
+     calls. Loaded at the start of every session. The installer writes this for
+     `--env generic`; the paths below are rendered to the configured agent dir / entry
+     point. NOTE: this portable mode is experimental — not yet verified live, so
+     stability is not guaranteed. -->
 
 ## AMG — Associative Memory Graph
 
@@ -18,9 +18,14 @@ purpose, related code, prior decisions — instead of loading the whole codebase
 
 Paths below use `.claude` (the agent dir) and `CLAUDE.md` (this entry point) as the Claude
 Code defaults; this environment uses its configured names (for example `.agents` /
-`AGENTS.md`). This is the **portable block**: there are no skills, subagents, slash
-commands, or hooks here — you, the model, run the plain Python scripts directly and do the
+`AGENTS.md`). This is the **portable block**: it assumes no skills, subagents, slash
+commands, or hooks — you, the model, run the plain Python scripts directly and do the
 semantic steps yourself, following the agent prompts as guidance (not as spawned agents).
+One exception to the assumption: the engine's `amg-*` skills are installed under
+`.claude/skills` (the cross-tool SKILL.md location), so if YOUR environment discovers
+them as invocable skills, **prefer them** — they carry the same procedures as this loop
+with the orchestration discipline spelled out; this block then remains the fallback and
+the reference.
 
 ### Memory digest
 At the start of every session, **read `.claude/amg/digest.md`** — a small auto-generated
@@ -51,10 +56,15 @@ There are no hooks here, so **you** run each step at the right moment.
    `plan` re-syncs the structural skeleton with the sources (free, exact) and prints
    what the model half still owes; `status` reports, among the rest, whether the
    judgment consolidation is overdue (a `note:` line — react by offering it at
-   wrap-up, step 3). When `queued_for_semantic` is above zero (or the diff shows
-   added/changed/deleted), **ask the user**: "sources changed — N added / M changed;
-   sync the semantic layer now (~K units) or defer?"; on a defer, say one line ("the
-   graph lags the sources; sync when ready") and honestly ask again next session.
+   wrap-up, step 3) and the volume at which a sync was last deferred. When
+   `queued_for_semantic` is above zero (or the diff shows added/changed/deleted),
+   **ask the user** — "sources changed — N added / M changed; sync the semantic
+   layer now (~K units) or defer?" — unless a recorded deferral stands and the
+   backlog has not grown noticeably since (about ×1.5, or +50 units): then say one
+   quiet line at most. On a defer, record it so later sessions stop re-asking:
+   ```
+   python .claude/skills/amg-bootstrap/scripts/lifecycle.py sync-defer .
+   ```
    Zero diff and zero remainder — say nothing and start working. Never start the
    model half silently: the deterministic half is automatic by design, the semantic
    half costs money and is the user's call.
@@ -65,8 +75,9 @@ There are no hooks here, so **you** run each step at the right moment.
    summaries + edges) and `.claude/agents/amg-synth.md` (an overview, hubs, cross-domain
    `documents` edges, and a gap report). Write the results to
    `.claude/amg/work/derived-<batch>.json` files (the derivation format) and apply them
-   all with ONE call (it consumes every `work/derived-*.json` and moves the applied
-   files to `work/applied/` — re-running it is the resume path):
+   all with ONE call **per round of batches — never one apply per file** (it consumes
+   every `work/derived-*.json` and moves the applied files to `work/applied/` —
+   re-running it is the resume path):
    ```
    python .claude/skills/amg-bootstrap/scripts/reconcile.py apply-derived .
    ```
@@ -98,7 +109,10 @@ There are no hooks here, so **you** run each step at the right moment.
    ```
    python .claude/skills/amg-retrieve/scripts/retrieve.py "<query>" --store .claude/amg
    ```
-   Read the written pack at `.claude/amg/cache/pack.md`. Add `--intent
+   Read the written pack at `.claude/amg/cache/pack.md` — **in full**: the pack is
+   already the selection, assembled under a token budget, and skimming its head
+   loses exactly the tiers the budget paid for (there is no valid "read N lines"
+   shortcut; for a small pack there is a small profile instead). Add `--intent
    history|conflict` for a question about the past or about contradictions (you
    classify the intent from meaning, in any language — it surfaces the normally
    demoted retired/disputed nodes), and `--compact` for a targeted pointer lookup
@@ -147,8 +161,11 @@ There are no hooks here, so **you** run each step at the right moment.
    observable trigger is the user's wrap-up signal: when they say they are
    finishing, wrapping up, done for today (any language — match the meaning),
    maintain memory; offer the same when the session was dense with decisions or the
-   start check's `note:` said the judgment pass is overdue. There are no hooks
-   here, so run BOTH halves yourself — the deterministic fold and the judgment pass:
+   start check's `note:` said the judgment pass is overdue. **First capture the
+   session's conclusions as notes** (the API above): with no transcript dump in this
+   environment, those notes are the only record of the dialogue. Then — there are no
+   hooks here, so run BOTH halves yourself, the deterministic fold and the judgment
+   pass:
    ```
    python .claude/skills/amg-consolidate/scripts/consolidate.py weights .
    python .claude/skills/amg-consolidate/scripts/consolidate.py plan .
@@ -161,23 +178,29 @@ There are no hooks here, so **you** run each step at the right moment.
    Conclusions that live only in chat are lost when the context clears; the graph is where
    they survive, so capture before clearing.
 
-### Operations on request
+### Operations on request — the quick reference
 The same operations also run on a plain-language request — match intent and synonyms, not
 the exact word, in any language. One guard: treat a phrase as a memory operation **only
 when it explicitly refers to this memory** (it names the memory, the memory graph, or
 AMG); a generic "show the graph" or "wrap up" about something else must NOT trigger one.
-Examples: "index the project into memory / sync the memory graph" → step 1; "gather
-context on X from memory" → step 2; "consolidate / tidy the memory" → step 3; "memory
-status" → `python .claude/skills/amg-bootstrap/scripts/lifecycle.py status .` (one
-screen, including the connectivity verdict); "enable / disable AMG" →
-`python .claude/skills/amg-bootstrap/scripts/lifecycle.py on` / `off .`.
-"open / show / visualize the memory graph" → render the read-only, offline 3D viewer and
-open it:
-```
-python .claude/skills/amg-retrieve/scripts/export_graph.py --store .claude/amg --open
-```
-(writes only `.claude/amg/cache/graph.html`; `--json` writes the raw `{nodes, links, meta}`
-for external tooling instead). (Slash commands like `/amg`, the auto `SessionStart`/`SessionEnd` hooks, and the digest
+A literal `/amg <verb>` typed by the user is the same request in command clothes — there
+is no slash command here, so run the matching row yourself.
+
+| Task | How |
+|---|---|
+| Memory status (verbatim, incl. engine version) | `python .claude/skills/amg-bootstrap/scripts/lifecycle.py status .` — present its report as printed, do not paraphrase |
+| Engine version | `python .claude/skills/amg-bootstrap/scripts/lifecycle.py version` |
+| Enable / disable AMG | `python .claude/skills/amg-bootstrap/scripts/lifecycle.py on` / `off .` |
+| Repair after a crash | `python .claude/skills/amg-bootstrap/scripts/lifecycle.py repair .` |
+| Build / sync the graph | step 1 |
+| Context for a task from memory | step 2 |
+| Targeted pointer lookup ("where is X") | step 2 with `--compact` |
+| Capture a note / decision | `notes.py add` (step 3) |
+| Consolidate / tidy the memory | step 3 |
+| Re-check unlinked / isolated nodes | re-run the linking pass (step 1's `link_candidates.py` loop); past rejections are remembered in `work/judged/` — to re-open them, delete those files, then sync |
+| Open / visualize the memory graph | `python .claude/skills/amg-retrieve/scripts/export_graph.py --store .claude/amg --open` (read-only; writes only `cache/graph.html`; `--json` writes raw `{nodes, links, meta}` instead) |
+
+(Slash commands like `/amg`, the auto `SessionStart`/`SessionEnd` hooks, and the digest
 `@`-import are Claude Code conveniences and are absent here — this loop is the portable
 equivalent, and it works the same.)
 

@@ -46,7 +46,12 @@ about something else must NOT trigger one.
 | Consolidate memory | **amg-consolidate** | amg-consolidator |
 | Capture a note | `notes.py add` (direct) | — |
 | Repair the graph | `graph_store.py recover` + `verify --repair` (direct) | — |
+| Memory status / engine version | `lifecycle.py status .` (present verbatim) / `lifecycle.py version` (direct) | — |
+| Re-check unlinked / isolated nodes | re-run the linking pass (amg-bootstrap step 6); to re-open past rejections, delete `work/judged/`, then sync | amg-linker |
 | Visualize the graph | `export_graph.py --store .claude/amg --open` (direct, read-only) | — |
+
+A literal `/amg <verb>` typed by the user is the same request in command clothes — there
+is no slash command here, so run the matching row yourself.
 
 ### Operating loop (when AMG is ON)
 There are no SessionStart/SessionEnd hooks here, so **you** run each step at the right moment.
@@ -64,16 +69,21 @@ There are no SessionStart/SessionEnd hooks here, so **you** run each step at the
    `plan` re-syncs the structural skeleton with the sources (free, exact) and prints
    what the model half still owes; `status` reports, among the rest, whether the
    judgment consolidation is overdue (a `note:` line — react by offering it at
-   wrap-up, step 3). When `queued_for_semantic` is above zero (or the diff shows
-   added/changed/deleted), **ask the user**: "sources changed — N added / M changed;
-   sync the semantic layer now (~K units) or defer?" — on yes, run the
-   **amg-bootstrap** skill (it spawns the builder/synth/linker subagents for the
-   semantic half); on a defer, say one line ("the graph lags the sources; sync when
-   ready") and honestly ask again next session. Zero diff and zero remainder — say
-   nothing and start working. Never start the model half silently: the deterministic
-   half is automatic by design, the semantic half costs money and is the user's
-   call. Building from empty and reconciling are the same operation — crash-safe and
-   idempotent.
+   wrap-up, step 3) and the volume at which a sync was last deferred. When
+   `queued_for_semantic` is above zero (or the diff shows added/changed/deleted),
+   **ask the user** — "sources changed — N added / M changed; sync the semantic
+   layer now (~K units) or defer?" — unless a recorded deferral stands and the
+   backlog has not grown noticeably since (about ×1.5, or +50 units): then say one
+   quiet line at most. On yes, run the **amg-bootstrap** skill (it spawns the
+   builder/synth/linker subagents for the semantic half); on a defer, record it so
+   later sessions stop re-asking:
+   ```
+   python .claude/skills/amg-bootstrap/scripts/lifecycle.py sync-defer .
+   ```
+   Zero diff and zero remainder — say nothing and start working. Never start the
+   model half silently: the deterministic half is automatic by design, the semantic
+   half costs money and is the user's call. Building from empty and reconciling are
+   the same operation — crash-safe and idempotent.
 
 2. **The graph is the primary context source — retrieve before you work.** Everything
    the graph can give, take from the graph FIRST; only then decide what is left to look
@@ -85,10 +95,12 @@ There are no SessionStart/SessionEnd hooks here, so **you** run each step at the
    (add `--intent history|conflict` for a history / contradictions question — you
    classify that from meaning, in any language; add `--compact` for a targeted
    pointer lookup — pointer lines instead of unfolded bodies at a fraction of the
-   size; entering an unfamiliar topic keeps the full profile). Spawn the **amg-retriever**
-   subagent instead only when the pack should NOT enter your window — a summary
-   question to the memory, or an already-crowded context; a subagent costs its own
-   fixed overhead, so it is the exception. No mechanism nudges you mid-session here
+   size; entering an unfamiliar topic keeps the full profile). **Read the printed
+   pack in full** — it is already the selection, assembled under a token budget;
+   skimming its head loses exactly the tiers the budget paid for. Spawn the
+   **amg-retriever** subagent instead only when the pack should NOT enter your
+   window — a summary question to the memory, or an already-crowded context; a
+   subagent costs its own fixed overhead, so it is the exception. No mechanism nudges you mid-session here
    (in Claude Code a gated prompt hook reminds when the memory goes unconsulted) —
    this retrieval discipline rests on you alone. The protocol: **decompose a complex
    prompt** (a separate retrieval per distinct
@@ -121,12 +133,14 @@ There are no SessionStart/SessionEnd hooks here, so **you** run each step at the
    project's memory — it would pollute the digest.
    **The session's end is invisible to you until the user signals it** — so the
    observable trigger is the user's wrap-up signal: when they say they are
-   finishing, wrapping up, done for today (any language — match the meaning), run
-   the **amg-consolidate** skill (it spawns amg-consolidator) to fold weights, file
-   the session's conclusions, and compact over-budget branches; offer the same when
-   the session was dense with decisions or the start check's `note:` said the
-   judgment pass is overdue. There are no hooks here, so nothing runs at session end
-   by itself. Conclusions that live only in chat are lost when context clears.
+   finishing, wrapping up, done for today (any language — match the meaning), first
+   **capture the session's conclusions as notes** (the API above) — with no
+   transcript dump in this environment, those notes are the only record of the
+   dialogue — then run the **amg-consolidate** skill (it spawns amg-consolidator) to
+   fold weights, file the conclusions, and compact over-budget branches; offer the
+   same when the session was dense with decisions or the start check's `note:` said
+   the judgment pass is overdue. There are no hooks here, so nothing runs at session
+   end by itself. Conclusions that live only in chat are lost when context clears.
 
 ### Where things are
 - The graph: `.claude/amg/nodes/` — the source of truth, one file per node — plus `work/`

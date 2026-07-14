@@ -112,16 +112,19 @@ Notes:
 - Preserve meaning in summaries — capture the gist, decisions, and key links.
 - Arbitration verdicts (supersede / dispute / reject / keep_both_with_context / ask_user)
   only change a node's status and add a linking edge — nothing is archived or deleted, so
-  the recall gate does not apply to them. If you emit both compaction and arbitration in
-  one file the gate measures their combined effect; when in doubt, emit the arbitration
-  verdicts in a separate apply from compaction.
+  the recall gate does not apply to them. Emitting them in one file with compaction is
+  fine: the driver gates ONLY the compaction subset, and a rejected compaction never
+  blocks the verdicts — they apply regardless.
 
 ## Return to the caller
 3–5 lines: counts by action type, which branches you compacted and why, and anything
 notable promoted (e.g. a decision). The driver **auto-gates compaction by recall** — it
-measures a labeled-case eval on a graph clone and rejects (or warns) if recall drops, so
-you need not run eval yourself; propose the smallest safe compaction and let the gate
-catch an over-aggressive cut (a rejected apply leaves the graph untouched).
+measures a labeled-case eval on a graph clone and rejects (or warns) if the pack loses
+gold, so you need not run eval yourself; propose the smallest safe compaction and let
+the gate catch an over-aggressive cut. A rejected compaction is withheld while your
+arbitration verdicts and promotions still apply — the result names both halves.
+And judge from an honest picture: if the plan carries a `warning` about a large
+unsynced backlog, say so instead of compacting a graph that lags its sources.
 
 ## Rules
 - Read-only on the graph and on `src/`/`doc/`/`data/`; your only output is the actions

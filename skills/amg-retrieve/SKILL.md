@@ -71,11 +71,16 @@ deliberate variant for when the pack itself should NOT enter your window.
    line summary — at the price of a subagent's fixed per-step overhead, so it is
    the exception, not the default.
 
-3. **Work from the pack** (printed, or read `.claude/amg/cache/pack.md`). The pack
-   has four tiers: *Strategic* (overview/subsystem hubs), *Tactical* (relevant
-   modules), *Operational* (code pointers + the docs/notes text in focus), *Related*
-   (links to follow if needed). For code, the pack gives **pointers** (`path:line`) —
-   open the real file in `src/` to edit; the graph is not a copy of the code.
+3. **Work from the pack — read it in full** (printed, or read
+   `.claude/amg/cache/pack.md` whole). The pack is already the selection, assembled
+   under a token budget: skimming its head loses exactly the tiers the budget paid
+   for, and no "read N lines" heuristic can outrank the assembly that produced it —
+   the right lever for a smaller read is the `--compact` profile, not partial
+   reading. The pack has four tiers: *Strategic* (overview/subsystem hubs),
+   *Tactical* (relevant modules), *Operational* (code pointers + the docs/notes text
+   in focus), *Related* (links to follow if needed). For code, the pack gives
+   **pointers** (`path:line`) — open the real file in `src/` to edit; the graph is
+   not a copy of the code.
 
 4. If the pack misses something you expected, widen the query with more identifiers
    and re-run, or follow a *Related* link. (If misses are systematic, measure and
