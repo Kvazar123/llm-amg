@@ -30,9 +30,14 @@ store resolution must veto) or as a global unpack; the engine is COPIED into
 CLI (the model fills these from the user's answers):
   python install.py --target <proj> [--scope local|global]
       [--agent-dir .claude] [--entrypoint CLAUDE.md]
-      [--env claude-code|codex|generic]  # codex = skills + TOML subagents (.codex/agents);
-                                    # generic = any other AGENTS.md env (Qwen Coder, ...):
-                                    # the portable skill-less block, no hooks/command
+      [--env claude-code|codex|opencode|qwen|generic]
+                                    # codex    = skills + TOML subagents (.codex/agents)
+                                    # opencode = skills (.agents/skills, discovered natively)
+                                    #            + subagents rendered to .opencode/agent
+                                    # qwen     = .qwen/QWEN.md preset: skills + markdown
+                                    #            subagents (.qwen/agents) + session hooks
+                                    # generic  = any UNKNOWN AGENTS.md env: the portable
+                                    #            skill-less block, no hooks/command
       [--mirror a,b] [--absorb c,d] [--absorb-once e,f] [--exclude "*.x,*.y"]
       [--set active=false] [--set working_language=ru] [--set automation=true] ...
       [--set retrieval.embeddings.enabled=auto]   # dotted path = nested key
@@ -105,17 +110,29 @@ def _engine_abs(agent_dir: str) -> str:
 
 
 def _env_kind(env: str) -> str:
-    """Classify the target agent environment into one of three install modes:
+    """Classify the target agent environment into one of five install modes:
       claude-code — skills + subagents + SessionStart/SessionEnd hooks + /amg command;
       codex       — OpenAI Codex: HAS skills (.agents/skills) + subagents (TOML in
                     .codex/agents), but no Claude hooks / slash command / @import;
-      generic     — any other AGENTS.md env (Qwen Coder, ...): the portable SKILL-LESS
-                    block, model-driven via direct script calls."""
+      opencode    — OpenCode: HAS skills (it discovers .agents/skills/ natively) and
+                    its own agents/commands, no Claude hooks — the skill-aware
+                    portable block;
+      qwen        — Qwen Code: HAS skills (.qwen/skills) and markdown subagents
+                    (.qwen/agents), context file QWEN.md, no hooks — the same
+                    skill-aware portable block under the .qwen preset;
+      generic     — any UNKNOWN AGENTS.md env: the portable skill-less block, model-
+                    driven via direct script calls (skills still land in
+                    .agents/skills — the cross-tool location — so an environment
+                    that does discover them is told by the block to prefer them)."""
     e = env.strip().lower()
     if e in ("claude-code", "claude", "cc", ""):
         return "claude-code"
     if e in ("codex", "openai-codex"):
         return "codex"
+    if e in ("opencode", "open-code"):
+        return "opencode"
+    if e in ("qwen", "qwen-code", "qwen-coder"):
+        return "qwen"
     return "generic"
 
 
@@ -438,18 +455,36 @@ def _existing_config_summary(cfg_path: Path) -> str:
 def write_config(dest_amg: Path, agent_dir: str, entrypoint: str,
                  mirror: List[str], absorb: List[str], absorb_once: List[str],
                  exclude: List[str], scalars: Dict[str, str],
-                 strip_personal: bool = False) -> bool:
+                 strip_personal: bool = False) -> Optional[List[str]]:
     """Create <agent_dir>/amg/config.yml from the shipped template, filling the answered
-    keys. An EXISTING config is preserved (reinstall never clobbers a project's config).
-    Returns True if written, False if left intact. agent_dir/entrypoint are always recorded
-    so resolution and the docs agree with the install. With strip_personal (a global-scope
-    install that wrote the global defaults config), the PERSONAL blocks — `models` and
-    `retrieval.embeddings` — are omitted so they inherit from the global layer instead of
-    shadowing it. A dotted --set key (retrieval.embeddings.enabled)
-    lands on the nested key."""
+    keys. An EXISTING config is preserved — but keys EXPLICITLY passed on THIS run
+    (--set / --mirror / --absorb / --absorb-once / --exclude) are applied to it as
+    surgical line edits (same _set_* machinery over the existing text; comments and
+    untouched keys stay) — an answer the flow collected must never silently vanish.
+    Returns None for a fresh write, else the list of updated keys (possibly empty).
+    agent_dir/entrypoint are always recorded so resolution and the docs agree with the
+    install. With strip_personal (a global-scope install that wrote the global defaults
+    config), the PERSONAL blocks — `models` and `retrieval.embeddings` — are omitted
+    from a fresh config so they inherit from the global layer instead of shadowing it.
+    A dotted --set key (retrieval.embeddings.enabled) lands on the nested key."""
     dest = dest_amg / "config.yml"
     if dest.exists():
-        return False
+        text = dest.read_text(encoding="utf-8")
+        updated: List[str] = []
+        for key, value in scalars.items():
+            text = _set_nested(text, key, value) if "." in key else _set_scalar(text, key, value)
+            updated.append(key)
+        for key, items in (("mirror_path", mirror), ("absorb_path", absorb),
+                           ("absorb_once_path", absorb_once), ("exclude", exclude)):
+            if items:
+                text = _set_list(text, key, items)
+                updated.append(key)
+        # The environment identity always follows the CURRENT install (an env switch
+        # must not leave a stale agent_dir behind).
+        text = _set_scalar(text, "agent_dir", agent_dir)
+        text = _set_scalar(text, "entrypoint", entrypoint)
+        dest.write_text(text, encoding="utf-8")
+        return updated
     text = (REPO / "config.yml").read_text(encoding="utf-8")
     if strip_personal:
         text = _strip_top_block(text, "models")
@@ -468,7 +503,7 @@ def write_config(dest_amg: Path, agent_dir: str, entrypoint: str,
                       lambda m: m.group(1) + agent_dir + "/", text)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(text, encoding="utf-8")
-    return True
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -543,32 +578,100 @@ def _set_agent_field(text: str, key: str, value: str) -> str:
     return head + fm + close + body
 
 
+def _drop_agent_field(text: str, key: str) -> str:
+    """Remove a single-line `key: ...` from the agent frontmatter (first ---...---
+    block). Multi-line values (e.g. a `>-` description) are not this helper's target."""
+    m = re.match(r"(?s)^(---\n)(.*?)(\n---\n?)(.*)$", text)
+    if not m:
+        return text
+    head, fm, close, body = m.groups()
+    fm = re.sub(rf"(?m)^{re.escape(key)}:.*\n?", "", fm).rstrip()
+    return head + fm + close + body
+
+
 def render_agent_models(agents_dir: Path, models_cfg: dict, env: str) -> None:
     """Render per-role model + reasoning effort from config.yml `models` into the
-    installed agent frontmatter (Claude Code `model`/`effort`). Idempotent: reinstall
-    re-copies the source agents, then this re-applies. A role given only a model gets no
-    effort field (the model/tool default applies)."""
+    installed agent frontmatter. Idempotent: reinstall re-copies the source agents,
+    then this re-applies. A role given only a model gets no effort field (the
+    model/tool default applies).
+
+    Runs for EVERY non-TOML environment: even where the files are loop guidance
+    rather than spawned subagents, frontmatter diverging from config.yml `models`
+    misleads (a field failure). For qwen the files ARE its native subagents
+    (.qwen/agents/*.md), so the frontmatter is sanitized to what Qwen Code reads:
+    Claude tool names and the `effort` field are dropped (absent tools = all tools),
+    and `model` is written only when it is a real id rather than a Claude alias —
+    an alias would name a model the environment does not serve."""
     if not isinstance(models_cfg, dict):
-        return
+        models_cfg = {}
+    qwen = _env_kind(env) == "qwen"
     touched: List[str] = []
     for role, agents in ROLE_AGENTS.items():
         model, eff = _resolve_role(models_cfg.get(role))
         eff = _clamp_effort(eff, env)
-        if model is None and eff is None:
-            continue
         for ag in agents:
             f = agents_dir / f"{ag}.md"
             if not f.exists():
                 continue
             text = f.read_text(encoding="utf-8")
-            if model:
-                text = _set_agent_field(text, "model", model)
-            if eff:
-                text = _set_agent_field(text, "effort", eff)
-            f.write_text(text, encoding="utf-8")
-            touched.append(ag)
+            changed = False
+            if qwen:
+                for key in ("tools", "effort"):
+                    new = _drop_agent_field(text, key)
+                    changed |= new != text
+                    text = new
+                if model and model not in _CLAUDE_ALIASES:
+                    text = _set_agent_field(text, "model", model)
+                    changed = True
+                else:                        # alias or unset: let Qwen use its default
+                    new = _drop_agent_field(text, "model")
+                    changed |= new != text
+                    text = new
+            else:
+                if model:
+                    text = _set_agent_field(text, "model", model)
+                    changed = True
+                if eff:
+                    text = _set_agent_field(text, "effort", eff)
+                    changed = True
+            if changed:
+                f.write_text(text, encoding="utf-8")
+                touched.append(ag)
     if touched:
         print(f"  models  rendered model/effort into {len(touched)} agent(s) from config.yml models")
+
+
+def render_opencode_agents(repo_agents_dir: Path, dest_dir: Path, models_cfg: dict) -> List[str]:
+    """Render agents/amg-*.md into OpenCode subagents in <dest_dir> (.opencode/agent):
+    frontmatter `description` + `mode: subagent` + (when the configured model is a real
+    OpenCode id like `anthropic/claude-sonnet-4-5`, not a Claude alias) `model`; the
+    prompt body follows. Tool restriction is left to the prompts (OpenCode tool keys
+    are its own; an allow-map that omitted one would silently change defaults).
+    Reinstall replaces the amg-*.md set."""
+    if not isinstance(models_cfg, dict):
+        models_cfg = {}
+    agent_role = {a: r for r, ags in ROLE_AGENTS.items() for a in ags}
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for old in dest_dir.glob("amg-*.md"):            # reinstall: replace, don't duplicate
+        old.unlink()
+    written: List[str] = []
+    for ag in sorted(repo_agents_dir.glob("amg-*.md")):
+        fm, body = _md_frontmatter_body(ag.read_text(encoding="utf-8"))
+        name = str(fm.get("name") or ag.stem)
+        desc = render_control_text(str(fm.get("description") or ""), ".agents",
+                                   "AGENTS.md", "local").strip().replace("\n", " ")
+        model, _eff = _resolve_role(models_cfg.get(agent_role.get(name, "")))
+        lines = ["---", f"description: {json.dumps(desc)}", "mode: subagent"]
+        if model and model not in _CLAUDE_ALIASES:
+            lines.append(f"model: {json.dumps(str(model))}")
+        lines.append("---")
+        instr = render_control_text(body, ".agents", "AGENTS.md", "local")
+        (dest_dir / f"{name}.md").write_text("\n".join(lines) + "\n\n" + instr + "\n",
+                                             encoding="utf-8")
+        written.append(name)
+    if written:
+        print(f"  agents  rendered {len(written)} OpenCode subagent(s) -> {dest_dir}")
+    return written
 
 
 def _read_models(config_path: Path, agent_dir: str) -> dict:
@@ -680,6 +783,13 @@ def place_engine(dest_agent_dir: Path, agent_dir: str, entrypoint: str, scope: s
         if smd.exists():
             smd.write_text(render_control_text(smd.read_text(encoding="utf-8"),
                                                agent_dir, entrypoint, scope), encoding="utf-8")
+    # Ship the engine version so the installed engine can report itself
+    # (lifecycle.py version / the status header): the repo's VERSION rides inside the
+    # amg-bootstrap skill, which every install carries.
+    ver = REPO / "VERSION"
+    if ver.exists():
+        (skills_dest / "amg-bootstrap" / "VERSION").write_text(
+            ver.read_text(encoding="utf-8").strip() + "\n", encoding="utf-8")
     if _env_kind(env) == "codex":
         return                       # codex subagents are rendered as TOML (render_codex_agents)
     agents_dest = dest_agent_dir / "agents"
@@ -765,23 +875,32 @@ def install(target: Path, scope: str, agent_dir: str, entrypoint: str,
               f"-> {engine_agent_dir} (other skills kept)")
 
         # The entry block depends on the environment: Claude Code = skill + hook + command
-        # block; Codex = skill-aware block (skills + TOML subagents, no Claude hooks/command);
-        # any other AGENTS.md env = the portable skill-less block.
+        # block; Codex = skill-aware block with TOML subagents; OpenCode / Qwen Code =
+        # the portable skill-aware block (skills exist, hooks do not); any unknown
+        # AGENTS.md env = the portable skill-less block.
         tpl = {"claude-code": "CLAUDE.md", "codex": "AGENTS.codex.md",
+               "opencode": "AGENTS.skills.md", "qwen": "AGENTS.skills.md",
                "generic": "AGENTS.md"}[kind]
         block = render_control_text(_block_body((REPO / "entrypoint" / tpl).read_text(
             encoding="utf-8")), agent_dir, entrypoint, scope)
         inject_block(entry_path, block)
         label = {"claude-code": "skill-based", "codex": "skill-aware codex",
+                 "opencode": "skill-aware portable", "qwen": "skill-aware portable",
                  "generic": "skill-less / portable"}[kind]
         print(f"  block   {entrypoint} ({label}) -> {entry_path}")
 
-        if kind == "claude-code":
+        # Hooks: Claude Code and Qwen Code both read a Claude-shaped `hooks` block in
+        # <agent_dir>/settings.json (SessionStart / SessionEnd / UserPromptSubmit,
+        # command type, JSON on stdin) — the same template merges for both. Codex and
+        # OpenCode have no verified hook surface today (OpenCode's is a JS plugin API);
+        # their deterministic session halves run from the block's start check instead.
+        if kind in ("claude-code", "qwen"):
             settings_tpl = render_control_text(
                 (REPO / "entrypoint" / "settings.json").read_text(encoding="utf-8"),
                 agent_dir, entrypoint, scope)
             merge_settings(engine_agent_dir / "settings.json", json.loads(settings_tpl))
             print(f"  hooks   merged -> {engine_agent_dir / 'settings.json'}")
+        if kind == "claude-code":
             cmd_src = REPO / "entrypoint" / "commands"
             if cmd_src.is_dir():
                 cmd_dest = engine_agent_dir / "commands"
@@ -795,10 +914,22 @@ def install(target: Path, scope: str, agent_dir: str, entrypoint: str,
             print("  env     codex (skill-aware): the SessionStart/SessionEnd hooks and the "
                   "/amg command are Claude-Code-only and were NOT written; the model drives the "
                   "loop via skills + the TOML subagents below, and reads the digest itself.")
+        elif kind == "qwen":
+            print("  env     qwen (skill-aware): skills in .qwen/skills, subagents in "
+                  ".qwen/agents, session hooks merged into .qwen/settings.json; the /amg "
+                  "command and the digest @import are Claude-Code-only — the model reads "
+                  "the digest itself and verbal intent replaces the command.")
+        elif kind == "opencode":
+            print(f"  env     opencode (skill-aware): OpenCode discovers the amg-* skills "
+                  f"under {agent_dir}/skills natively; subagents rendered to "
+                  ".opencode/agent; no hook surface is written (OpenCode hooks are a JS "
+                  "plugin API) — the block's start check covers the session halves.")
         else:  # generic
             print("  env     skill-less: the SessionStart/SessionEnd hooks and the /amg "
                   "command are Claude-Code-only and were NOT written; the block drives the "
-                  "loop with direct script calls (the digest is read, not @import-ed).")
+                  "loop with direct script calls (the digest is read, not @import-ed). If "
+                  "the environment discovers the amg-* skills on its own, the block tells "
+                  "the model to prefer them.")
 
     # Config layers. A GLOBAL install (and --project-only, which
     # belongs to one) also maintains the machine-wide defaults config
@@ -819,33 +950,42 @@ def install(target: Path, scope: str, agent_dir: str, entrypoint: str,
     strip = global_layer and (Path.home() / agent_dir / "amg" / "config.yml").exists()
 
     cfg_path = graph_agent_dir / "amg" / "config.yml"
-    wrote = write_config(graph_agent_dir / "amg", agent_dir, entrypoint,
-                         mirror, absorb, absorb_once, exclude, scalars,
-                         strip_personal=strip)
-    print(f"  config  {cfg_path} ({'written' if wrote else 'kept existing — not clobbered'})")
-    if not wrote:
+    updated = write_config(graph_agent_dir / "amg", agent_dir, entrypoint,
+                           mirror, absorb, absorb_once, exclude, scalars,
+                           strip_personal=strip)
+    if updated is None:
+        print(f"  config  {cfg_path} (written)")
+    else:
+        kept = "kept existing" + (f"; updated keys: {', '.join(updated)}" if updated else "")
+        print(f"  config  {cfg_path} ({kept})")
         summary = _existing_config_summary(cfg_path)
         if summary:
             # Show what stays in force, so the flow confirms instead of silently
-            # keeping unknown state. To change: edit config.yml, or
-            # delete it and reinstall.
+            # keeping unknown state. Explicit flags passed on this run were applied
+            # above; everything else: edit config.yml, or delete it and reinstall.
             print(f"          in force: {summary}")
-            print("          (to change: edit config.yml directly, or delete it and reinstall)")
+            print("          (explicit --set/--mirror/... flags apply to it; the rest: "
+                  "edit config.yml, or delete it and reinstall)")
     seed_digest(graph_agent_dir / "amg")
 
-    # Render the models block: Claude Code -> per-role model/effort into the
-    # .md agent frontmatter; Codex -> TOML subagents (model + model_reasoning_effort); a
-    # skill-less generic env runs one model, so tiering is inert there. The models are
-    # read as the loaders see them: global defaults under the local config.
-    if not project_only and _env_kind(env) != "generic":
+    # Render the models block: Codex -> TOML subagents (model + model_reasoning_effort);
+    # every other environment -> per-role model/effort into the installed agents/*.md
+    # frontmatter. This runs for opencode/qwen/generic too: even where the environment
+    # does not spawn these files as subagents, they are the loop's guidance, and their
+    # frontmatter diverging from config.yml `models` misleads (a field failure). The
+    # models are read as the loaders see them: global defaults under the local config.
+    if not project_only:
         if yaml is None:
             print("  models  skipped (PyYAML not importable; reinstall after pip install pyyaml)")
         elif _env_kind(env) == "codex":
             render_codex_agents(REPO / "agents", engine_root / ".codex" / "agents",
                                 _read_models(cfg_path, agent_dir), env)
         else:
-            render_agent_models(engine_agent_dir / "agents",
-                                _read_models(cfg_path, agent_dir), env)
+            models = _read_models(cfg_path, agent_dir)
+            render_agent_models(engine_agent_dir / "agents", models, env)
+            if _env_kind(env) == "opencode":     # native subagents next to the guidance copies
+                render_opencode_agents(REPO / "agents",
+                                       engine_root / ".opencode" / "agent", models)
 
     if deps:
         install_deps(deps)
@@ -856,12 +996,14 @@ def install(target: Path, scope: str, agent_dir: str, entrypoint: str,
         build_graph(engine_agent_dir, target, graph_agent_dir)
 
     if build:
-        print("done. Structural graph built; run the amg-bootstrap skill (or just give a "
-              "task) for semantic enrichment — summaries + edges, which need the model.")
+        print("done. STRUCTURAL skeleton built (deterministic, no model — that is all "
+              "--build does). The semantic layer (summaries + edges) still needs the "
+              "model: restart the session, then `/amg sync` (or the first task under "
+              "automation) finishes it.")
     elif scalars.get("active", "true").lower() in ("true", "on", "yes"):
         print("done. AMG is ACTIVE but the graph is NOT built yet — `/amg on` only sets the "
               "flag. It builds on your first task in a NEW session, or now via `/amg sync` "
-              "(or re-run install with --build).")
+              "(or re-run install with --build for the instant structural skeleton).")
     else:
         print("done. AMG installed but inactive — `/amg on` to activate, then `/amg sync`.")
 
@@ -891,6 +1033,10 @@ def uninstall(target: Path, agent_dir: str, entrypoint: str,
     if codex_agents.is_dir():
         for tf in codex_agents.glob("amg-*.toml"):
             tf.unlink()
+    oc_agents = engine_root / ".opencode" / "agent"      # opencode install: native subagents
+    if oc_agents.is_dir():
+        for af in oc_agents.glob("amg-*.md"):
+            af.unlink()
     print(f"  engine  amg-* skills/agents/commands removed from {engine_agent_dir}")
     # 3. drop AMG hooks from settings.json, keep the rest
     settings = engine_agent_dir / "settings.json"
@@ -978,10 +1124,14 @@ def main(argv: List[str]) -> int:
         return 2
     target = Path(a["target"])
     # agent_dir / entrypoint default to the environment's convention when not given:
-    # Claude Code -> .claude / CLAUDE.md; codex and other AGENTS.md envs -> .agents / AGENTS.md.
+    # Claude Code -> .claude / CLAUDE.md; Qwen Code -> .qwen / QWEN.md; codex,
+    # opencode and unknown AGENTS.md envs -> .agents / AGENTS.md (the cross-tool
+    # skills location, which OpenCode and Codex both discover).
     kind = _env_kind(a["env"])
-    agent_dir = a["agent_dir"] or (".claude" if kind == "claude-code" else ".agents")
-    entrypoint = a["entrypoint"] or ("CLAUDE.md" if kind == "claude-code" else "AGENTS.md")
+    presets = {"claude-code": (".claude", "CLAUDE.md"), "qwen": (".qwen", "QWEN.md")}
+    def_dir, def_entry = presets.get(kind, (".agents", "AGENTS.md"))
+    agent_dir = a["agent_dir"] or def_dir
+    entrypoint = a["entrypoint"] or def_entry
     if a["uninstall"]:
         uninstall(target, agent_dir, entrypoint, a["scope"], a["purge_graph"])
         return 0

@@ -74,6 +74,8 @@ def test_local():
         assert cfg["agent_dir"] == ".claude" and cfg["entrypoint"] == "CLAUDE.md", cfg
         assert (t / ".claude/amg/digest.md").exists()
         assert (t / ".claude/amg/nodes").is_dir(), "verify --repair initialized the store"
+        ver = (t / ".claude/skills/amg-bootstrap/VERSION").read_text(encoding="utf-8").strip()
+        assert re.match(r"^\d+\.\d+\.\d+", ver), "engine VERSION shipped inside the skill"
         print("PASS  install: local layout, markers, merged hooks, parsed config, seeded digest, verified")
     finally:
         shutil.rmtree(t, ignore_errors=True)
@@ -95,10 +97,11 @@ def test_reinstall_idempotent():
         st = json.loads((t / ".claude/settings.json").read_text(encoding="utf-8"))
         starts = [h["command"] for e in st["hooks"]["SessionStart"] for h in e["hooks"]]
         assert "echo mine" in starts and any("lifecycle.py" in c for c in starts), st
-        # mutate the config, then reinstall: config kept, block + hooks not duplicated
+        # mutate the config, then reinstall with NO explicit answers: config kept
+        # untouched, block + hooks not duplicated
         cfgf = t / ".claude/amg/config.yml"
         cfgf.write_text(cfgf.read_text(encoding="utf-8") + "\n# my note\n", encoding="utf-8")
-        I.main(["--target", str(t), "--mirror", "OTHER", "--no-verify"])
+        I.main(["--target", str(t), "--no-verify"])
         entry2 = (t / "CLAUDE.md").read_text(encoding="utf-8")
         assert entry2.count(I.BEGIN) == 1 and entry2.count(I.END) == 1, "block not duplicated"
         assert "Be concise." in entry2
@@ -107,8 +110,21 @@ def test_reinstall_idempotent():
         assert sum("lifecycle.py" in c for c in starts2) == 1, "AMG hook not duplicated"
         assert "echo mine" in starts2, "user hook preserved"
         assert "# my note" in cfgf.read_text(encoding="utf-8"), "existing config not clobbered"
-        assert _cfg(t)["mirror_path"] == ["src"], "config kept the first install's values"
-        print("PASS  install: reinstall keeps user content + config, replaces block, no hook dupes")
+        assert _cfg(t)["mirror_path"] == ["src"], "no explicit answers -> values kept"
+        # an EXPLICIT answer on a reinstall is applied surgically to the existing
+        # config (an answer the flow collected must never silently vanish); untouched
+        # keys and the user's own comment survive
+        I.main(["--target", str(t), "--mirror", "OTHER",
+                "--set", "retrieval.embeddings.enabled=on", "--no-verify"])
+        cfg3 = _cfg(t)
+        assert cfg3["mirror_path"] == ["OTHER"], "explicit --mirror applied on reinstall"
+        assert cfg3["retrieval"]["embeddings"]["enabled"] is True, \
+            "explicit dotted --set applied on reinstall"
+        text3 = cfgf.read_text(encoding="utf-8")
+        assert "# my note" in text3, "surgical update keeps the user's comment"
+        assert cfg3["working_language"] == "ru" or "working_language" in text3, \
+            "untouched keys survive the surgical update"
+        print("PASS  install: reinstall keeps user content + config; explicit answers apply surgically")
     finally:
         shutil.rmtree(t, ignore_errors=True)
 
@@ -262,6 +278,11 @@ def test_generic_env():
         assert not (t / ".agents/settings.json").exists(), "no hooks in a skill-less env"
         assert not (t / ".agents/commands").exists(), "no /amg command in a skill-less env"
         assert (t / ".agents/amg/config.yml").exists() and (t / ".agents/amg/digest.md").exists()
+        # the guidance copies' frontmatter follows config.yml models here too — a
+        # generic env reads them as the loop's role guidance, and a template value
+        # diverging from the config misled a field install
+        fm = (t / ".agents/agents/amg-builder.md").read_text(encoding="utf-8").split("---")[1]
+        assert "model: sonnet" in fm, "models rendered into the generic guidance copies"
         print("PASS  install: --env generic writes the portable AGENTS.md block (no hooks/command)")
     finally:
         shutil.rmtree(t, ignore_errors=True)
@@ -304,6 +325,66 @@ def test_codex_env():
         I.main(["--target", str(t), "--env", "codex", "--uninstall"])
         assert not list((t / ".codex/agents").glob("amg-*.toml")), "uninstall clears codex TOML"
         print("PASS  install: --env codex -> skills + TOML subagents (model/effort) + skill-aware block")
+    finally:
+        shutil.rmtree(t, ignore_errors=True)
+
+
+def test_opencode_env():
+    t = Path(tempfile.mkdtemp(prefix="amg-oc-"))
+    try:
+        # OpenCode discovers .agents/skills natively; gets the skill-aware portable
+        # block + native subagents in .opencode/agent; NO hooks (its hook surface is
+        # a JS plugin API) and no /amg command. Defaults: .agents / AGENTS.md.
+        I.main(["--target", str(t), "--env", "opencode", "--mirror", "src", "--no-verify"])
+        assert (t / ".agents/skills/amg-bootstrap/scripts/reconcile.py").exists(), "skills in .agents"
+        entry = (t / "AGENTS.md").read_text(encoding="utf-8")
+        assert I.BEGIN in entry and ".agents/skills" in entry and ".claude" not in entry
+        assert "amg-* skills" in entry, "skill-aware block: skills are to be used"
+        oc = (t / ".opencode/agent/amg-builder.md").read_text(encoding="utf-8")
+        assert "mode: subagent" in oc and "description:" in oc, oc.splitlines()[:6]
+        assert ".agents/amg" in oc and ".claude" not in oc, "prompt rendered to .agents"
+        head = oc.split("---")[1]
+        assert "model:" not in head, "a Claude-alias template model is omitted for OpenCode"
+        assert (t / ".agents/agents/amg-builder.md").exists(), "guidance copies stay too"
+        assert not (t / ".agents/settings.json").exists() and not (t / ".agents/commands").exists()
+        # uninstall clears the native subagents as well
+        I.main(["--target", str(t), "--env", "opencode", "--uninstall"])
+        assert not list((t / ".opencode/agent").glob("amg-*.md")), "uninstall clears .opencode/agent"
+        print("PASS  install: --env opencode -> skills + .opencode/agent subagents + skill-aware block")
+    finally:
+        shutil.rmtree(t, ignore_errors=True)
+
+
+def test_qwen_env():
+    t = Path(tempfile.mkdtemp(prefix="amg-qwen-"))
+    try:
+        # Qwen Code: .qwen/QWEN.md preset; skills in .qwen/skills; the agents/*.md land
+        # in .qwen/agents (its native subagent location) with Claude-only frontmatter
+        # sanitized (tools/effort dropped; an alias model dropped); session hooks ARE
+        # merged (Qwen reads a Claude-shaped hooks block in .qwen/settings.json).
+        I.main(["--target", str(t), "--env", "qwen", "--mirror", "src", "--no-verify"])
+        assert (t / ".qwen/skills/amg-bootstrap/scripts/reconcile.py").exists(), "skills in .qwen"
+        entry = (t / "QWEN.md").read_text(encoding="utf-8")
+        assert I.BEGIN in entry and ".qwen/skills" in entry and ".claude" not in entry
+        st = json.loads((t / ".qwen/settings.json").read_text(encoding="utf-8"))
+        cmds = [h["command"] for ev in st["hooks"].values() for e in ev for h in e["hooks"]]
+        assert any(".qwen/skills" in c and "session-start" in c for c in cmds), st
+        agent = (t / ".qwen/agents/amg-builder.md").read_text(encoding="utf-8")
+        head = agent.split("---")[1]
+        assert "tools:" not in head, "Claude tool names dropped for Qwen"
+        assert "effort:" not in head and "model:" not in head, \
+            "effort and an alias model dropped for Qwen"
+        assert ".qwen/amg" in agent and ".claude" not in agent, "prompt rendered to .qwen"
+        assert not (t / ".qwen/commands").exists(), "the /amg command stays Claude-Code-only"
+        # a real (non-alias) model id passes through into the Qwen agent frontmatter
+        cfgf = t / ".qwen/amg/config.yml"
+        cfgf.write_text(re.sub(r"(?m)^  module_summary:.*$",
+                               "  module_summary: qwen3-coder-plus",
+                               cfgf.read_text(encoding="utf-8")), encoding="utf-8")
+        I.main(["--target", str(t), "--env", "qwen", "--no-verify"])
+        head2 = (t / ".qwen/agents/amg-builder.md").read_text(encoding="utf-8").split("---")[1]
+        assert "model: qwen3-coder-plus" in head2, head2
+        print("PASS  install: --env qwen -> .qwen/QWEN.md preset, hooks merged, sanitized native agents")
     finally:
         shutil.rmtree(t, ignore_errors=True)
 
@@ -393,6 +474,8 @@ if __name__ == "__main__":
     test_project_only_global()
     test_generic_env()
     test_codex_env()
+    test_opencode_env()
+    test_qwen_env()
     test_models_render()
     test_nested_set_and_absorb_once()
     test_uninstall()
