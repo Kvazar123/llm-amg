@@ -122,6 +122,7 @@ The subagent roles (full prompts and instructions — [Subagents and skills](./0
 | `amg-synth` | opus | Read, Grep, Glob, Bash, Write | builds the top level (hubs from deterministic anchors, strategic-layer edges, weighted multi-membership) and the gap report |
 | `amg-linker` | sonnet | Read, Grep, Glob, Bash, Write | global linking after synthesis: confirms cross-domain candidates in batches, in parallel |
 | `amg-retriever` | haiku | Read, Grep, Glob, Bash | assembles the pack (read-only), returns its location and a short summary |
+| `amg-retriever-fork` | inherits the caller's (a `context: fork` agent, Claude Code only) | inherited | the context-informed memory consult: reads the pack in its own window, returns a short distillate weighed against the session |
 | `amg-consolidator` | opus | Read, Grep, Glob, Bash, Write | decides what to promote, merge, summarize, group under a sub-hub, shorten, or retire → an actions JSON |
 
 The workers' `Write` is scoped by their prompts to their **own artifacts** under `work/` (checkpoint parts, the gap report, the actions file) — sources and node files stay read-only; the tool exists because writing JSON through a bash heredoc tears on quotes and apostrophes in real summaries.

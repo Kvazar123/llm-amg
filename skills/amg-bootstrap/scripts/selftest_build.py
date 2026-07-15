@@ -407,6 +407,48 @@ def main() -> int:
         assert LC.build_batches(proj, amg)["batches"] == 1, "crashed batch re-nominates"
         print("PASS  judged memory: full coverage retires the batch, partial re-nominates")
 
+        # 5c. the scoped stray re-check (--isolated, the /amg relink path): a stray
+        # with no resolved relation is re-nominated even after its pairs were judged
+        # (rejections re-opened for strays only), and the SOURCES are limited to the
+        # strays — connected nodes stay retired.
+        batch_ids = [n["id"] for n in
+                     json.loads(batch_file.read_text(encoding="utf-8"))["nodes"]]
+        (amg / "work" / "derived-links-001-p01.json").write_text(
+            json.dumps([{"judged": batch_ids}]), encoding="utf-8")
+        RC.apply_derived(proj, amg)                 # retire the pending batch fully
+        assert LC.build_batches(proj, amg)["batches"] == 0, "normal pass converged"
+        store5 = gs.GraphStore(amg)
+        guide_summary = RC.load_nodes(store5)[GUIDE]["summary"]
+        with store5.lock():                         # a stray sharing GUIDE's tokens
+            tx = store5.transaction()
+            tx.write(RC.node_relpath("note:stray", "notes"), RC.serialize_node(
+                {"id": "note:stray", "type": "note", "source_kind": "authored",
+                 "policy": "authored", "source_hash": None, "derived_from_hash": None,
+                 "summary": guide_summary, "status": "active",
+                 "part_of": [], "edges": []}, ""))
+            tx.commit()
+        lc_new = LC.build_batches(proj, amg)        # a NEW node nominates normally
+        assert lc_new["batches"] == 1, lc_new
+        stray_batch = amg / "work" / "link-batch-001.json"
+        stray_ids = [n["id"] for n in
+                     json.loads(stray_batch.read_text(encoding="utf-8"))["nodes"]]
+        (amg / "work" / "derived-links-001-p01.json").write_text(
+            json.dumps([{"judged": stray_ids}]), encoding="utf-8")
+        RC.apply_derived(proj, amg)                 # ... and gets judged away
+        assert LC.build_batches(proj, amg)["batches"] == 0, "stray judged -> converged again"
+        iso = LC.build_batches(proj, amg, isolated_only=True)
+        assert iso["batches"] == 1 and iso.get("isolated_sources", 0) >= 1, iso
+        iso_nodes = [n for f in sorted((amg / "work").glob("link-batch-*.json"))
+                     for n in json.loads(f.read_text(encoding="utf-8"))["nodes"]]
+        assert {n["id"] for n in iso_nodes} == {"note:stray"}, \
+            "sources limited to the strays (connected nodes stay retired)"
+        assert any(c["id"] == GUIDE for n in iso_nodes for c in n["candidates"]), \
+            "the stray's judged pair is re-opened"
+        shutil.rmtree(amg / "work" / "judged", ignore_errors=True)
+        for f in (amg / "work").glob("link-batch-*.json"):
+            f.unlink()                              # leave no pending batches behind
+        print("PASS  isolated re-check: strays re-nominated past judged memory, sources scoped")
+
         # 6. derivation cache: wipe the graph, rebuild, restore verbatim
         summaries_before = {nid: n["summary"] for nid, n in
                             RC.load_nodes(gs.GraphStore(amg)).items()

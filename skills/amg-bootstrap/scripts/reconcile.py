@@ -1268,7 +1268,16 @@ def _retire_judged_batches(work: Path, judged_by_batch: Dict[str, Set[str]]) -> 
             try:
                 dest = work / "judged"
                 dest.mkdir(parents=True, exist_ok=True)
-                batch_file.replace(dest / batch_file.name)
+                # Batch labels are positional and a later wave reuses 001, 002, … —
+                # replacing an existing judged file would ERASE the earlier wave's
+                # rejection memory (its pairs would re-nominate). Never clobber:
+                # suffix the name instead (the reader globs link-batch-*.json).
+                target = dest / batch_file.name
+                r = 1
+                while target.exists():
+                    r += 1
+                    target = dest / f"{batch_file.stem}-r{r:02d}{batch_file.suffix}"
+                batch_file.replace(target)
                 moved.append(batch_file.name)
             except OSError:
                 pass      # a held file stays put; the next apply-derived retries

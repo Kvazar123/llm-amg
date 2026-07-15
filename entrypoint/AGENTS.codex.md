@@ -47,7 +47,7 @@ about something else must NOT trigger one.
 | Capture a note | `notes.py add` (direct) | — |
 | Repair the graph | `graph_store.py recover` + `verify --repair` (direct) | — |
 | Memory status / engine version | `lifecycle.py status .` (present verbatim) / `lifecycle.py version` (direct) | — |
-| Re-check unlinked / isolated nodes | re-run the linking pass (amg-bootstrap step 6); to re-open past rejections, delete `work/judged/`, then sync | amg-linker |
+| Re-link the isolated nodes (`/amg relink`) | the amg-bootstrap linking pass from `link_candidates.py --isolated .` (strays only; their past rejections re-opened; deleting `work/judged/` = full re-open, last resort) | amg-linker |
 | Visualize the graph | `export_graph.py --store .claude/amg --open` (direct, read-only) | — |
 
 A literal `/amg <verb>` typed by the user is the same request in command clothes — there

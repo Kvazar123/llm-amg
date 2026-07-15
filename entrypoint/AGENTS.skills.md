@@ -58,7 +58,7 @@ the same request in command clothes — run the matching row yourself.
 | Targeted pointer lookup ("where is X") | the same call with `--compact` |
 | Capture a note / decision | `python .claude/skills/amg-bootstrap/scripts/notes.py add --type decision --summary "..."` |
 | Consolidate memory (wrap-up) | the **amg-consolidate** skill |
-| Re-check unlinked / isolated nodes | re-run the linking pass (amg-bootstrap, step 6); past rejections are remembered in `work/judged/` — to re-open them, delete those files, then sync |
+| Re-link the isolated nodes (`/amg relink`) | the amg-bootstrap linking pass from `python .claude/skills/amg-bootstrap/scripts/link_candidates.py --isolated .` — strays only, their past rejections re-opened; deleting `work/judged/` is the FULL re-open — last resort |
 | Open the 3D graph viewer | `python .claude/skills/amg-retrieve/scripts/export_graph.py --store .claude/amg --open` |
 
 ### Operating loop (when AMG is ON)

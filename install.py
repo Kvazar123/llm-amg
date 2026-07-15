@@ -529,6 +529,8 @@ ROLE_AGENTS = {
     "module_summary": ("amg-builder", "amg-linker"),
     "synthesis": ("amg-synth", "amg-consolidator"),
     # structural_extraction is deterministic — no model, no agent.
+    # amg-retriever-fork is deliberately absent: a fork inherits the PARENT model
+    # by definition (Claude Code `context: fork`), so tiering does not apply to it.
 }
 
 # AMG's neutral `reasoning_effort` clamps to what each environment supports. Claude
@@ -656,6 +658,8 @@ def render_opencode_agents(repo_agents_dir: Path, dest_dir: Path, models_cfg: di
         old.unlink()
     written: List[str] = []
     for ag in sorted(repo_agents_dir.glob("amg-*.md")):
+        if ag.stem == "amg-retriever-fork":
+            continue                 # `context: fork` is Claude-Code-only; no OpenCode analog
         fm, body = _md_frontmatter_body(ag.read_text(encoding="utf-8"))
         name = str(fm.get("name") or ag.stem)
         desc = render_control_text(str(fm.get("description") or ""), ".agents",
@@ -730,6 +734,8 @@ def render_codex_agents(repo_agents_dir: Path, dest_dir: Path, models_cfg: dict,
         old.unlink()
     written: List[str] = []
     for ag in sorted(repo_agents_dir.glob("amg-*.md")):
+        if ag.stem == "amg-retriever-fork":
+            continue                 # `context: fork` is Claude-Code-only; no TOML analog
         fm, body = _md_frontmatter_body(ag.read_text(encoding="utf-8"))
         name = str(fm.get("name") or ag.stem)
         desc = render_control_text(str(fm.get("description") or ""), ".agents",
@@ -795,6 +801,11 @@ def place_engine(dest_agent_dir: Path, agent_dir: str, entrypoint: str, scope: s
     agents_dest = dest_agent_dir / "agents"
     agents_dest.mkdir(parents=True, exist_ok=True)
     for ag in sorted((REPO / "agents").glob("amg-*.md")):
+        # The forked retriever rides on Claude Code's `context: fork` mechanism —
+        # other environments have no fork, so shipping it there would document a
+        # capability the environment cannot deliver.
+        if ag.stem == "amg-retriever-fork" and _env_kind(env) != "claude-code":
+            continue
         agents_dest.joinpath(ag.name).write_text(
             render_control_text(ag.read_text(encoding="utf-8"), agent_dir, entrypoint, scope),
             encoding="utf-8")

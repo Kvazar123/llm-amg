@@ -70,9 +70,15 @@ output transactionally (validation and id canonicalization included).
 **Checkpoint as you go — never hold the whole batch for one final write.** For an
 output path `.../derived-links-<n>.json`, write numbered parts instead:
 `.../derived-links-<n>-p01.json`, `-p02.json`, … — each a complete, valid JSON array
-covering the last ~10 judged nodes. A written part is durable: an interruption (rate
+covering the last ~20 judged nodes. A written part is durable: an interruption (rate
 limit, disconnect, output ceiling) loses at most the nodes since the last part, never
 the batch. Do not grow or rewrite an already-written part — start the next one.
+**Batch your writes into few turns**: every turn re-sends your whole context (the
+batch file is large), so emit finished parts as SEVERAL Write calls in ONE message —
+two or three parts per turn — instead of one part per turn. Your confirmations are
+small; the resend, not the writing, is the cost. A typical 80-node batch should take
+about five turns total: read the batch, one or two write-turns, one validation call,
+the final line.
 
 **End every part with its judged record** — one service element listing EVERY node id
 you judged in that part, including nodes where you confirmed nothing:

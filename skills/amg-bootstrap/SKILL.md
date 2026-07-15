@@ -216,6 +216,13 @@ delegating per-unit reading to subagents.
    in — repeat `link_candidates.py` + the wave until it emits zero new batches, or
    `metrics` reports `gate: ok`**; typically one or two waves suffice, and a second
    wave carries only genuinely new pairs, never re-rejections.
+   **Re-checking the strays (`/amg relink`, "re-link the isolated nodes"):** when a
+   COMPLETED build still shows isolated nodes (status/viewer), a plain re-run
+   honestly reports "nothing new" — those pairs were already ruled on. The scoped
+   re-open is `link_candidates.py --isolated .`: it nominates candidates ONLY for
+   nodes with no resolved relation, deliberately ignoring their past rejections;
+   judge and apply the batches exactly as above. Deleting `work/judged/` remains
+   the FULL re-open (every judgment re-paid) — never the first resort.
 
 7. **Acceptance gate (connectivity) + verification stamp.** Verify the build is one
    connected graph:
@@ -307,8 +314,9 @@ graph converges to fully derived — most-used first — without a bootstrap spi
 - `scripts/link_candidates.py` — deterministic prep for the global passes:
   candidate nomination by cached-embedding similarity (lexical fallback) into
   `work/link-batch-*.json`, `--hubs` for the stable hub anchors
-  (`work/hub-candidates.json`), and `--synth-input` for the one-file synthesis
-  sheet (`work/synth-input.json`: the whole summary layer + gap material).
+  (`work/hub-candidates.json`), `--synth-input` for the synthesis sheet
+  (`work/synth-input.json`, split into `-pNN` parts over the cap), and
+  `--isolated` for the scoped stray re-check (`/amg relink`).
 - Subagents: `../../agents/amg-builder.md`, `../../agents/amg-synth.md`,
   `../../agents/amg-linker.md` (global linking, step 6),
   `../../agents/amg-classifier.md` (optional, for ambiguous files).

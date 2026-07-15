@@ -573,11 +573,14 @@ AMG operations (any verb also works as plain words that name the memory / AMG):
                for a targeted pointer lookup, --intent history|conflict by meaning)
   consolidate  fold weights, select conclusions, compact over-budget branches
                (model-driven: the amg-consolidate flow / skill)
+  relink       re-check the isolated (unlinked) nodes: nominate candidates for the
+               strays only (link_candidates.py --isolated), judge, apply — past
+               rejections for those nodes are deliberately re-opened
   view         export + open the read-only 3D graph viewer (export_graph.py --open)
   sync-defer   record "sync deferred" so later sessions stop re-asking at the same size
   help         this list
 Control verbs (status/version/on/off/repair/sync-defer/help) run via lifecycle.py;
-work verbs (sync/retrieve/consolidate/view) belong to the skills / activation loop."""
+work verbs (sync/retrieve/consolidate/relink/view) belong to the skills / activation loop."""
 
 
 def repair(project_root: Path, amg: Path) -> Dict[str, Any]:

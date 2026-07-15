@@ -71,6 +71,20 @@ deliberate variant for when the pack itself should NOT enter your window.
    line summary — at the price of a subagent's fixed per-step overhead, so it is
    the exception, not the default.
 
+   **Spawn `amg-retriever-fork` (Claude Code only) for a context-informed consult**:
+   it is a FORK — it inherits your whole conversation, retrieves in its own window,
+   and returns a 5–15-line distillate judged against everything the session already
+   knows (what the memory adds, confirms, or CONTRADICTS), while the pack never
+   enters your window. Choose it late in a rich session for a strategic question to
+   the memory ("does the memory agree with our plan?", "what do we hold on X that we
+   missed?") — a fresh retriever cannot weigh the pack against the session, and a
+   direct call would import the whole pack. The price is honest: the fork's turns
+   re-send the inherited context (mostly prompt-cache reads) — you pay tokens and
+   some latency to keep the main window lean and the judgment fully informed. Three
+   ways, one decision rule: working context for a task → direct call; a cheap
+   isolated summary of what the memory holds → `amg-retriever`; a memory consult
+   that must be weighed against the session → `amg-retriever-fork`.
+
 3. **Work from the pack — read it in full** (printed, or read
    `.claude/amg/cache/pack.md` whole). The pack is already the selection, assembled
    under a token budget: skimming its head loses exactly the tiers the budget paid

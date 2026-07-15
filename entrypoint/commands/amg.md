@@ -1,6 +1,6 @@
 ---
-description: AMG memory — one front door for every operation (status, version, on/off, repair, sync, retrieve, consolidate, view, help).
-argument-hint: status | version | on | off | repair | sync | retrieve <query> | consolidate | view | help
+description: AMG memory — one front door for every operation (status, version, on/off, repair, sync, retrieve, consolidate, relink, view, help).
+argument-hint: status | version | on | off | repair | sync | retrieve <query> | consolidate | relink | view | help
 disable-model-invocation: true
 allowed-tools: Bash(python *)
 ---
@@ -36,6 +36,13 @@ hook or a deterministic script cannot, because these need model judgment):
   `$ARGUMENTS` as the query, to assemble a context pack.
 - `consolidate` (maintain, compact, wrap up, save memory) — use the **amg-consolidate**
   skill to fold weights, file the session's conclusions, and compact over-budget branches.
+- `relink` (re-link, link the isolated/unlinked nodes) — re-check exactly the stray
+  nodes: run the **amg-bootstrap** skill's linking pass (step 6) starting from
+  `link_candidates.py --isolated .` — it nominates candidates ONLY for nodes with no
+  resolved relation and deliberately re-opens their past rejections; judge the batches
+  and apply as usual. Use when `status`/the viewer shows isolated nodes after a
+  completed build; a plain `sync` will honestly report "nothing new" there, because
+  its convergence memory (`work/judged/`) already ruled on those pairs.
 
 **View verb** — a deterministic read-only script (no subagent, no judgment), so run it
 directly:

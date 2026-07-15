@@ -88,7 +88,9 @@ output path `.../derived-<batch>.json`, write numbered parts instead:
 covering the last ~10 units you finished. A written part is durable: an
 interruption (rate limit, disconnect, output ceiling) loses at most the units since
 the last part, never the batch. Do not grow or rewrite an already-written part —
-start the next one.
+start the next one. **When two parts are ready together, write both in ONE message**
+(several Write calls per turn): every turn re-sends your whole context, so fewer
+write-turns cost less; the durability bound stays the part, not the turn.
 
 **Write parts with the Write tool — never a bash heredoc.** Summaries carry quotes,
 apostrophes, and backticks, and a heredoc tears on them mid-file; the Write tool

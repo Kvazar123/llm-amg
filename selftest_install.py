@@ -55,6 +55,8 @@ def test_local():
                 "--set", "automation=true"])
         assert (t / ".claude/skills/amg-bootstrap/scripts/graph_store.py").exists()
         assert (t / ".claude/agents/amg-builder.md").exists()
+        assert (t / ".claude/agents/amg-retriever-fork.md").exists(), \
+            "the forked retriever ships on Claude Code (context: fork is its mechanism)"
         entry = (t / "CLAUDE.md").read_text(encoding="utf-8")
         assert I.BEGIN in entry and I.END in entry, "markers present"
         assert "## AMG" in entry and "# Project memory" not in entry, "preamble stripped"
@@ -283,6 +285,8 @@ def test_generic_env():
         # diverging from the config misled a field install
         fm = (t / ".agents/agents/amg-builder.md").read_text(encoding="utf-8").split("---")[1]
         assert "model: sonnet" in fm, "models rendered into the generic guidance copies"
+        assert not (t / ".agents/agents/amg-retriever-fork.md").exists(), \
+            "the fork mechanism is Claude-Code-only — not shipped to other envs"
         print("PASS  install: --env generic writes the portable AGENTS.md block (no hooks/command)")
     finally:
         shutil.rmtree(t, ignore_errors=True)
@@ -346,6 +350,9 @@ def test_opencode_env():
         head = oc.split("---")[1]
         assert "model:" not in head, "a Claude-alias template model is omitted for OpenCode"
         assert (t / ".agents/agents/amg-builder.md").exists(), "guidance copies stay too"
+        assert not (t / ".opencode/agent/amg-retriever-fork.md").exists() \
+            and not (t / ".agents/agents/amg-retriever-fork.md").exists(), \
+            "no fork agent outside Claude Code"
         assert not (t / ".agents/settings.json").exists() and not (t / ".agents/commands").exists()
         # uninstall clears the native subagents as well
         I.main(["--target", str(t), "--env", "opencode", "--uninstall"])
@@ -369,6 +376,8 @@ def test_qwen_env():
         st = json.loads((t / ".qwen/settings.json").read_text(encoding="utf-8"))
         cmds = [h["command"] for ev in st["hooks"].values() for e in ev for h in e["hooks"]]
         assert any(".qwen/skills" in c and "session-start" in c for c in cmds), st
+        assert not (t / ".qwen/agents/amg-retriever-fork.md").exists(), \
+            "no fork agent among Qwen's native subagents"
         agent = (t / ".qwen/agents/amg-builder.md").read_text(encoding="utf-8")
         head = agent.split("---")[1]
         assert "tools:" not in head, "Claude tool names dropped for Qwen"

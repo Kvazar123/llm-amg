@@ -41,6 +41,9 @@ CLI:
         [--top K] [--batch N] [--min-sim S]
   python link_candidates.py --hubs [<project_root>] [--root <agent_dir>]
   python link_candidates.py --synth-input [<project_root>] [--root <agent_dir>]
+  python link_candidates.py --isolated [<project_root>] [--root <agent_dir>]
+      # re-nominate ONLY the isolated strays (no resolved relation at all), judged
+      # memory ignored for them — the scoped re-open behind /amg relink
 """
 from __future__ import annotations
 
@@ -227,10 +230,37 @@ def _lexical_candidates(order: List[str], nodes: Dict[str, Dict[str, Any]],
     return out
 
 
+def _isolated_ids(nodes: Dict[str, Dict[str, Any]]) -> Set[str]:
+    """Nodes that participate in NO resolved relation at all — neither as a source
+    nor as a target of an edge, nor in a resolved part_of membership. These are the
+    strays a user sees floating in the viewer; `--isolated` re-nominates exactly
+    them (past judgments included) instead of asking the user to reopen everything."""
+    connected: Set[str] = set()
+    for nid, n in nodes.items():
+        for e in n.get("edges") or []:
+            to = e.get("to") if isinstance(e, dict) else None
+            if isinstance(to, str) and to in nodes:
+                connected.add(nid)
+                connected.add(to)
+        for pm in n.get("part_of") or []:
+            topic = pm.get("topic") if isinstance(pm, dict) else None
+            if isinstance(topic, str) and topic in nodes:
+                connected.add(nid)
+                connected.add(topic)
+    return set(nodes) - connected
+
+
 def build_batches(project_root: Path, amg_root: Path,
-                  overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                  overrides: Optional[Dict[str, Any]] = None,
+                  isolated_only: bool = False) -> Dict[str, Any]:
     """Nominate candidates for every eligible node and write the linker batches to
-    work/link-batch-<nnn>.json. Returns the pass summary (mode, counts, batches)."""
+    work/link-batch-<nnn>.json. Returns the pass summary (mode, counts, batches).
+
+    isolated_only (the CLI's --isolated, the /amg relink path): nominate ONLY for
+    nodes with no resolved relation at all, and deliberately IGNORE the judged
+    memory for them — a stray either never got a verdict or its rejection is
+    exactly what the user wants re-examined; re-opening is scoped to the strays,
+    never the whole graph (deleting work/judged/ remains the full re-open)."""
     config = load_config(amg_root)
     cfg = {**LINKER_DEFAULTS, **(config.get("linker") or {}), **(overrides or {})}
     top_k, min_sim = int(cfg["top_k"]), float(cfg["min_sim"])
@@ -240,7 +270,10 @@ def build_batches(project_root: Path, amg_root: Path,
     eligible = _eligible(nodes)
     # Never re-nominate what is linked (confirmed) OR judged (ruled on either way):
     # the judged half is what lets "repeat until zero batches" actually terminate.
-    linked = _linked_pairs(nodes) | _judged_pairs(amg_root / "work")
+    # The isolated re-check drops the judged half on purpose (see the docstring).
+    linked = _linked_pairs(nodes)
+    if not isolated_only:
+        linked = linked | _judged_pairs(amg_root / "work")
     order = sorted(eligible)                  # deterministic nomination order
 
     mode = "lexical"
@@ -259,6 +292,9 @@ def build_batches(project_root: Path, amg_root: Path,
                    if n.get("type") in ("hub", "overview")))
     hub_rows = [{"id": h, "summary": nodes[h].get("summary", "")} for h in hubs]
 
+    # Candidates are computed over the full eligible set (partners must come from
+    # the whole graph); the isolated re-check then narrows the SOURCES to the strays.
+    sources = set(order) if not isolated_only else (_isolated_ids(nodes) & set(order))
     entries = [{"id": nid, "type": eligible[nid].get("type"),
                 "source_path": eligible[nid].get("source_path"),
                 "summary": eligible[nid].get("summary", ""),
@@ -267,7 +303,7 @@ def build_batches(project_root: Path, amg_root: Path,
                      "source_path": eligible[other].get("source_path"),
                      "summary": eligible[other].get("summary", ""), "sim": sim}
                     for other, sim in cands.get(nid, [])]}
-               for nid in order if cands.get(nid)]
+               for nid in order if nid in sources and cands.get(nid)]
 
     work = amg_root / "work"
     for old in work.glob("link-batch-*.json") if work.exists() else []:
@@ -283,9 +319,12 @@ def build_batches(project_root: Path, amg_root: Path,
             json.dumps({"part": batches, "mode": mode, "hubs": hub_rows,
                         "nodes": entries[start:start + batch_nodes]},
                        ensure_ascii=False, indent=2))
-    return {"mode": mode, "eligible": len(eligible), "with_candidates": len(entries),
-            "batches": batches, "hubs": len(hub_rows),
-            "skipped_stale": sum(1 for n in nodes.values() if n.get("status") == "stale")}
+    out = {"mode": mode, "eligible": len(eligible), "with_candidates": len(entries),
+           "batches": batches, "hubs": len(hub_rows),
+           "skipped_stale": sum(1 for n in nodes.values() if n.get("status") == "stale")}
+    if isolated_only:
+        out["isolated_sources"] = len(sources)
+    return out
 
 
 def _hub_slug(topic: str) -> str:
@@ -484,6 +523,9 @@ def main(argv: List[str]) -> int:
     synth_mode = "--synth-input" in args
     if synth_mode:
         args.remove("--synth-input")
+    isolated_mode = "--isolated" in args      # re-check the strays only (/amg relink)
+    if isolated_mode:
+        args.remove("--isolated")
     project_root = Path(args[0]).resolve() if args else Path.cwd()
     amg_root = gs.resolve_amg_root(cli_root, project_root)
     # Unapplied derivation parts mean the graph LAGS work already on disk: batches or
@@ -491,7 +533,8 @@ def main(argv: List[str]) -> int:
     n_left = warn_leftover_derived(amg_root)
     result = (hub_candidates(amg_root) if hubs_mode
               else synth_input(amg_root) if synth_mode
-              else build_batches(project_root, amg_root, overrides))
+              else build_batches(project_root, amg_root, overrides,
+                                 isolated_only=isolated_mode))
     if n_left:
         result["leftover_derived"] = n_left
     print(json.dumps(result, ensure_ascii=False, indent=2))

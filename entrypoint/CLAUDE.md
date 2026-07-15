@@ -49,7 +49,7 @@ conversation) must NOT trigger one; when unsure, just answer normally.
 | Build / sync the graph | `sync` (build, index, reconcile) | **amg-bootstrap** | "index the project into memory", "sync the memory graph" |
 | Retrieve context | `retrieve <q>` (recall, context) | **amg-retrieve** | "pull context on X from memory", "what does the memory hold on X" |
 | Consolidate memory | `consolidate` (maintain, compact) | **amg-consolidate** | "consolidate the memory", "wrap up and save to memory" |
-| Re-check unlinked nodes | — | re-run the linking pass (amg-bootstrap step 6); to re-open past rejections, delete `work/judged/`, then sync | "re-link the isolated memory nodes" |
+| Re-link the isolated nodes | `relink` | the amg-bootstrap linking pass from `link_candidates.py --isolated .` (strays only; their past rejections re-opened) | "re-link the isolated memory nodes" |
 | Open the graph viewer | `view` (show graph, visualize) | `export_graph.py --open` | "open / show the memory graph", "visualize the memory" |
 | Capture a note | — | `notes.py add` | "remember (in memory) that …" |
 
@@ -107,10 +107,16 @@ explicit request.
    it returns pointer lines instead of unfolded bodies at a fraction of the size,
    while entering an unfamiliar topic keeps the full profile). **Read the printed
    pack in full** — it is already the selection, assembled under a token budget;
-   skimming its head loses exactly the tiers the budget paid for. Spawn the
-   `amg-retriever` subagent instead only when the pack should NOT enter your window
-   — a summary question to the memory, or an already-crowded context; the subagent
-   costs its own fixed overhead, so it is the exception. The protocol:
+   skimming its head loses exactly the tiers the budget paid for. Two subagent
+   variants exist for when the pack should NOT enter your window: spawn
+   `amg-retriever` (fresh context) for a cheap isolated summary of what the memory
+   holds, and `amg-retriever-fork` (a fork — it inherits this whole conversation)
+   for a memory consult that must be WEIGHED against what the session already
+   knows: late in a rich session, a strategic question ("does the memory
+   confirm/contradict our plan?") — the fork reads the pack in its own window and
+   returns only the informed 5–15-line delta, at the price of re-sending the
+   inherited context (mostly cache reads). Both are exceptions; the direct call
+   stays the default for working context. The protocol:
    - **Decompose a complex prompt.** A request with several distinct topics or
      sub-tasks gets a separate retrieval per topic — run each as you turn to that
      part; the retrieved branches together form the task's context. One vague
