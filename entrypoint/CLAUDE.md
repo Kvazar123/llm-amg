@@ -111,12 +111,16 @@ explicit request.
    variants exist for when the pack should NOT enter your window: spawn
    `amg-retriever` (fresh context) for a cheap isolated summary of what the memory
    holds, and `amg-retriever-fork` (a fork — it inherits this whole conversation)
-   for a memory consult that must be WEIGHED against what the session already
-   knows: late in a rich session, a strategic question ("does the memory
-   confirm/contradict our plan?") — the fork reads the pack in its own window and
-   returns only the informed 5–15-line delta, at the price of re-sending the
-   inherited context (mostly cache reads). Both are exceptions; the direct call
-   stays the default for working context. The protocol:
+   for a judgment weighed against what the session already knows. The fork reads
+   the pack in its own window and returns only the informed distillate (usually
+   5–15 lines; a real contradiction gets the space it needs), deduplicated against
+   your window — pass the ask in the spawn prompt (briefing / delta / contradiction
+   check / revision; seed hints optional — it sees the session). Worth its price
+   (re-sends of the inherited context, mostly cache reads) at any stage: early as a
+   dense task briefing instead of a full pack, mid-session for the delta on a focus
+   shift or an agreement check before a decision, late for the revision against
+   memory before wrap-up. Both are exceptions; the direct call stays the default
+   for working context. The protocol:
    - **Decompose a complex prompt.** A request with several distinct topics or
      sub-tasks gets a separate retrieval per topic — run each as you turn to that
      part; the retrieved branches together form the task's context. One vague
