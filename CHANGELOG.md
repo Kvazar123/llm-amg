@@ -4,6 +4,33 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [1.14.0] — 2026-07-15
+
+A field snapshot of Stage 23 (multi-environment portability + field fixes), cut mid-stage on purpose: the stage's live environment tests install this engine into Codex / OpenCode / Qwen Code projects, and the new `/amg version` must identify what those installs actually run. The stage itself stays open (live runs, the auto-confirm linking measurement, closure docs); its closing session will release the next MINOR. MINOR: backward-compatible engine, installer, prompt, and doc additions; no schema or config-contract break.
+
+### Added
+- **Five install environments:** `--env claude-code | codex | opencode | qwen | generic`. OpenCode discovers the skills in `.agents/skills` natively and gets subagents rendered to `.opencode/agent/*.md`; Qwen Code gets the `.qwen`/`QWEN.md` preset, native markdown subagents in `.qwen/agents` (Claude-only frontmatter sanitized; real model ids pass through), and the session hooks merged into `.qwen/settings.json` (Qwen reads a Claude-shaped hooks block); a new portable skill-aware block template `entrypoint/AGENTS.skills.md` serves both; the generic block now tells the model to prefer the `amg-*` skills if its environment turns out to discover them. The `models` block renders into every environment's native subagent format.
+- **`/amg relink` + `link_candidates.py --isolated`:** re-judge exactly the stray nodes — nomination only for nodes with no resolved relation, their past rejections deliberately re-opened (a plain `sync` honestly reports "nothing new" there; deleting `work/judged/` stays the full re-open).
+- **The forked memory consult (`/amg consult`, Claude Code only):** the `amg-retriever-fork` subagent (`context: fork`) inherits the whole parent conversation, retrieves in its own window, and returns an informed distillate — what the memory adds, confirms, or contradicts — deduplicated against the session; the pack never enters the main window. Useful early (a dense task briefing), mid-session (the delta on a focus shift; a pre-decision cross-check), and late (the revision before wrap-up).
+- **Engine self-identification:** the installer ships `VERSION` inside the `amg-bootstrap` skill; `lifecycle.py version`, a version header in `status`, and a user-facing `help` listing every verb.
+- **The split recall gate:** `consolidate.py apply` gates ONLY the compaction subset — arbitration verdicts and promotions apply regardless of the verdict; the gate compares pack metrics (`pack_recall` + the new `pack_hop_recall`) with each case's hop-gold frozen from the baseline, so legitimate sub-hub indirection and BM25 drift no longer reject sound action files.
+- **The stale-graph guard:** `make_plan` carries `queued_for_semantic` and warns past max(100, 10 % of nodes) — a judgment pass over a graph that lags its sources is offered a sync first.
+- **Configurable budgets:** `retrieval.compact_ratio` (the compact profile as a share of the effective tier budgets; periphery unscaled) and `linker.synth_input_max_chars` (the synthesis-sheet ceiling in characters; past it the sheet splits into whole-group `synth-input-pNN.json` parts synthesized sequentially — set ~300000 for a 256K-token window).
+- **The sync-defer cadence:** `lifecycle.py sync-defer` records the deferred backlog size; the start check re-asks only when it grows noticeably.
+- **Reinstall applies explicit answers:** keys passed on the run (`--set`, source lists, `--exclude`) land in an existing config as surgical line edits (`updated keys:`) — an answer the install flow collected never silently vanishes.
+
+### Changed
+- **Worker turn economy:** linker checkpoint parts grow to ~20 nodes and all workers write several finished parts per message — the context resend is paid per turn, not per call (a batch should take ~5 turns, not 20–30).
+- **Loop discipline for weaker models:** the pack is read in full (it is already the budgeted selection; the smaller read is `--compact`, not partial reading); in hook-less environments the wrap-up signal first files the session's conclusions as notes, then consolidates; every block carries a "common tasks → command" quick reference and presents `status` verbatim; a typed `/amg <verb>` is executed by the loop where slash commands do not exist.
+- **READMEs/GUIDE:** the five-environment warning and install section, a "what the memory keeps on disk" section with the guide's full file inventory (what each file shows; what is safe to delete), the weak-model value paragraph, the "retrieval by judgment" bullet, per-environment model-string formats, and the plain-register rewrite of the `model` paragraph.
+
+### Fixed
+- **§1.90 — the judged-memory clobber:** retiring a fully judged link batch overwrote a same-named batch of an earlier wave in `work/judged/` (batch labels are positional), silently leaking the rejection memory on renumbering; retirement now renames non-destructively (`-rNN`).
+- The `--build` messaging says plainly it builds the deterministic structural skeleton only; the semantic layer needs a new session.
+- Environment facts corrected against primary sources: OpenCode isolates a subagent's session explicitly; Codex subagents inherit settings, not the conversation; Qwen Code has a native full-conversation fork (a live-test candidate for wiring the consult agent).
+
+DoD green so far: 19 engine selftests (incl. the new gate-split, plan-backlog, sync-defer, compact-ratio, synth-parts, isolated-relink, and opencode/qwen install contracts) + `selftest_install` + mypy (18 modules) + the eval demo (pack recall 1.00).
+
 ## [1.13.0] — 2026-07-13
 
 Stage 22 closed — field reliability: the residual build cost and the memory-usage loop, driven by four field runs (a second and a third install, an incremental rebuild, and fifteen working sessions) on a real ~1 MB project. MINOR: backward-compatible engine additions (new CLI verbs and flags, one new hook), prompts, and docs; no schema or config-contract break.
