@@ -1,6 +1,6 @@
 ---
-description: AMG memory — one front door for every operation (status, version, on/off, repair, sync, retrieve, consolidate, relink, view, help).
-argument-hint: status | version | on | off | repair | sync | retrieve <query> | consolidate | relink | view | help
+description: AMG memory — one front door for every operation (status, version, on/off, repair, sync, retrieve, consult, consolidate, relink, view, help).
+argument-hint: status | version | on | off | repair | sync | retrieve <query> | consult <query> | consolidate | relink | view | help
 disable-model-invocation: true
 allowed-tools: Bash(python *)
 ---
@@ -34,6 +34,13 @@ hook or a deterministic script cannot, because these need model judgment):
   to build or sync the graph from the configured source folders.
 - `retrieve` (recall, context, pull) — use the **amg-retrieve** skill with the rest of
   `$ARGUMENTS` as the query, to assemble a context pack.
+- `consult` (session-aware check, "check against memory") — spawn the
+  **amg-retriever-fork** subagent with the rest of `$ARGUMENTS` as the ask (add the
+  wanted judgment form when clear: a briefing / a delta / a contradiction check / a
+  revision). It inherits this whole conversation, retrieves in its own window, and
+  returns the informed distillate — what the memory adds / confirms / contradicts —
+  without importing the pack. Rides on Claude Code's fork mechanism; no analog
+  elsewhere.
 - `consolidate` (maintain, compact, wrap up, save memory) — use the **amg-consolidate**
   skill to fold weights, file the session's conclusions, and compact over-budget branches.
 - `relink` (re-link, link the isolated/unlinked nodes) — re-check exactly the stray

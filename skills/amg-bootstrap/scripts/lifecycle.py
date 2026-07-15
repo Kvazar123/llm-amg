@@ -571,6 +571,9 @@ AMG operations (any verb also works as plain words that name the memory / AMG):
                amg-bootstrap flow / skill)
   retrieve <q> assemble a context pack for a query (direct retrieve.py call; --compact
                for a targeted pointer lookup, --intent history|conflict by meaning)
+  consult <q>  session-aware memory consult (Claude Code only): a forked copy of the
+               session retrieves in its own window and returns a verdict — adds /
+               confirms / contradicts — without importing the pack
   consolidate  fold weights, select conclusions, compact over-budget branches
                (model-driven: the amg-consolidate flow / skill)
   relink       re-check the isolated (unlinked) nodes: nominate candidates for the

@@ -93,6 +93,7 @@ The system is switched on by the presence of `.claude/amg/config.yml` with `acti
 | `/amg repair` | "repair / check the memory graph" | replay unfinished writes, remove a stale lock (`recover` + `verify --repair`) |
 | `/amg sync` | "index the project into memory", "sync / build the memory graph" | build or reconcile the graph with the sources (the `amg-bootstrap` skill) |
 | `/amg retrieve <query>` | "gather context on X from memory" | assemble a context pack (the `amg-retrieve` skill) |
+| `/amg consult <query>` | "check this against the memory, session-aware" | the memory consult: a copy of the assistant that inherited the whole conversation reads the pack on its own side and returns a verdict — what the memory adds / confirms / contradicts — without bloating the window (the `amg-retriever-fork` subagent; Claude Code only) |
 | `/amg consolidate` | "let's wrap up and save to memory", "tidy the memory" | fold the weights, record conclusions, compact bloated branches (the `amg-consolidate` skill) |
 | `/amg relink` | "re-link the isolated memory nodes" | re-judge exactly the strays: nomination only for nodes with no relation at all (`link_candidates.py --isolated`), their past rejections re-opened — the answer to "the viewer shows floating nodes but `sync` says nothing is new" (those pairs were already ruled on; deleting `work/judged/` remains the full re-open, a last resort) |
 | `/amg version` | "which AMG version is installed" | the installed engine version (also printed in the status header) |

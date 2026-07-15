@@ -48,6 +48,7 @@ conversation) must NOT trigger one; when unsure, just answer normally.
 | Repair the graph | `repair` (fix, heal) | `lifecycle.py repair` | "repair / check the memory graph" |
 | Build / sync the graph | `sync` (build, index, reconcile) | **amg-bootstrap** | "index the project into memory", "sync the memory graph" |
 | Retrieve context | `retrieve <q>` (recall, context) | **amg-retrieve** | "pull context on X from memory", "what does the memory hold on X" |
+| Session-aware memory consult | `consult <q>` | spawn `amg-retriever-fork` (it inherits this conversation; returns a verdict, not a pack) | "check this against the memory, session-aware" |
 | Consolidate memory | `consolidate` (maintain, compact) | **amg-consolidate** | "consolidate the memory", "wrap up and save to memory" |
 | Re-link the isolated nodes | `relink` | the amg-bootstrap linking pass from `link_candidates.py --isolated .` (strays only; their past rejections re-opened) | "re-link the isolated memory nodes" |
 | Open the graph viewer | `view` (show graph, visualize) | `export_graph.py --open` | "open / show the memory graph", "visualize the memory" |
