@@ -439,15 +439,30 @@ def test_nested_set_and_absorb_once():
         # fills absorb_once_path
         I.main(["--target", str(t), "--mirror", "src", "--absorb", "logs",
                 "--absorb-once", "snapshots,report.pdf",
-                "--set", "retrieval.embeddings.enabled=auto", "--no-verify"])
+                "--set", "retrieval.embeddings.enabled=auto",
+                "--set", "retrieval.embeddings.backend=sentence-transformers",
+                "--set", "compaction.default_branch_budget_nodes=250",
+                "--set", "linker.synth_input_max_chars=300000",
+                "--set", "models.synthesis={model: opus, reasoning_effort: high}",
+                "--no-verify"])
         cfg = _cfg(t)
         assert cfg["retrieval"]["embeddings"]["enabled"] == "auto", cfg["retrieval"]["embeddings"]
+        # the install flow PINS a named backend (enabled=auto alone would let the
+        # auto order silently prefer model2vec over the user's explicit choice)
+        assert cfg["retrieval"]["embeddings"]["backend"] == "sentence-transformers", \
+            cfg["retrieval"]["embeddings"]
         assert cfg["retrieval"]["embeddings"]["blend"] == 0.5, "sibling keys kept"
+        assert cfg["compaction"]["default_branch_budget_nodes"] == 250, cfg["compaction"]
+        assert cfg["compaction"]["enabled"] is True, "sibling compaction keys kept"
+        assert cfg["linker"]["synth_input_max_chars"] == 300000, cfg["linker"]
+        assert cfg["models"]["synthesis"] == {"model": "opus", "reasoning_effort": "high"}, \
+            "a flow-mapping role value parses (the series-V models answer)"
         assert cfg["absorb_once_path"] == ["snapshots", "report.pdf"], cfg
         assert cfg["models"]["module_summary"] == "sonnet", "local install keeps the full template"
         text = (t / ".claude/amg/config.yml").read_text(encoding="utf-8")
         assert "# auto = use if a backend is installed | on | off" in text, "inline comment kept"
-        print("PASS  install: dotted --set hits the nested key (comments kept); --absorb-once fills absorb_once_path")
+        print("PASS  install: dotted --set hits nested keys incl. backend pin, compaction, "
+              "linker cap, a flow-mapping model role; --absorb-once fills absorb_once_path")
     finally:
         shutil.rmtree(t, ignore_errors=True)
 

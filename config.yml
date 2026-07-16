@@ -306,8 +306,11 @@ weights:
   apply_hebbian: false
 
 # -----------------------------------------------------------------------------
-# Compaction (amg-consolidate). Off by default; a branch is compressed only when
-# it exceeds its budget, minimally, archiving originals (reversible).
+# Compaction (amg-consolidate). ENABLED but IDLE by default: nothing is compressed
+# while every branch stays within its budget below; only an over-budget branch is
+# compressed, stepwise and minimally, with originals archived (reversible) and an
+# automatic recall check (eval_gate) guarding the result. Set enabled: false if
+# the memory must never compress itself.
 # -----------------------------------------------------------------------------
 compaction:
   enabled: true
