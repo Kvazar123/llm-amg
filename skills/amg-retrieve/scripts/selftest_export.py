@@ -277,9 +277,14 @@ def test_round_trip_and_cli(root: Path) -> None:
     finally:
         sys.argv = argv
     reloaded = json.loads(out.read_text(encoding="utf-8"))
-    assert reloaded == E.build_graph_data(root), "written JSON must equal a fresh build"
+    fresh = E.build_graph_data(root)
+    # meta.generated is a wall-clock stamp: the written file and the fresh build can
+    # straddle a second boundary, so the equality excludes it (everything else in
+    # meta is deterministic from the store).
+    assert reloaded["meta"].pop("generated", None) and fresh["meta"].pop("generated", None)
+    assert reloaded == fresh, "written JSON must equal a fresh build"
     assert reloaded["meta"]["link_count"] == len(reloaded["links"])
-    print("PASS  round-trip: CLI writes JSON that re-parses to the same data")
+    print("PASS  round-trip: CLI writes JSON that re-parses to the same data (timestamp excluded)")
 
 
 def main() -> int:
