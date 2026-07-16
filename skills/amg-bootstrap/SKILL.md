@@ -229,11 +229,16 @@ delegating per-unit reading to subagents.
    ```bash
    python .claude/skills/amg-bootstrap/scripts/reconcile.py metrics .
    ```
-   `gate: ok` means: one dominant component, no unresolved internal edge targets,
-   doc nodes carry `documents`. On `attention`, read the samples it prints —
+   `gate: ok` means: one dominant component, no unresolved structural edge targets,
+   doc files carry `documents`. On `attention`, read the samples it prints —
    typically the fix is re-running step 6 over the remaining islands (or step 3 for
    still-stale nodes); unresolved `imports` to stdlib/third-party are legitimate
-   and never flagged. The same verdict shows in `/amg status`.
+   and never flagged. The same verdict shows in `/amg status`. When the gate is
+   `ok` but `isolated_nodes` remain after a COMPLETED build, they are not defects —
+   strays whose pairs were ruled on or never got candidates; name their count to
+   the user and offer `/amg relink` (the scoped re-check in step 6). Model-written
+   dangling targets (`dangling_semantic`) are reported with samples but never flip
+   the verdict — they are inert and heal only through re-nomination.
    Then stamp verification in one deterministic sweep (seconds, no model):
    ```bash
    python .claude/skills/amg-retrieve/scripts/verify_claims.py --all --write --store .claude/amg
