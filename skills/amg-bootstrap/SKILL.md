@@ -212,7 +212,14 @@ delegating per-unit reading to subagents.
    re-nominated, and rejected pairs are remembered too — each linker part ends with
    a judged record, and `apply-derived` retires a fully judged batch into
    `work/judged/`, whose pairs the nominator never re-proposes (only a crashed,
-   under-covered batch is re-nominated). So the **completeness criterion is built
+   under-covered batch is re-nominated). When the apply result names parts in
+   `links_parts_without_judged`, those linkers forgot the judged record — their
+   batches cannot retire; re-spawn each such batch. **A re-spawn gets the SAME
+   assignment as the first run — the batch path, the output path, the language —
+   and nothing else: never hand the worker the failure story or ask it to "finish
+   correctly"** (a recovery narrative sends it inventorying `work/` and `applied/`
+   instead of judging its batch; its earlier parts are harmless — it overwrites
+   them from `-p01`, and apply is idempotent). So the **completeness criterion is built
    in — repeat `link_candidates.py` + the wave until it emits zero new batches, or
    `metrics` reports `gate: ok`**; typically one or two waves suffice, and a second
    wave carries only genuinely new pairs, never re-rejections.

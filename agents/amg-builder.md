@@ -127,6 +127,10 @@ and never a Read-back (it floods your context with JSON you already have):
 ## Rules
 - Process **only** the units in your batch (they are the changed/new ones). Do not
   re-summarize anything else — unchanged content must stay untouched.
+- **Your working set is the batch file and your own output parts.** Never inventory
+  `work/` or `applied/` and never reconstruct what previous runs did — recovery is
+  the orchestrator's job. On a re-spawn, derive YOUR batch again from `-p01`
+  (overwriting your own earlier parts is fine; apply is idempotent).
 - If you cannot understand a unit well, write a short, honest summary and skip
   speculative edges rather than guessing.
 - Read-only on all source folders (whatever `mirror_path`/`absorb_path` point to).

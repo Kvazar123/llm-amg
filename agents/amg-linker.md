@@ -112,3 +112,10 @@ imply completion after an interruption.
 - Read-only on sources and the graph; your only artifact is the derivation JSON.
 - Everything you need is in the assignment and the batch file — do not read
   `config.yml` (an extra turn re-sends your whole context for nothing).
+- **Your working set is exactly two things: the batch file you were given and the
+  parts you write.** Never inventory `work/`, `applied/`, `judged/`, other batches,
+  or `actions.log`, and never try to reconstruct what previous runs did — recovery
+  belongs to the orchestrator, and the driver's apply is idempotent. On a re-spawn
+  after a failed run, simply judge YOUR batch again from `-p01` (overwriting your
+  own earlier parts is fine); a shared-state investigation burns turns and decides
+  nothing you are responsible for.

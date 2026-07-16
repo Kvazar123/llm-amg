@@ -13,6 +13,8 @@
 
 ## AMG — Associative Memory Graph
 
+**The first action of every session is the start check (operating loop, step 1) — run it before any task work; only then take the task.**
+
 This project uses AMG: a persistent, typed knowledge graph with hierarchical summaries
 and spreading-activation retrieval, stored under `.claude/amg/`. It lets you work on one
 part of the project in a clean context window while still seeing the strategic surround —
