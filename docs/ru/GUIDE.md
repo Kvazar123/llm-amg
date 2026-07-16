@@ -238,6 +238,7 @@ python .claude/skills/amg-bootstrap/scripts/reconcile.py bootstrap .
 | `python .claude/skills/amg-bootstrap/scripts/reconcile.py apply <файл.json> .` | внести семантический результат (сводки и рёбра) |
 | `python .claude/skills/amg-bootstrap/scripts/reconcile.py apply-cached .` | восстановить обогащение очереди из кэша (бут делает это и сам) |
 | `python .claude/skills/amg-bootstrap/scripts/reconcile.py metrics .` | отчёт о связности графа: компоненты, висячие цели с разводкой по ответственности (структурные гейтуются, модельные только репортятся), doc-файлы без `documents`, вердикт гейта |
+| `python .claude/skills/amg-bootstrap/scripts/reconcile.py audit .` | read-only свип инвариантов: дубликаты id, расхождения пути и id, непарсящиеся файлы, рассогласования статусов, лгущая очередь — всё с образцами; `attention` значит «взглянуть», а не «сломано» |
 | `python .claude/skills/amg-bootstrap/scripts/link_candidates.py .` | пачки кандидатов для глобальной линковки (`--hubs` — якоря хабов) |
 | `python .claude/skills/amg-bootstrap/scripts/extract_structure.py . --stats` | показать классификацию файлов и доступность извлекателей |
 | `python .claude/skills/amg-bootstrap/scripts/inspect_queue.py .` | сводка очереди обогащения (счётчики по category / поддереву / kind) и прогресс сборки в процентах |

@@ -51,6 +51,7 @@ Commands:
   python reconcile.py apply-derived [<project_root>] [--root <agent_dir>]  # every work/derived-*.json, one call
   python reconcile.py apply-cached [<project_root>] [--root <agent_dir>]  # restore from cache
   python reconcile.py metrics   [<project_root>] [--root <agent_dir>]   # connectivity report
+  python reconcile.py audit     [<project_root>] [--root <agent_dir>]   # read-only invariant sweep
 
 Batch application: `apply` accepts several paths and glob patterns (expanded
 internally — a Windows shell does not expand globs), and `apply-derived` applies every
@@ -1753,6 +1754,151 @@ def graph_metrics(nodes: Dict[str, Dict[str, Any]],
 
 
 # --------------------------------------------------------------------------- #
+# Audit: the shipped read-only invariant sweep (field diagnostics)
+# --------------------------------------------------------------------------- #
+
+_AUDIT_SAMPLE = 10
+
+
+def _audit_bucket(sample: List[str], count: int) -> Dict[str, Any]:
+    return {"count": count, "sample": sample[:_AUDIT_SAMPLE]}
+
+
+def audit(project_root: Path, amg_root: Optional[Path] = None) -> Dict[str, Any]:
+    """Read-only invariant sweep over the store — the shipped field diagnostic.
+
+    The transactional layer guarantees every write lands whole, but it cannot see a
+    class of silent LOGICAL faults: two files carrying the same id (load_nodes keeps
+    whichever parses last — nodes "overwriting" each other invisibly), a file whose
+    name no longer matches its id (a hand copy or rename node_relpath would never
+    produce), a node marked active while its derivation lags, a queue claiming units
+    that are already derived. This sweep checks those invariants explicitly and
+    reports each violation with samples — a permanent diagnostic surface instead of
+    debug probes scattered through the write paths. Read-only and lock-free: a
+    concurrent writer can yield a transient false positive — re-run to confirm
+    before acting on one. Verdict `attention` means "something needs a look", not
+    breakage: most findings are healed by repair / bootstrap / migrate_schema.
+    """
+    amg_root = Path(amg_root) if amg_root else gs.resolve_amg_root(start=project_root)
+    store = gs.GraphStore(amg_root)
+
+    unparsable: List[str] = []
+    duplicates: List[str] = []
+    mismatched: List[str] = []
+    bad_shape: List[str] = []
+    inconsistent: List[str] = []
+    missing_trust: List[str] = []
+    seen: Dict[str, str] = {}                  # id -> first relpath
+    statuses: Dict[str, str] = {}
+    files = 0
+    if store.nodes_dir.exists():
+        for p in sorted(store.nodes_dir.rglob("*.md")):
+            files += 1
+            rel = p.relative_to(store.root).as_posix()
+            meta = parse_node(p.read_text(encoding="utf-8", errors="replace"))
+            if not meta or not meta.get("id"):
+                unparsable.append(rel)
+                continue
+            nid = str(meta["id"])
+            if nid in seen:
+                duplicates.append(f"{nid}: {seen[nid]} | {rel}")
+            else:
+                seen[nid] = rel
+                statuses[nid] = str(meta.get("status") or "active")
+            # The file's canonical home is a pure function of the id (node_relpath)
+            # and the class-determined bucket; any other path means a hand copy,
+            # a rename, or an edited id — exactly the silent-fault class.
+            bucket = ("_hubs" if meta.get("source_kind") == "synthesized"
+                      else _dir_for(nid.split(":", 1)[0]))
+            expected = node_relpath(nid, bucket)
+            if rel != expected:
+                mismatched.append(f"{rel} (expected {expected})")
+            edges = meta.get("edges")
+            if edges is not None and not isinstance(edges, list):
+                bad_shape.append(f"{nid}: edges is not a list")
+            else:
+                for e in edges or []:
+                    if not isinstance(e, dict) or not e.get("to") or not e.get("rel"):
+                        bad_shape.append(f"{nid}: malformed edge entry")
+                        break
+            po = meta.get("part_of")
+            if po is not None and not isinstance(po, list):
+                bad_shape.append(f"{nid}: part_of is not a list")
+            if meta.get("source_kind") == "derived_from_file":
+                if meta.get("source_hash"):
+                    st = str(meta.get("status") or "active")
+                    lag = meta.get("derived_from_hash") != meta.get("source_hash")
+                    if st == "active" and lag:
+                        inconsistent.append(f"{nid}: active but derivation lags")
+                    elif st == "stale" and not lag:
+                        inconsistent.append(f"{nid}: stale but derivation is current")
+                if not isinstance(meta.get("verification"), dict) \
+                        or not isinstance(meta.get("provenance"), dict):
+                    missing_trust.append(nid)   # pre-trust-layer store: run migrate_schema
+
+    # The queue must claim only units still awaiting derivation (apply refreshes it;
+    # this check is the invariant's watchdog).
+    queue_lag: List[str] = []
+    qpath = amg_root / "work" / "queue.json"
+    if qpath.exists():
+        try:
+            qunits = json.loads(qpath.read_text(encoding="utf-8")).get("units", [])
+        except (OSError, ValueError):
+            qunits = []
+            queue_lag.append("queue.json unreadable")
+        for u in qunits:
+            uid = str(u.get("id"))
+            if uid not in seen:
+                queue_lag.append(f"{uid}: queued but no node")
+            elif statuses.get(uid) != "stale":
+                queue_lag.append(f"{uid}: queued but already derived")
+
+    problems = store.verify(repair=False)      # journal / lock, read-only
+    conflicts = find_conflict_markers(store)
+    work = amg_root / "work"
+    judged_unreadable: List[str] = []
+    if (work / "judged").exists():
+        for f in sorted((work / "judged").glob("link-batch-*.json")):
+            try:
+                json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                judged_unreadable.append(f.name)
+
+    def _count(pattern: str, sub: str = "") -> int:
+        d = work / sub if sub else work
+        return len(list(d.glob(pattern))) if d.exists() else 0
+
+    buckets: Dict[str, Dict[str, Any]] = {
+        "unparsable": _audit_bucket(unparsable, len(unparsable)),
+        "duplicate_ids": _audit_bucket(duplicates, len(duplicates)),
+        "path_mismatch": _audit_bucket(mismatched, len(mismatched)),
+        "bad_shape": _audit_bucket(bad_shape, len(bad_shape)),
+        "status_inconsistent": _audit_bucket(inconsistent, len(inconsistent)),
+        "missing_trust_fields": _audit_bucket(missing_trust, len(missing_trust)),
+        "queue_lag": _audit_bucket(queue_lag, len(queue_lag)),
+        "conflict_markers": _audit_bucket(conflicts, len(conflicts)),
+    }
+    anomalies = (sum(b["count"] for b in buckets.values())
+                 + len(problems.get("pending_transactions") or [])
+                 + len(judged_unreadable))
+    return {
+        "nodes_files": files,
+        "nodes_unique_ids": len(seen),
+        **buckets,
+        "pending_transactions": problems.get("pending_transactions", []),
+        "stale_lock": bool(problems.get("stale_lock")),   # reported, not an anomaly
+        "judged_unreadable": judged_unreadable,
+        "work": {"derived_pending": _count("derived-*.json"),
+                 "link_batches_pending": _count("link-batch-*.json"),
+                 "applied": _count("*.json", "applied"),
+                 "invalid": _count("*.json", "invalid"),
+                 "judged": _count("*.json", "judged")},
+        "anomalies": anomalies,
+        "verdict": "clean" if anomalies == 0 else "attention",
+    }
+
+
+# --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
 
@@ -1823,6 +1969,14 @@ def main(argv: List[str]) -> int:
         if len(paths) > 1:
             result["files"] = len(paths)
         print(json.dumps(result, indent=2))
+        return 0
+
+    if cmd == "audit":
+        # Read-only invariant sweep (see audit()); like metrics, it must never
+        # exit on a missing or odd config.
+        project_root = Path(args[1]).resolve() if len(args) > 1 else Path.cwd()
+        amg_root = gs.resolve_amg_root(cli_root, project_root)
+        print(json.dumps(audit(project_root, amg_root), ensure_ascii=False, indent=2))
         return 0
 
     if cmd == "metrics":

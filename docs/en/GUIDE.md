@@ -238,6 +238,7 @@ Everything the automation does can be run by hand. Commands are given from the p
 | `python .claude/skills/amg-bootstrap/scripts/reconcile.py apply <file.json> .` | fold in a semantic result (summaries and edges) |
 | `python .claude/skills/amg-bootstrap/scripts/reconcile.py apply-cached .` | restore the queue's derivations from the cache (bootstrap does this itself too) |
 | `python .claude/skills/amg-bootstrap/scripts/reconcile.py metrics .` | the graph connectivity report: components, dangling targets split by responsibility (structural gate vs model-written, reported only), doc files without `documents`, the gate verdict |
+| `python .claude/skills/amg-bootstrap/scripts/reconcile.py audit .` | the read-only invariant sweep: duplicate ids, path/id mismatches, unparsable files, status inconsistencies, a lying queue — each with samples; `attention` means "look", not "broken" |
 | `python .claude/skills/amg-bootstrap/scripts/link_candidates.py .` | candidate batches for global linking (`--hubs` — the hub anchors) |
 | `python .claude/skills/amg-bootstrap/scripts/extract_structure.py . --stats` | show the file classification and extractor availability |
 | `python .claude/skills/amg-bootstrap/scripts/inspect_queue.py .` | the derivation-queue summary (counters by category / subtree / kind) and the build progress percentage |

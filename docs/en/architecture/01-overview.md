@@ -50,7 +50,7 @@ Each module's purpose and command-line interface (details in the per-module docu
 |---|---|---|---|
 | Store | `graph_store.py` | transactional node reads/writes, journal, lock, recovery | `init` · `recover` · `verify` |
 | Structure extraction | `extract_structure.py` | classifying a file's type and chunking it into units | `<path>` · `--stats` |
-| Reconciliation | `reconcile.py` | diffing the graph against the sources, the derivation queue, apply; the derivation cache and connectivity metrics | `bootstrap` · `plan` · `apply` · `apply-cached` · `metrics` |
+| Reconciliation | `reconcile.py` | diffing the graph against the sources, the derivation queue, apply; the derivation cache, connectivity metrics, and the store invariant audit | `bootstrap` · `plan` · `apply` · `apply-cached` · `metrics` · `audit` |
 | Note capture | `notes.py` | safe transactional writes of authored nodes (decision / conclusion / plan / open question) | `add` |
 | Queue partitioning | `partition_queue.py` | splits `work/queue.json` into bounded batches for parallel builders: grouping by subtree + caps on unit count and text volume | `[<root>]` · `--depth` · `--max-units` · `--max-chars` · `--priority` |
 | Queue summary | `inspect_queue.py` | queue counters (category / subtree / kind / with text) + build progress as a percentage | `[<root>]` |

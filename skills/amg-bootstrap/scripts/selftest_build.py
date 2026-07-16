@@ -342,6 +342,45 @@ def main() -> int:
         print("PASS  metrics: dangling split by origin (semantic never gates); "
               "doc metric aggregates per file")
 
+        # 3b. the audit sweep: the built store is clean; planted anomalies —
+        # a duplicate id (silent overwrite class), a path/id mismatch, an
+        # unparsable file, an active-but-lagging node, a queue unit for a missing
+        # node — are each surfaced with samples
+        a = RC.audit(proj, amg)
+        assert a["verdict"] == "clean" and a["anomalies"] == 0, a
+        assert a["nodes_files"] == a["nodes_unique_ids"], a
+        bad = Path(tempfile.mkdtemp(prefix="amg-audit-"))
+        try:
+            bamg = bad / ".claude" / "amg"
+            (bamg / "nodes" / "code").mkdir(parents=True)
+            (bamg / "journal").mkdir()
+            (bamg / "config.yml").write_text("active: true\n", encoding="utf-8")
+            meta_bad = {"id": "code:src/a.py::f", "type": "function",
+                        "source_kind": "derived_from_file", "policy": "mirror",
+                        "source_hash": "s1", "derived_from_hash": "s0",
+                        "status": "active", "summary": "x",
+                        "verification": {"status": "unverified", "method": "none"},
+                        "provenance": {"kind": "code"}, "edges": [], "part_of": []}
+            right = bamg / RC.node_relpath("code:src/a.py::f", "code")
+            right.write_text(RC.serialize_node(dict(meta_bad), ""), encoding="utf-8")
+            (bamg / "nodes" / "code" / "dup.md").write_text(
+                RC.serialize_node(dict(meta_bad), ""), encoding="utf-8")
+            (bamg / "nodes" / "code" / "torn.md").write_text("---\n:bad", encoding="utf-8")
+            (bamg / "work").mkdir()
+            (bamg / "work" / "queue.json").write_text(json.dumps(
+                {"generated": "t", "units": [{"id": "code:gone.py", "content_sha": "z"}]}),
+                encoding="utf-8")
+            a2 = RC.audit(bad, bamg)
+            assert a2["verdict"] == "attention", a2
+            assert a2["duplicate_ids"]["count"] == 1, a2["duplicate_ids"]
+            assert a2["path_mismatch"]["count"] == 1, a2["path_mismatch"]
+            assert a2["unparsable"]["count"] == 1, a2["unparsable"]
+            assert a2["status_inconsistent"]["count"] >= 1, a2["status_inconsistent"]
+            assert a2["queue_lag"]["count"] == 1, a2["queue_lag"]
+        finally:
+            shutil.rmtree(bad, ignore_errors=True)
+        print("PASS  audit: built store clean; planted anomalies surfaced with samples")
+
         # the one-file synthesis sheet: grouped summary rows + deterministic gap
         # material, so amg-synth never scans nodes/ in its own context
         si = LC.synth_input(amg)

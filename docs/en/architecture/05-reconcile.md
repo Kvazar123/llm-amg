@@ -28,6 +28,7 @@ The `reconcile.py` file lives in `skills/amg-bootstrap/scripts/`. It imports `gr
 | `python reconcile.py apply-derived [<project_root>] [--root <agent_dir>]` | the batch door: apply **every** `work/derived-*.json` (checkpoint parts included) in one call (see "Applying the semantics") |
 | `python reconcile.py apply-cached [<project_root>] [--root <agent_dir>]` | restore the queue's derivations from the cache (see "The derivation cache") |
 | `python reconcile.py metrics [<project_root>] [--root <agent_dir>]` | the graph connectivity report — the acceptance gate (see "Connectivity metrics") |
+| `python reconcile.py audit [<project_root>] [--root <agent_dir>]` | the read-only invariant sweep — field diagnostics (see "The store audit") |
 
 `bootstrap` and `plan` call **one and the same** `plan()` function — they are synonyms; "bootstrap" merely expresses the intent "build from scratch", while doing exactly what `plan` does (the graph is built from any state, including empty). `project_root` defaults to the current directory; it is the **sources** root (where units are extracted from), separate from the graph root.
 
@@ -169,6 +170,10 @@ The doc metric is aggregated **per file** (`doc_files_without_documents`): a doc
 
 The `gate: ok | attention` verdict is compared against the config's `connectivity_gate` thresholds and is **advisory**: a skeleton mid-build is legitimately under-linked, so nothing fails — the bootstrap skill reads the verdict as an acceptance check and reacts (rerun global linking, inspect samples). Deferred `stale` nodes are not counted as defects: under lazy derivation an under-derived node is an expected state, and its structural backbone holds connectivity anyway. The metrics live in the reconciliation layer deliberately: `graph_store` is domain-blind and knows nothing of nodes and edges.
 
+## The store audit (`audit`) — the invariant sweep
+
+The transactional layer guarantees every write lands whole, but it cannot see a class of silent *logical* faults, and field debugging needs a way to catch them without scattering probes through the write paths. `reconcile.py audit` is that way: a read-only, lock-free sweep of the whole store that checks the invariants explicitly and reports every violation with a count and up to ten samples. What it checks: files that do not parse or carry no `id`; **duplicate ids** — two files with the same id, of which `load_nodes` silently keeps whichever parses last (the "nodes overwriting each other invisibly" class); a **path/id mismatch** — a file whose name is not what `node_relpath` derives from its id and class bucket (a hand copy, a rename, an edited id); malformed `edges`/`part_of` shapes; **status inconsistencies** on file-projected nodes (`active` while `derived_from_hash` lags the source, or `stale` while the derivation is current); missing trust-layer fields (a pre-migration store — run `migrate_schema.py`); a **queue lying** about what awaits enrichment (units for missing or already-derived nodes — the watchdog over the apply-time queue refresh); leftover journal transactions and git merge-conflict markers; unreadable judged batches. Informational counters ride along (pending `derived-*.json` and link batches, the `applied/`/`invalid/`/`judged/` sizes). The verdict is `clean` or `attention` — `attention` means "something needs a look", not breakage: most findings are healed by `repair`, a `bootstrap`, or `migrate_schema.py`. Being lock-free, the sweep can catch a concurrent writer mid-flight — re-run to confirm a finding before acting on it.
+
 ## Idempotency and crash safety
 
 Idempotency follows directly from the content-hash filter: a repeated `plan()` with no changes classifies all **derived** units as `unchanged`, makes not a single write, and calls no model; the under-derived ones it merely puts back into the queue (with no graph writes) — not a violation of idempotency but its working form: the queue is derived from the graph's state every time. Rebuilding the graph from any state is safe at any moment.
@@ -186,6 +191,7 @@ The semantic phase can run in parallel: several builders write to **separate** `
 | `bootstrap` / `plan` | `[<project_root>] [--root <agent_dir>]` | under the lock (inside `plan()`) |
 | `apply` | `<derivation.json\|glob> … [<project_root>] [--root <agent_dir>]` | under the lock (one transaction for the whole call) |
 | `apply-derived` | `[<project_root>] [--root <agent_dir>]` | under the lock (one transaction; consumed files → `work/applied/`) |
+| `metrics` / `audit` | `[<project_root>] [--root <agent_dir>]` | lock-free (read-only diagnostics) |
 
 Both phases run under the single writer lock and are preceded by recovery. The `--root` flag names the agent directory explicitly; without it the graph root is resolved by the chain described in "The commands".
 
