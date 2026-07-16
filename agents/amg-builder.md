@@ -90,7 +90,11 @@ interruption (rate limit, disconnect, output ceiling) loses at most the units si
 the last part, never the batch. Do not grow or rewrite an already-written part —
 start the next one. **When two parts are ready together, write both in ONE message**
 (several Write calls per turn): every turn re-sends your whole context, so fewer
-write-turns cost less; the durability bound stays the part, not the turn.
+write-turns cost less; the durability bound stays the part, not the turn. A typical
+60-unit batch should take about six turns total: read the batch, two or three
+write-turns (several parts each), one validation call, the final line — if you are
+past ten turns, you are re-reading or writing one part per turn, and both are the
+re-send tax this budget exists to avoid.
 
 **Write parts with the Write tool — never a bash heredoc.** Summaries carry quotes,
 apostrophes, and backticks, and a heredoc tears on them mid-file; the Write tool
