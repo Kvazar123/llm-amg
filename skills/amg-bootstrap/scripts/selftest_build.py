@@ -499,7 +499,13 @@ def main() -> int:
         r = RC.apply_derived(proj, amg)             # partial coverage: batch survives
         assert "judged_batches" not in r and batch_file.exists(), r
         assert LC.build_batches(proj, amg)["batches"] == 1, "crashed batch re-nominates"
-        print("PASS  judged memory: full coverage retires the batch, partial re-nominates")
+        # a linker part with NO judged record at all is surfaced by name: its batch
+        # can never prove coverage, so the omission must be visible, not inferred
+        (amg / "work" / "derived-links-001-p02.json").write_text("[]", encoding="utf-8")
+        r = RC.apply_derived(proj, amg)
+        assert r.get("links_parts_without_judged") == ["derived-links-001-p02.json"], r
+        print("PASS  judged memory: full coverage retires the batch, partial re-nominates, "
+              "a record-less part is surfaced")
 
         # 5c. the scoped stray re-check (--isolated, the /amg relink path): a stray
         # with no resolved relation is re-nominated even after its pairs were judged

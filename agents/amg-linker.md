@@ -51,8 +51,11 @@ For each node, judge its candidates (and the hub list) from the summaries:
    create hubs — amg-synth already did; they are in your `hubs` list.
 5. Emit **update items only** (no creates), in the standard derivation shape:
    `{"id": "<node id>", "edges": [{"rel", "to", "w"}], "part_of": [...]}`. Targets
-   must come from your batch (candidates or hubs) — never invent ids; the driver
-   re-binds a target written without its leading directories, but a nonexistent
+   must come from your batch (candidates or hubs) — never invent ids, and **copy
+   every id character-for-character from the batch**: never shorten a qualifier
+   (a method's id includes its class — `::Class.method`; writing `::method` names
+   a node that does not exist and leaves a dead edge). The driver re-binds a
+   target written without its leading directories, but a nonexistent
    symbol stays dangling. A doc target always names a concrete section —
    `doc:<path>::<slug>` — never the bare file: file-level doc nodes do not exist,
    so a whole-file `doc:` target is dangling by construction.

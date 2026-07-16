@@ -38,7 +38,10 @@ consolidation.
 ### Activation gate
 Check whether `.claude/amg/config.yml` exists with `active: true`.
 - **Not present or `active: false`** → AMG is OFF. Behave normally; do not create the graph.
-- **Present and active** → AMG is ON. Follow the operating loop below.
+- **Present and active** → AMG is ON. Follow the operating loop below — and its step 1
+  (the start check) is the FIRST action of the session, before any task work: there
+  are no hooks here to run it for you, and a session that skips it works blind to
+  crashes, source drift, and overdue upkeep.
 
 ### Common tasks — the quick reference
 Match intent and synonyms, not the exact word — in any language. One guard: treat a

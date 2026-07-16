@@ -81,6 +81,10 @@ unit's `content_sha` verbatim** into its item: the driver uses it to skip an ite
 whose source changed since you derived it (resumable derivation — it never applies a
 summary built against stale content), so a crash between your write and the apply
 loses no correctness and re-derives only what actually changed, not the whole queue.
+**The same verbatim rule holds for `id`: copy it character-for-character from the
+queue item** — never re-type, translate, or shorten it. A re-derived id (a
+paraphrased section qualifier, a method name without its class prefix) names a node
+that does not exist, and the whole item is skipped as `missing`.
 
 **Checkpoint as you go — never hold the whole batch for one final write.** For an
 output path `.../derived-<batch>.json`, write numbered parts instead:

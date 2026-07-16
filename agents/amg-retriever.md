@@ -48,7 +48,10 @@ files. Work in your own context; return only a short summary plus the pack path.
    twice.
 
 ## Return to the caller
-- The pack path: `.claude/amg/cache/pack.md`.
+- The pack path: `.claude/amg/cache/pack.md` — with a caveat when retrievers run in
+  PARALLEL: that file always holds the LAST assembled pack (last-writer-wins), so
+  under parallel retrievals your distilled summary below is the reliable channel,
+  and the path is best-effort.
 - A 3–5 line summary: which subsystem(s) activated, the top 4–6 nodes by activation,
   and anything notable (e.g. a relevant decision note or a contradiction surfaced).
 - **Absence is an answer — state it plainly.** The graph ranks whatever is closest,

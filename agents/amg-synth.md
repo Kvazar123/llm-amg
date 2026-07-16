@@ -32,7 +32,10 @@ Work in your own context and return a concise report.
   hub taxonomy is global — it comes from `hub-candidates.json`, not from the rows);
   on a later part the hubs already exist (your `existing_hubs` list) — create NO new
   hubs unless a genuine cross-cutting theme appears only here, and only ADD:
-  memberships, strategic edges, and pattern instances for this part's rows. The gap
+  memberships, strategic edges, and pattern instances for this part's rows, with
+  every hub id **copied verbatim from `existing_hubs`** — an id you compose yourself
+  (a plausible-looking variant of an existing hub) names nothing and the item is
+  skipped as `missing`. The gap
   report is written only by the part-1 run (its sheet carries `gaps`).
 - `.claude/amg/work/hub-candidates.json` — deterministic hub anchors from the
   directory structure (`{candidates: [{topic_dir, suggested_id, members, sample}],

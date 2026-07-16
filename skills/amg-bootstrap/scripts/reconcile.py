@@ -1334,6 +1334,7 @@ def apply_derived(project_root: Path, amg_root: Optional[Path] = None) -> Dict[s
     items: List[Dict[str, Any]] = []
     consumed: List[Path] = []
     malformed: List[str] = []
+    no_judged: List[str] = []
     judged_by_batch: Dict[str, Set[str]] = {}
     for f in files:
         try:
@@ -1346,6 +1347,12 @@ def apply_derived(project_root: Path, amg_root: Optional[Path] = None) -> Dict[s
         if m:
             file_items, judged = _pop_judged(file_items)
             judged_by_batch.setdefault(m.group(1), set()).update(judged)
+            if not judged:
+                # A linker part with no judged record cannot prove its coverage, so
+                # its batch never retires and keeps re-nominating — the exact "the
+                # pass will not converge" confusion observed in the field. Surface
+                # the omission instead of leaving the orchestrator to infer it.
+                no_judged.append(f.name)
         items.extend(file_items)
         consumed.append(f)
     result = _apply_items(project_root, items, amg_root)
@@ -1363,6 +1370,8 @@ def apply_derived(project_root: Path, amg_root: Optional[Path] = None) -> Dict[s
         result["malformed_files"] = malformed
     if judged_batches:
         result["judged_batches"] = judged_batches
+    if no_judged:
+        result["links_parts_without_judged"] = no_judged
     return result
 
 
