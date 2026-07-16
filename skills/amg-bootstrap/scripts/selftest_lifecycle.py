@@ -324,7 +324,11 @@ def case_merge_conflict_surfaced() -> None:
         assert "conflicts:" in LC.format_status(st), "status report must show a conflicts line"
         rep = LC.repair(proj, amg)
         assert rep.get("note") and "merge markers" in rep["note"], rep
-        print("PASS  conflict: status lists the conflicted node; repair notes it for the user")
+        # the invariant audit rides on repair: the conflict-marker file is also an
+        # unparsable node, so the audit flags it and the note names the sweep
+        assert rep.get("audit", {}).get("verdict") == "attention", rep.get("audit")
+        assert "Store audit:" in rep["note"], rep["note"]
+        print("PASS  conflict: status lists the conflicted node; repair notes it + audits")
     finally:
         shutil.rmtree(proj, ignore_errors=True)
 

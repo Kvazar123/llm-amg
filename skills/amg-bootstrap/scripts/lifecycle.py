@@ -29,8 +29,10 @@ The MANUAL commands, exposed as the `/amg <sub>` slash command (and reachable by
 verbal intent through the activation block):
 
   on / off   : flip `active` in config.yml (turn AMG on/off for this project).
-  repair     : recover + verify --repair (heal on demand; the manual analog of the
-               session-start hook — and it runs regardless of the automation gate).
+  repair     : recover + verify --repair + the store invariant audit (heal on demand;
+               the manual analog of the session-start hook — and it runs regardless
+               of the automation gate; the audit half only reports, with the full
+               sampled report on `reconcile.py audit`).
   status     : a one-screen report (engine version, active, automation, graph root,
                node/stale counts, pending transactions, stale lock, semantic queue,
                sync deferral, last sync/pack/consolidation, eval summary) so the user
@@ -568,7 +570,8 @@ AMG operations (any verb also works as plain words that name the memory / AMG):
                last sync / pack / consolidation, connectivity) — deterministic script
   version      the installed engine version
   on / off     enable / disable AMG (flips `active` in config.yml; takes effect at once)
-  repair       recover + verify --repair (heal after a crash) — deterministic script
+  repair       recover + verify --repair + the store invariant audit (heal after a
+               crash; the audit half reports what needs a look) — deterministic script
   sync         build or reconcile the graph with the sources (model-driven: the
                amg-bootstrap flow / skill)
   retrieve <q> assemble a context pack for a query (direct retrieve.py call; --compact
@@ -604,6 +607,21 @@ def repair(project_root: Path, amg: Path) -> Dict[str, Any]:
                  f"(e.g. {conflicts[0]}); the graph skips them. Resolve the conflicts, "
                  "then run reconcile.py bootstrap . to rebuild.")
         note = f"{note} {cnote}" if note else cnote
+    # The invariant audit rides on repair: the verb's verbal trigger is "check the
+    # memory graph", and healing covers only what the journal and lock can say —
+    # the audit reports the logical faults verify cannot see (duplicate ids, path/id
+    # mismatches, a lying queue). It runs AFTER the heal, so just-replayed journal
+    # entries are not double-reported; lock-free and read-only, it degrades to a
+    # report under a foreign lock. Session-start deliberately stays audit-free —
+    # a per-session O(nodes) sweep is a tax, while repair is manual and rare.
+    audit_rep = rc.audit(project_root, amg)
+    out["audit"] = audit_rep
+    if audit_rep.get("verdict") != "clean":
+        buckets = ", ".join(f"{k}={v['count']}" for k, v in audit_rep.items()
+                            if isinstance(v, dict) and v.get("count"))
+        anote = (f"Store audit: {audit_rep.get('anomalies')} anomaly(ies) — {buckets}. "
+                 "Full report with samples: reconcile.py audit .")
+        note = f"{note} {anote}" if note else anote
     if note:
         out["note"] = note
     return out

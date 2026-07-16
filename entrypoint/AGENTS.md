@@ -191,7 +191,7 @@ is no slash command here, so run the matching row yourself.
 | Memory status (verbatim, incl. engine version) | `python .claude/skills/amg-bootstrap/scripts/lifecycle.py status .` — present its report as printed, do not paraphrase |
 | Engine version | `python .claude/skills/amg-bootstrap/scripts/lifecycle.py version` |
 | Enable / disable AMG | `python .claude/skills/amg-bootstrap/scripts/lifecycle.py on` / `off .` |
-| Repair after a crash | `python .claude/skills/amg-bootstrap/scripts/lifecycle.py repair .` |
+| Repair / check the graph | `python .claude/skills/amg-bootstrap/scripts/lifecycle.py repair .` — heal + the report-only invariant audit |
 | Build / sync the graph | step 1 |
 | Context for a task from memory | step 2 |
 | Targeted pointer lookup ("where is X") | step 2 with `--compact` |

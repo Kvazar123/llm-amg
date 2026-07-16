@@ -201,7 +201,7 @@ All control goes through one `/amg <verb>` command (and the same words in an ord
 | `/amg status` | state on one screen (presented verbatim, not paraphrased): engine version, active flag, automation, graph size, `stale`, pending operations, lock, the semantic queue (units awaiting enrichment) and any deferred sync, last sync, last pack and last consolidation, connectivity |
 | `/amg version` | the installed engine version |
 | `/amg on` · `off` | enable / disable AMG |
-| `/amg repair` | restore consistency with disk (`recover` + `verify --repair`) |
+| `/amg repair` | restore consistency with disk (`recover` + `verify --repair`) and run the report-only store audit (duplicate ids, path/id mismatches, a lying queue — flagged with samples, nothing rewritten) |
 | `/amg sync` | build or reconcile the graph with the sources |
 | `/amg retrieve <query>` | assemble a context pack |
 | `/amg consult <query>` | a memory consult aware of the whole current session: a conclusion instead of a pack (what the memory adds / confirms / contradicts), the window stays lean; Claude Code only — see the paragraph below |

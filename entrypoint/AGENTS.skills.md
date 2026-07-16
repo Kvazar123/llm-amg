@@ -52,7 +52,7 @@ the same request in command clothes — run the matching row yourself.
 | Memory status (verbatim, incl. engine version) | `python .claude/skills/amg-bootstrap/scripts/lifecycle.py status .` — present its report as printed, do not paraphrase |
 | Engine version | `python .claude/skills/amg-bootstrap/scripts/lifecycle.py version` |
 | Enable / disable | `python .claude/skills/amg-bootstrap/scripts/lifecycle.py on` / `off .` |
-| Repair after a crash | `python .claude/skills/amg-bootstrap/scripts/lifecycle.py repair .` |
+| Repair / check the graph | `python .claude/skills/amg-bootstrap/scripts/lifecycle.py repair .` — heal + the report-only invariant audit |
 | Build / sync the graph | the **amg-bootstrap** skill |
 | Context for a task | the **amg-retrieve** skill (direct `retrieve.py` call — step 2 below) |
 | Targeted pointer lookup ("where is X") | the same call with `--compact` |

@@ -90,7 +90,7 @@ The system is switched on by the presence of `.claude/amg/config.yml` with `acti
 |---|---|---|
 | `/amg status` | "memory status", "how's the memory graph" | show the state on one screen (the fields — below) |
 | `/amg on` · `/amg off` | "turn on / activate / start AMG" · "turn the memory off" | toggle `active` in `config.yml` |
-| `/amg repair` | "repair / check the memory graph" | replay unfinished writes, remove a stale lock (`recover` + `verify --repair`) |
+| `/amg repair` | "repair / check the memory graph" | replay unfinished writes, remove a stale lock (`recover` + `verify --repair`), then the report-only invariant audit (its full row — "Manual commands") |
 | `/amg sync` | "index the project into memory", "sync / build the memory graph" | build or reconcile the graph with the sources (the `amg-bootstrap` skill) |
 | `/amg retrieve <query>` | "gather context on X from memory" | assemble a context pack (the `amg-retrieve` skill) |
 | `/amg consult <query>` | "check this against the memory, session-aware" | the memory consult: a copy of the assistant that inherited the whole conversation reads the pack on its own side and returns a verdict — what the memory adds / confirms / contradicts — without bloating the window (the `amg-retriever-fork` subagent; Claude Code only) |

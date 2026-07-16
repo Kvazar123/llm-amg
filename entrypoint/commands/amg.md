@@ -24,7 +24,9 @@ close synonyms, not the exact word.
 - `version` — the installed engine version.
 - `on` (enable, activate, start) / `off` (disable, stop) — flip `active` in config.yml;
   confirm the new state. Note: `on` only enables AMG — building the graph is `sync`.
-- `repair` (fix, heal) — recover + verify --repair; confirm what was healed.
+- `repair` (fix, heal, check) — recover + verify --repair + the store invariant audit
+  (duplicate ids, path/id mismatches, a lying queue — report-only); confirm what was
+  healed and relay the audit note if it flags anything.
 - `help` — print the verb list (`lifecycle.py help`), or summarize this file.
 
 **Work verbs** — use the matching skill (it orchestrates the scripts and subagents; a

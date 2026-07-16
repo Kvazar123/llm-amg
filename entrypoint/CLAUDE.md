@@ -45,7 +45,7 @@ conversation) must NOT trigger one; when unsure, just answer normally.
 | Show status | `status` (state, info) | `lifecycle.py status` — present its report verbatim | "memory status", "how is the memory graph" |
 | Engine version | `version` | `lifecycle.py version` | "which AMG version is installed" |
 | Enable / disable | `on` / `off` (activate, start · stop) | `lifecycle.py on`/`off` | "turn AMG on / off", "enable the memory" |
-| Repair the graph | `repair` (fix, heal) | `lifecycle.py repair` | "repair / check the memory graph" |
+| Repair / check the graph | `repair` (fix, heal, check) | `lifecycle.py repair` — heal + the report-only invariant audit | "repair / check the memory graph" |
 | Build / sync the graph | `sync` (build, index, reconcile) | **amg-bootstrap** | "index the project into memory", "sync the memory graph" |
 | Retrieve context | `retrieve <q>` (recall, context) | **amg-retrieve** | "pull context on X from memory", "what does the memory hold on X" |
 | Session-aware memory consult | `consult <q>` | spawn `amg-retriever-fork` (it inherits this conversation; returns a verdict, not a pack) | "check this against the memory, session-aware" |

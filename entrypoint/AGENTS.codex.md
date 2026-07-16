@@ -45,7 +45,7 @@ about something else must NOT trigger one.
 | Retrieve context | **amg-retrieve** | amg-retriever |
 | Consolidate memory | **amg-consolidate** | amg-consolidator |
 | Capture a note | `notes.py add` (direct) | — |
-| Repair the graph | `graph_store.py recover` + `verify --repair` (direct) | — |
+| Repair / check the graph | `lifecycle.py repair .` (direct: heal + the report-only invariant audit) | — |
 | Memory status / engine version | `lifecycle.py status .` (present verbatim) / `lifecycle.py version` (direct) | — |
 | Re-link the isolated nodes (`/amg relink`) | the amg-bootstrap linking cycle from `link_candidates.py --isolated .` (strays only; their past rejections re-opened): nominate → spawn amg-linker per batch → ONE `apply-derived` → repeat until zero batches; nomination alone applies nothing (deleting `work/judged/` = full re-open, last resort) | amg-linker |
 | Visualize the graph | `export_graph.py --store .claude/amg --open` (direct, read-only) | — |
