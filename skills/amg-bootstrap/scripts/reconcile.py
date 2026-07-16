@@ -1111,29 +1111,23 @@ def apply_cached(project_root: Path, amg_root: Optional[Path] = None) -> Dict[st
     units: List[Dict[str, Any]] = data.get("units", []) if isinstance(data, dict) else []
     lang = str(config.get("working_language", "en"))
     items: List[Dict[str, Any]] = []
-    hit_ids: Set[str] = set()
     for u in units:
         sha = u.get("content_sha")
         cached = _cache_lookup(amg_root, lang, str(sha)) if sha else None
         if cached:
             items.extend(cached)
-            hit_ids.add(str(u.get("id")))
     if not items:
         return {"restored_units": 0, "remaining": len(units)}
     tmp = amg_root / "work" / "cached-derivation.json"
     gs.atomic_write_text(tmp, json.dumps(items, ensure_ascii=False))
     result = apply_derivation(project_root, tmp, amg_root)
-    # Drop restored units from the queue; keep any hit whose node stayed stale (a
-    # source changed between plan and restore — the freshness check skipped it).
-    nodes = load_nodes(gs.GraphStore(amg_root))
-    remaining = [u for u in units
-                 if str(u.get("id")) not in hit_ids
-                 or (nodes.get(str(u.get("id"))) or {}).get("status") == "stale"]
-    gs.atomic_write_text(qpath, json.dumps(
-        {"generated": data.get("generated"), "units": remaining},
-        ensure_ascii=False, indent=2))
-    return {"restored_units": len(units) - len(remaining),
-            "remaining": len(remaining), **result}
+    # The apply itself already rewrote the queue to what still awaits derivation
+    # (_refresh_queue: a unit stays only while its node is stale — this keeps a hit
+    # whose source changed between plan and restore, since the freshness check left
+    # its node stale). Read the remainder back rather than re-deriving the rule here.
+    remaining = int(result.get("queue_remaining", len(units)))
+    return {"restored_units": len(units) - remaining,
+            "remaining": remaining, **result}
 
 
 # --------------------------------------------------------------------------- #
@@ -1204,6 +1198,35 @@ def _sanitize_item(item: Any) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         if key in it and not isinstance(it[key], str):
             it.pop(key)
     return it, None
+
+
+def _refresh_queue(amg_root: Path, nodes: Dict[str, Dict[str, Any]]) -> Optional[int]:
+    """Rewrite work/queue.json down to the units still awaiting semantic derivation.
+
+    The queue is produced by plan(); applying derivations used to leave the file as
+    written, so between an apply and the next plan its length lied to every consumer:
+    status printed hundreds of "awaiting" units on a fully derived graph, sync-defer
+    recorded the stale figure, and partition_queue would re-batch work already done.
+    Filtering by the post-apply node state keeps the file honest — a unit stays only
+    while its node still awaits derivation (status `stale`); a unit whose node is
+    gone drops too (the next plan re-queues it if its source still exists). Returns
+    the remaining count, or None when there is no queue file. Call under the store
+    lock, with `nodes` reflecting the post-apply state."""
+    qpath = amg_root / "work" / "queue.json"
+    if not qpath.exists():
+        return None
+    try:
+        data = json.loads(qpath.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    units = data.get("units", []) if isinstance(data, dict) else []
+    remaining = [u for u in units
+                 if (nodes.get(str(u.get("id"))) or {}).get("status") == "stale"]
+    if len(remaining) != len(units):
+        gs.atomic_write_text(qpath, json.dumps(
+            {"generated": data.get("generated") if isinstance(data, dict) else None,
+             "units": remaining}, ensure_ascii=False, indent=2))
+    return len(remaining)
 
 
 def apply_derivation(project_root: Path, derivation_path: Path,
@@ -1384,6 +1407,7 @@ def _apply_items(project_root: Path, items: List[Dict[str, Any]],
     applied, created, skipped, skipped_stale = 0, 0, 0, 0
     skipped_invalid = 0
     invalid: List[str] = []
+    missing: List[str] = []          # sample of unknown target ids (who invented what)
 
     def _note_invalid(reason: str) -> None:
         nonlocal skipped_invalid
@@ -1441,6 +1465,8 @@ def _apply_items(project_root: Path, items: List[Dict[str, Any]],
                         created += 1
                     else:
                         skipped += 1                          # update for an unknown id
+                        if len(missing) < 10:
+                            missing.append(str(item["id"]))
                     continue
                 # Resumable derivation: a derived item echoes the content_sha it was
                 # built from. If the source changed since (the node's source_hash moved on),
@@ -1492,10 +1518,17 @@ def _apply_items(project_root: Path, items: List[Dict[str, Any]],
                 f"invalid={skipped_invalid}", txid)
         if cache_items:                        # under the lock; atomic per-file writes
             _cache_store(store.root, default_lang, cache_items)
+        # Keep work/queue.json equal to what still awaits derivation (nodes now
+        # reflect the post-apply state) — status/sync-defer/partition read it raw.
+        queue_left = _refresh_queue(store.root, nodes)
 
     result: Dict[str, Any] = {"applied": applied, "created": created,
                               "skipped_missing": skipped, "skipped_stale": skipped_stale,
                               "skipped_invalid": skipped_invalid}
+    if queue_left is not None:
+        result["queue_remaining"] = queue_left
+    if missing:
+        result["missing_sample"] = missing
     if invalid:
         result["invalid"] = invalid
     return result
@@ -1557,7 +1590,10 @@ def _merge_edges(existing: List[Dict[str, Any]], incoming: List[Dict[str, Any]],
 
 # Advisory thresholds for the acceptance verdict; overridable via the
 # `connectivity_gate` config block. A healthy fully-built graph is ONE large
-# component with no unresolved internal targets (external `imports` don't count).
+# component with no unresolved STRUCTURAL targets (external `imports` don't count;
+# model-written targets that name no node are reported separately, never gated —
+# they are inert and have no automatic remedy, so gating them would leave the
+# verdict stuck on `attention` forever).
 GATE_DEFAULTS: Dict[str, Any] = {"min_largest_share": 0.9, "max_dangling_internal": 0}
 
 
@@ -1577,6 +1613,14 @@ def session_source_prefix(project_root: Path, config: Dict[str, Any],
         return None
 
 
+def _is_structural_edge(e: Dict[str, Any]) -> bool:
+    """The deterministic layer's edges, legacy-aware — the same rule
+    _refresh_structural_edges uses: marked `origin: structural`, or unmarked with a
+    rel only the pre-origin extraction ever produced (imports/calls)."""
+    return bool(e.get("origin") == "structural"
+                or (e.get("origin") is None and e.get("rel") in ("imports", "calls")))
+
+
 def graph_metrics(nodes: Dict[str, Dict[str, Any]],
                   gate_cfg: Optional[Dict[str, Any]] = None,
                   session_prefix: Optional[str] = None) -> Dict[str, Any]:
@@ -1587,11 +1631,21 @@ def graph_metrics(nodes: Dict[str, Dict[str, Any]],
     surfaces them. Connectivity follows the same view retrieval conducts on — edges
     whose target exists plus part_of memberships that name a node, symmetrized.
 
-    Dangling edges are split by legitimacy: an unresolved `imports` target is an
-    external module (correctly dead, kept as a record of the import fact); ANY other
-    unresolved target is an internal miss the resolver could not bind (audits
-    1.40/1.42). Deferred `stale` nodes are reported but never counted as defects —
-    under lazy derivation an underived node is an expected state, not fragmentation
+    Dangling edges are split by responsibility, because the remedies differ:
+
+      * external `imports` — stdlib/third-party targets: correctly dead, kept as a
+        record of the import fact; never a defect;
+      * dangling STRUCTURAL — a deterministic-layer edge whose target is gone: the
+        engine's own correctness (the resolver never guesses, so on a fresh build
+        this is zero by construction) — the class `max_dangling_internal` gates;
+      * dangling SEMANTIC — a judgment-layer edge whose written target names no
+        node (a model invented a slug the canonicalizer cannot bind): inert at
+        retrieval (dropped) and with no automatic remedy, so it is REPORTED with
+        samples but never flips the gate — a gate that cannot return to `ok`
+        stops carrying signal.
+
+    Deferred `stale` nodes are reported but never counted as defects — under lazy
+    derivation an underived node is an expected state, not fragmentation
     (a deliberate deferral); their structural backbone keeps them connected regardless.
 
     The verdict (`gate`: ok | attention) compares against the `connectivity_gate`
@@ -1614,8 +1668,10 @@ def graph_metrics(nodes: Dict[str, Dict[str, Any]],
         if ra != rb:
             parent[ra] = rb
 
-    edges_total = resolved = dangling_internal = dangling_external = 0
-    dangling_samples: List[str] = []
+    edges_total = resolved = dangling_structural = dangling_semantic = 0
+    dangling_external = 0
+    structural_samples: List[str] = []
+    semantic_samples: List[str] = []
     linked: Set[str] = set()
     for nid, node in nodes.items():
         for e in node.get("edges") or []:
@@ -1629,10 +1685,14 @@ def graph_metrics(nodes: Dict[str, Dict[str, Any]],
                 linked.add(e["to"])
             elif e.get("rel") == "imports":
                 dangling_external += 1       # stdlib / third-party: legitimately dead
+            elif _is_structural_edge(e):
+                dangling_structural += 1
+                if len(structural_samples) < 10:
+                    structural_samples.append(f"{nid} -{e.get('rel')}-> {e['to']}")
             else:
-                dangling_internal += 1
-                if len(dangling_samples) < 10:
-                    dangling_samples.append(f"{nid} -{e.get('rel')}-> {e['to']}")
+                dangling_semantic += 1
+                if len(semantic_samples) < 10:
+                    semantic_samples.append(f"{nid} -{e.get('rel')}-> {e['to']}")
         for p in node.get("part_of") or []:
             if isinstance(p, dict) and p.get("topic") in ids:
                 union(nid, p["topic"])
@@ -1646,23 +1706,32 @@ def graph_metrics(nodes: Dict[str, Dict[str, Any]],
     share = round(largest / len(ids), 4) if ids else 1.0
     isolated = sorted(nid for nid in ids if nid not in linked)
 
-    # Doc nodes with no outgoing `documents` edge. Advisory: a
-    # chat/session turn or a plain note legitimately documents nothing; stale
-    # (not-yet-derived) nodes are excluded — they could not have earned one yet.
-    # Session-dump turns (source_path under the sessions dir, via session_prefix)
-    # are excluded too: dialogue turns have no subject by nature, and counting
-    # them drowns the signal this metric carries for REAL documents.
-    doc_undocumented = sorted(
-        nid for nid, n in nodes.items()
-        if (n.get("_path") or "").startswith("nodes/doc/")
-        and n.get("status") != "stale"
-        and not (session_prefix
-                 and str(n.get("source_path") or "").startswith(session_prefix))
-        and not any(isinstance(e, dict) and e.get("rel") == "documents"
-                    for e in n.get("edges") or []))
+    # Doc FILES none of whose sections carries an outgoing `documents` edge — the
+    # "documentation cluster hanging apart from the code" signal, aggregated per
+    # source file. Per-section counting drowned it in structure: an ADR's
+    # context/consequences subsections document nothing by themselves — their FILE
+    # documents through its subject section. A file whose every section is still
+    # stale is not counted (it could not have earned an edge yet); session-dump
+    # files (source_path under the sessions dir) are excluded — dialogue turns have
+    # no subject by nature. A stale section's surviving edge still counts as the
+    # file's anchor (earned knowledge is kept across a source change).
+    doc_files: Set[str] = set()
+    doc_documented: Set[str] = set()
+    for nid, n in nodes.items():
+        if not (n.get("_path") or "").startswith("nodes/doc/"):
+            continue
+        sp = str(n.get("source_path") or "")
+        if not sp or (session_prefix and sp.startswith(session_prefix)):
+            continue
+        if n.get("status") != "stale":
+            doc_files.add(sp)
+        if any(isinstance(e, dict) and e.get("rel") == "documents"
+               for e in n.get("edges") or []):
+            doc_documented.add(sp)
+    doc_undocumented = sorted(doc_files - doc_documented)
 
     ok = (share >= float(gate["min_largest_share"])
-          and dangling_internal <= int(gate["max_dangling_internal"]))
+          and dangling_structural <= int(gate["max_dangling_internal"]))
     return {
         "nodes": len(ids),
         "components": len(comp_sizes),
@@ -1671,11 +1740,13 @@ def graph_metrics(nodes: Dict[str, Dict[str, Any]],
         "isolated_sample": isolated[:10],
         "edges_total": edges_total,
         "edges_resolved": resolved,
-        "dangling_internal": dangling_internal,
-        "dangling_internal_sample": dangling_samples,
+        "dangling_structural": dangling_structural,
+        "dangling_structural_sample": structural_samples,
+        "dangling_semantic": dangling_semantic,
+        "dangling_semantic_sample": semantic_samples,
         "dangling_external_imports": dangling_external,
-        "doc_without_documents": len(doc_undocumented),
-        "doc_without_documents_sample": doc_undocumented[:10],
+        "doc_files_without_documents": len(doc_undocumented),
+        "doc_files_without_documents_sample": doc_undocumented[:10],
         "stale_nodes": sum(1 for n in nodes.values() if n.get("status") == "stale"),
         "gate": "ok" if ok else "attention",
     }

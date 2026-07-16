@@ -148,7 +148,7 @@ The thresholds of the `reconcile.py metrics` verdict (also the `connectivity` bl
 | Key | Value | Meaning |
 |---|---|---|
 | `connectivity_gate.min_largest_share` | 0.9 | the largest connected component must hold at least this share of the nodes |
-| `connectivity_gate.max_dangling_internal` | 0 | the allowed number of unresolved **internal** edge targets (external `imports` to stdlib/third-party are legitimate and not counted) |
+| `connectivity_gate.max_dangling_internal` | 0 | the allowed number of unresolved **structural** edge targets — the deterministic layer's own edges, zero on a fresh build by construction (external `imports` to stdlib/third-party are legitimate and not counted; model-written targets that name no node are reported as `dangling_semantic` with samples but never flip the verdict — they are inert at retrieval and have no automatic remedy) |
 
 ## Retrieval (`retrieval`)
 

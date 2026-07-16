@@ -197,7 +197,7 @@ is no slash command here, so run the matching row yourself.
 | Targeted pointer lookup ("where is X") | step 2 with `--compact` |
 | Capture a note / decision | `notes.py add` (step 3) |
 | Consolidate / tidy the memory | step 3 |
-| Re-link the isolated nodes (`/amg relink`) | `python .claude/skills/amg-bootstrap/scripts/link_candidates.py --isolated .` — nominates candidates ONLY for strays with no resolved relation (their past rejections re-opened); then judge and apply as in step 1. Deleting `work/judged/` is the FULL re-open — last resort |
+| Re-link the isolated nodes (`/amg relink`) | the full linking cycle of step 1, scoped to strays: `python .claude/skills/amg-bootstrap/scripts/link_candidates.py --isolated .` nominates ONLY for nodes with no resolved relation (their past rejections re-opened) → judge each batch per `.claude/agents/amg-linker.md` → ONE `reconcile.py apply-derived .` → repeat until zero batches. **Nomination alone applies nothing.** Deleting `work/judged/` is the FULL re-open — last resort |
 | Open / visualize the memory graph | `python .claude/skills/amg-retrieve/scripts/export_graph.py --store .claude/amg --open` (read-only; writes only `cache/graph.html`; `--json` writes raw `{nodes, links, meta}` instead) |
 
 (Slash commands like `/amg`, the auto `SessionStart`/`SessionEnd` hooks, and the digest

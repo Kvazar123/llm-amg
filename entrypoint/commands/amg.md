@@ -46,8 +46,10 @@ hook or a deterministic script cannot, because these need model judgment):
 - `relink` (re-link, link the isolated/unlinked nodes) — re-check exactly the stray
   nodes: run the **amg-bootstrap** skill's linking pass (step 6) starting from
   `link_candidates.py --isolated .` — it nominates candidates ONLY for nodes with no
-  resolved relation and deliberately re-opens their past rejections; judge the batches
-  and apply as usual. Use when `status`/the viewer shows isolated nodes after a
+  resolved relation and deliberately re-opens their past rejections; then the cycle
+  as usual — judge every batch (amg-linker), apply with ONE
+  `reconcile.py apply-derived .`, repeat until zero batches. Nomination alone
+  applies nothing. Use when `status`/the viewer shows isolated nodes after a
   completed build; a plain `sync` will honestly report "nothing new" there, because
   its convergence memory (`work/judged/`) already ruled on those pairs.
 

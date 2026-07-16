@@ -537,7 +537,9 @@ def sync_defer(amg: Path) -> Dict[str, Any]:
     standing deferral stops costing the user the same question every session. The
     stamp is consumed implicitly: a sync drains the queue, the next non-zero backlog
     starts a fresh comparison."""
-    queued = _queue_size(amg) or 0
+    store = gs.GraphStore(amg)
+    store.init()
+    queued = _semantic_backlog(amg, rc.load_nodes(store)) or 0
     stamp = amg / "work" / "sync-defer.json"
     try:
         stamp.parent.mkdir(parents=True, exist_ok=True)
@@ -576,9 +578,10 @@ AMG operations (any verb also works as plain words that name the memory / AMG):
                confirms / contradicts — without importing the pack
   consolidate  fold weights, select conclusions, compact over-budget branches
                (model-driven: the amg-consolidate flow / skill)
-  relink       re-check the isolated (unlinked) nodes: nominate candidates for the
-               strays only (link_candidates.py --isolated), judge, apply — past
-               rejections for those nodes are deliberately re-opened
+  relink       re-check the isolated (unlinked) nodes: nominate for the strays only
+               (link_candidates.py --isolated; their past rejections re-opened),
+               judge each batch, apply-derived — repeat until zero batches
+               (nomination alone applies nothing)
   view         export + open the read-only 3D graph viewer (export_graph.py --open)
   sync-defer   record "sync deferred" so later sessions stop re-asking at the same size
   help         this list
@@ -633,14 +636,22 @@ def _mtime(p: Path) -> Optional[str]:
     return None
 
 
-def _queue_size(amg: Path) -> Optional[int]:
+def _semantic_backlog(amg: Path, nodes: Dict[str, Any]) -> Optional[int]:
+    """The honest semantic-queue figure: queue.json units whose node still awaits
+    enrichment. Applying derivations now refreshes the queue file itself
+    (reconcile._refresh_queue), but a report may still run over a store written by
+    an older engine, between an interrupted apply and the next plan — intersecting
+    with live node state keeps the DISPLAYED figure honest either way (the raw file
+    length once showed hundreds of "awaiting" units on a fully derived graph)."""
     q = amg / "work" / "queue.json"
     if not q.exists():
         return None
     try:
-        return len(json.loads(q.read_text(encoding="utf-8")).get("units", []))
+        units = json.loads(q.read_text(encoding="utf-8")).get("units", [])
     except (OSError, json.JSONDecodeError):
         return None
+    return sum(1 for u in units
+               if (nodes.get(str(u.get("id"))) or {}).get("status") == "stale")
 
 
 def _last_sync(amg: Path) -> Optional[str]:
@@ -762,7 +773,7 @@ def status(project_root: Path, amg: Path) -> Dict[str, Any]:
         "pending_transactions": problems.get("pending_transactions", []),
         "stale_lock": problems.get("stale_lock", []),
         "conflicts": rc.find_conflict_markers(store),   # git merge markers in nodes
-        "queue_size": _queue_size(amg),
+        "queue_size": _semantic_backlog(amg, nodes),
         "sync_deferred": _sync_deferred(amg),
         "last_sync": _last_sync(amg),
         "last_pack": _mtime(amg / "cache" / "pack.md"),
@@ -777,7 +788,8 @@ def status(project_root: Path, amg: Path) -> Dict[str, Any]:
         "eval_summary": _eval_summary(amg),
         "connectivity": {k: metrics[k] for k in
                          ("components", "largest_component_share", "isolated_nodes",
-                          "dangling_internal", "doc_without_documents", "gate")},
+                          "dangling_structural", "dangling_semantic",
+                          "doc_files_without_documents", "gate")},
     }
 
 
@@ -818,8 +830,9 @@ def format_status(d: Dict[str, Any]) -> str:
         lines.append(f"  connectivity:         {cm.get('gate')} "
                      f"(components={cm.get('components')}, "
                      f"largest={cm.get('largest_component_share')}, "
-                     f"dangling_internal={cm.get('dangling_internal')}, "
-                     f"doc w/o documents={cm.get('doc_without_documents')})")
+                     f"dangling structural={cm.get('dangling_structural')} / "
+                     f"model-written={cm.get('dangling_semantic')}, "
+                     f"doc files w/o documents={cm.get('doc_files_without_documents')})")
     es = d.get("eval_summary")
     if es:
         lines.append(f"  eval gate:            {es.get('status')} "

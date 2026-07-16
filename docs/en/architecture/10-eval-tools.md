@@ -107,7 +107,7 @@ Its purpose is not to measure but to **show** the memory's structure (clusters, 
 
 ## Build connectivity metrics — `reconcile.py metrics`
 
-The fifth measurement entry point lives not here but in the reconciliation layer (it reads the data model): `reconcile.py metrics` — the **build-quality acceptance gate**. It counts the connected components and the largest one's share, isolated nodes, unresolved **internal** edge targets (separately from the legitimate external `imports`), and doc nodes without `documents`, and issues the advisory `ok | attention` verdict against the `connectivity_gate` thresholds. Graph fragmentation is a number right after the build — not just something to eyeball in the 3D viewer; the same block is shown by `/amg status`. The metric set and semantics — [Reconciliation and semantic derivation](./05-reconcile.md), "Connectivity metrics".
+The fifth measurement entry point lives not here but in the reconciliation layer (it reads the data model): `reconcile.py metrics` — the **build-quality acceptance gate**. It counts the connected components and the largest one's share, isolated nodes, unresolved edge targets split by responsibility (**structural** misses gate; **model-written** dead targets are reported with samples but never flip the verdict; external `imports` are legitimate), and doc **files** without a `documents` edge, and issues the advisory `ok | attention` verdict against the `connectivity_gate` thresholds. Graph fragmentation is a number right after the build — not just something to eyeball in the 3D viewer; the same block is shown by `/amg status`. The metric set and semantics — [Reconciliation and semantic derivation](./05-reconcile.md), "Connectivity metrics".
 
 ## The role in consolidation
 

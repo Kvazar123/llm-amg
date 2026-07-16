@@ -11,12 +11,16 @@ Proves, without a single model call:
                   deliberately malformed items (swapped confidence/edges, missing
                   id, non-list part_of, a bare string) and non-canonical ids
                   (missing path prefix, doubled category prefix) — applies with
-                  per-item repair/skip and never aborts the batch;
-                  a mis-prefixed target re-binds to the canonical id.
-  3. metrics    : the connectivity gate reports ONE component, zero internal
-                  dangling edges, zero isolated nodes and no undocumented doc
-                  nodes on the fully built graph; external `imports`
-                  are counted separately, not as defects.
+                  per-item repair/skip and never aborts the batch; a mis-prefixed
+                  target re-binds to the canonical id; an update aimed at a
+                  nonexistent node is skipped AND sampled (missing_sample); the
+                  apply refreshes work/queue.json down to what still awaits
+                  derivation (status/sync-defer read it raw).
+  3. metrics    : the connectivity gate reports ONE component, zero dangling
+                  edges, zero isolated nodes and no undocumented doc FILES on the
+                  fully built graph; external `imports` are counted separately;
+                  dangling targets split by responsibility — a structural miss
+                  gates, a model-written one is reported but never flips the gate.
   4. idempotency: a re-run bootstrap is a strict no-op (nothing re-queued, no
                   edge rewrites).
   5. cache      : a wipe-and-rebuild restores every per-unit derivation VERBATIM
@@ -149,6 +153,10 @@ def stub_derivation(queue_units: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
          "summary": "Utility helpers module."},
         # not an object at all -> skipped
         "just-a-string",
+        # an update for an id that names no node (a model-invented target) ->
+        # skipped_missing, with the id surfaced in missing_sample
+        {"id": "code:ghost.py::nowhere", "content_sha": "deadbeef",
+         "summary": "an update aimed at a node that does not exist"},
         # doubled category prefix on a create item -> collapses to overview:build
         {"id": "hub:overview:build", "type": "overview",
          "summary": "Overview of the build fixture.",
@@ -237,12 +245,21 @@ def main() -> int:
         assert r.get("malformed_files") == ["derived-torn-p01.json"], r
         assert r["skipped_invalid"] == 2, r          # the no-id item + the bare string
         assert r["created"] == 1 and r["applied"] == 11 + 2, r  # units + swap + util extra
+        assert r["skipped_missing"] == 1, r          # the ghost-target update
+        assert r["missing_sample"] == ["code:ghost.py::nowhere"], r
+        # the apply refreshed work/queue.json: every queued unit just got its summary,
+        # so the file must be empty NOW, not after the next plan (status/sync-defer
+        # read it raw, and a stale queue lied to them in the field)
+        assert r["queue_remaining"] == 0, r
+        q_after = json.loads((amg / "work" / "queue.json").read_text(encoding="utf-8"))
+        assert q_after["units"] == [], "apply must drop derived units from the queue"
         assert not list((amg / "work").glob("derived-*.json")), "consumed files must move"
         assert (amg / "work" / "applied" / "derived-stub-p01.json").exists()
         assert (amg / "work" / "invalid" / "derived-torn-p01.json").exists()
         r2 = RC.apply_derived(proj, amg)
         assert r2["files"] == 0 and r2["applied"] == 0, r2   # resume re-run: cheap no-op
-        print("PASS  batch door: one apply-derived call, parts consumed, torn part quarantined")
+        print("PASS  batch door: one apply-derived call, parts consumed, torn part "
+              "quarantined, queue refreshed, ghost target sampled")
         nodes = RC.load_nodes(gs.GraphStore(amg))
         assert "overview:build" in nodes and "hub:overview:build" not in nodes, \
             "the doubled category prefix must collapse"
@@ -262,15 +279,15 @@ def main() -> int:
         m = RC.graph_metrics(RC.load_nodes(gs.GraphStore(amg)))
         assert m["components"] == 1, m
         assert m["largest_component_share"] == 1.0, m
-        assert m["dangling_internal"] == 0, m
+        assert m["dangling_structural"] == 0 and m["dangling_semantic"] == 0, m
         assert m["isolated_nodes"] == 0, m
-        assert m["doc_without_documents"] == 0, m
+        assert m["doc_files_without_documents"] == 0, m
         assert m["dangling_external_imports"] == 1, m         # import json — legitimate
         assert m["gate"] == "ok", m
-        print("PASS  metrics: one component, 0 internal dangling, gate ok "
+        print("PASS  metrics: one component, 0 dangling, gate ok "
               f"(external imports={m['dangling_external_imports']})")
 
-        # session-dump turns are excluded from doc_without_documents by source-path
+        # session-dump files are excluded from the doc metric by source-path
         # prefix (dialogue turns have no subject; they must not drown the doc signal)
         fake = {
             "doc:s.md::m1": {"_path": "nodes/doc/a.md", "status": "active",
@@ -281,11 +298,49 @@ def main() -> int:
                                    "edges": [], "part_of": []},
         }
         mm = RC.graph_metrics(fake, None, session_prefix=".claude/amg/sessions/")
-        assert mm["doc_without_documents"] == 1, mm
-        assert mm["doc_without_documents_sample"] == ["doc:real.md::intro"], mm
-        assert RC.graph_metrics(fake, None)["doc_without_documents"] == 2
+        assert mm["doc_files_without_documents"] == 1, mm
+        assert mm["doc_files_without_documents_sample"] == ["doc/real.md"], mm
+        assert RC.graph_metrics(fake, None)["doc_files_without_documents"] == 2
         assert RC.session_source_prefix(proj, {}, amg) == ".claude/amg/sessions/"
-        print("PASS  metrics: session-dump doc turns excluded from doc_without_documents")
+        print("PASS  metrics: session-dump doc files excluded from the doc metric")
+
+        # dangling edges split by responsibility: a model-written target that names
+        # no node is reported (count + sample) but never flips the gate — it is
+        # inert and has no automatic remedy; a structural miss is the engine's own
+        # correctness and still gates at max_dangling_internal (default 0)
+        pairfx = {
+            "code:a.py": {"_path": "nodes/code/a.md", "status": "active",
+                          "edges": [{"rel": "defines", "to": "code:a.py::f", "w": 1.0,
+                                     "origin": "structural"},
+                                    {"rel": "relates_to", "to": "doc:ghost.md::x",
+                                     "w": 0.5, "origin": "semantic"}],
+                          "part_of": []},
+            "code:a.py::f": {"_path": "nodes/code/f.md", "status": "active",
+                             "edges": [], "part_of": []},
+        }
+        ms = RC.graph_metrics(pairfx, None)
+        assert ms["dangling_semantic"] == 1 and ms["dangling_structural"] == 0, ms
+        assert ms["dangling_semantic_sample"] == \
+            ["code:a.py -relates_to-> doc:ghost.md::x"], ms
+        assert ms["gate"] == "ok", "model-written dangling must not flip the gate"
+        pairfx["code:a.py"]["edges"].append(
+            {"rel": "calls", "to": "code:gone.py::h", "w": 0.7, "origin": "structural"})
+        ms2 = RC.graph_metrics(pairfx, None)
+        assert ms2["dangling_structural"] == 1 and ms2["gate"] == "attention", ms2
+        # an ADR-style file: subsections document nothing themselves — the FILE
+        # anchors through its subject section, so it is not counted undocumented
+        adrfx = {
+            "doc:adr.md::decision": {"_path": "nodes/doc/c.md", "status": "active",
+                                     "source_path": "doc/adr.md",
+                                     "edges": [{"rel": "documents", "to": "code:a.py",
+                                                "w": 1.0}], "part_of": []},
+            "doc:adr.md::context": {"_path": "nodes/doc/d.md", "status": "active",
+                                    "source_path": "doc/adr.md",
+                                    "edges": [], "part_of": []},
+        }
+        assert RC.graph_metrics(adrfx, None)["doc_files_without_documents"] == 0
+        print("PASS  metrics: dangling split by origin (semantic never gates); "
+              "doc metric aggregates per file")
 
         # the one-file synthesis sheet: grouped summary rows + deterministic gap
         # material, so amg-synth never scans nodes/ in its own context

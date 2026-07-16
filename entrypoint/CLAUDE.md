@@ -50,7 +50,7 @@ conversation) must NOT trigger one; when unsure, just answer normally.
 | Retrieve context | `retrieve <q>` (recall, context) | **amg-retrieve** | "pull context on X from memory", "what does the memory hold on X" |
 | Session-aware memory consult | `consult <q>` | spawn `amg-retriever-fork` (it inherits this conversation; returns a verdict, not a pack) | "check this against the memory, session-aware" |
 | Consolidate memory | `consolidate` (maintain, compact) | **amg-consolidate** | "consolidate the memory", "wrap up and save to memory" |
-| Re-link the isolated nodes | `relink` | the amg-bootstrap linking pass from `link_candidates.py --isolated .` (strays only; their past rejections re-opened) | "re-link the isolated memory nodes" |
+| Re-link the isolated nodes | `relink` | the amg-bootstrap linking cycle from `link_candidates.py --isolated .` (strays only; rejections re-opened): nominate → judge → apply-derived, until zero batches | "re-link the isolated memory nodes" |
 | Open the graph viewer | `view` (show graph, visualize) | `export_graph.py --open` | "open / show the memory graph", "visualize the memory" |
 | Capture a note | — | `notes.py add` | "remember (in memory) that …" |
 

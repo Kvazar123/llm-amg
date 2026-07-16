@@ -333,17 +333,21 @@ stale_age_days: 30                 # recency basis for the salience freshness si
 # -----------------------------------------------------------------------------
 # Connectivity acceptance gate. `reconcile.py metrics` (also surfaced by
 # /amg status) reports the graph's build quality: connected components, the largest
-# component's share, unresolved INTERNAL edge targets (external `imports` to stdlib/
-# third-party are legitimate and counted separately), isolated nodes, and doc nodes
-# with no outgoing `documents` edge. The verdict (ok | attention) compares against
-# these thresholds; it is ADVISORY — a skeleton mid-build is legitimately unlinked —
+# component's share, unresolved edge targets, isolated nodes, and doc FILES none of
+# whose sections carries a `documents` edge. Unresolved targets are split by
+# responsibility: external `imports` (stdlib/third-party) are legitimate; a
+# STRUCTURAL miss is the engine's own correctness and gates below; a MODEL-WRITTEN
+# target that names no node (an invented slug) is reported with samples but never
+# flips the verdict — it is inert at retrieval and has no automatic remedy, so
+# gating it would leave the verdict stuck on `attention` forever. The verdict
+# (ok | attention) is ADVISORY — a skeleton mid-build is legitimately unlinked —
 # and the bootstrap skill reads it as the acceptance step after a full build (an
 # `attention` verdict means: run the global linking pass, inspect the samples).
 # Deferred (`stale`) nodes are never counted as defects (see `derivation: lazy`).
 # -----------------------------------------------------------------------------
 connectivity_gate:
   min_largest_share: 0.9        # the largest component must hold at least this share of nodes
-  max_dangling_internal: 0      # unresolved internal (non-imports) edge targets tolerated
+  max_dangling_internal: 0      # unresolved STRUCTURAL edge targets tolerated (non-imports)
 
 # -----------------------------------------------------------------------------
 # Eval gate: compaction must not silently hurt retrieval. When `apply` carries a
