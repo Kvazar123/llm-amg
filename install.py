@@ -145,10 +145,6 @@ def _env_kind(env: str) -> str:
     return "generic"
 
 
-def _is_claude_code(env: str) -> bool:
-    return _env_kind(env) == "claude-code"
-
-
 # --------------------------------------------------------------------------- #
 # The environment registry. Everything an install mode differs BY is data in one
 # profile; install()/uninstall()/main() are generic executors over it. Adding an
