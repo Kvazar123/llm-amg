@@ -296,7 +296,12 @@ def test_codex_env():
     t = Path(tempfile.mkdtemp(prefix="amg-codex-"))
     try:
         # codex is skill-AWARE: skills in .agents/skills, TOML subagents in .codex/agents,
-        # a skill-aware AGENTS.md block, NO Claude hooks/command. agent_dir defaults to .agents.
+        # a skill-aware AGENTS.md block, hooks in .codex/hooks.json (trust-gated by the
+        # user's /hooks review — the installer only writes them). agent_dir defaults to .agents.
+        (t / ".codex").mkdir(parents=True)
+        (t / ".codex/hooks.json").write_text(json.dumps(               # a user's own hook
+            {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo mine"}]}]}}),
+            encoding="utf-8")
         I.main(["--target", str(t), "--env", "codex", "--mirror", "src", "--no-verify"])
         assert (t / ".agents/skills/amg-bootstrap/scripts/reconcile.py").exists(), "skills in .agents"
         assert not (t / ".agents/agents").exists(), "codex uses TOML subagents, not .md agents"
@@ -306,7 +311,25 @@ def test_codex_env():
         entry = (t / "AGENTS.md").read_text(encoding="utf-8")
         assert I.BEGIN in entry and ".agents/skills" in entry and ".claude" not in entry
         assert "skill" in entry.lower() and ".codex/agents" in entry, "codex block is skill-aware"
+        # Codex hooks: merged into .codex/hooks.json in the Claude shape with Codex
+        # handler keys (timeout_sec; stdout as the hook JSON via --hook-json); the
+        # user's own hook survives; a reinstall must not duplicate the AMG entries.
+        hj = json.loads((t / ".codex/hooks.json").read_text(encoding="utf-8"))
+        cmds = [h["command"] for ev in hj["hooks"].values() for e in ev for h in e["hooks"]]
+        assert any("start-check --hook-json" in c and ".agents/skills" in c for c in cmds), cmds
+        assert any("prompt-hint --hook-json" in c for c in cmds), cmds
+        assert "echo mine" in cmds, "a foreign codex hook survives the merge"
+        assert all(".claude" not in c for c in cmds), "hook paths rendered to .agents"
+        assert all("timeout_sec" in h for ev in hj["hooks"].values()
+                   for e in ev for h in e["hooks"] if "lifecycle.py" in h.get("command", "")), \
+            "codex handlers use timeout_sec, not timeout"
+        I.main(["--target", str(t), "--env", "codex", "--mirror", "src", "--no-verify"])
+        hj2 = json.loads((t / ".codex/hooks.json").read_text(encoding="utf-8"))
+        cmds2 = [h["command"] for ev in hj2["hooks"].values() for e in ev for h in e["hooks"]]
+        assert sum("start-check" in c for c in cmds2) == 1, "reinstall: no duplicate hooks"
         assert not (t / ".agents/settings.json").exists() and not (t / ".agents/commands").exists()
+        assert not (t / ".codex/prompts").exists(), \
+            "no custom-prompt surface exists in current Codex — nothing must be written there"
         assert (t / ".agents/amg/config.yml").exists() and (t / ".agents/amg/digest.md").exists()
         # default template models are Claude aliases -> model omitted for codex; set a real
         # codex model + level and reinstall -> both render into the TOML (max clamps to xhigh)
@@ -325,10 +348,14 @@ def test_codex_env():
         linker_head = (t / ".codex/agents/amg-linker.toml").read_text(encoding="utf-8").split("developer_instructions")[0]
         assert 'model_reasoning_effort' not in linker_head, \
             "module_summary is flat -> the linker gets no effort field either"
-        # uninstall clears the codex TOML subagents
+        # uninstall clears the codex TOML subagents and the AMG hooks, keeps foreign ones
         I.main(["--target", str(t), "--env", "codex", "--uninstall"])
         assert not list((t / ".codex/agents").glob("amg-*.toml")), "uninstall clears codex TOML"
-        print("PASS  install: --env codex -> skills + TOML subagents (model/effort) + skill-aware block")
+        hj3 = json.loads((t / ".codex/hooks.json").read_text(encoding="utf-8"))
+        cmds3 = [h["command"] for ev in hj3["hooks"].values() for e in ev for h in e["hooks"]]
+        assert not any("lifecycle.py" in c for c in cmds3), "uninstall removes AMG codex hooks"
+        assert "echo mine" in cmds3, "uninstall keeps the user's codex hook"
+        print("PASS  install: --env codex -> skills + TOML subagents + trust-gated hooks.json")
     finally:
         shutil.rmtree(t, ignore_errors=True)
 
@@ -337,8 +364,9 @@ def test_opencode_env():
     t = Path(tempfile.mkdtemp(prefix="amg-oc-"))
     try:
         # OpenCode discovers .agents/skills natively; gets the skill-aware portable
-        # block + native subagents in .opencode/agent; NO hooks (its hook surface is
-        # a JS plugin API) and no /amg command. Defaults: .agents / AGENTS.md.
+        # block + native subagents in .opencode/agent + the event PLUGIN in
+        # .opencode/plugin (its hook replacement) + the /amg command in
+        # .opencode/command. Defaults: .agents / AGENTS.md.
         I.main(["--target", str(t), "--env", "opencode", "--mirror", "src", "--no-verify"])
         assert (t / ".agents/skills/amg-bootstrap/scripts/reconcile.py").exists(), "skills in .agents"
         entry = (t / "AGENTS.md").read_text(encoding="utf-8")
@@ -353,11 +381,26 @@ def test_opencode_env():
         assert not (t / ".opencode/agent/amg-retriever-fork.md").exists() \
             and not (t / ".agents/agents/amg-retriever-fork.md").exists(), \
             "no fork agent outside Claude Code"
+        # the event plugin: rendered paths, the start-check/prompt-hint/session-end wiring
+        plug = (t / ".opencode/plugin/amg.js").read_text(encoding="utf-8")
+        assert ".agents/skills/amg-bootstrap/scripts/lifecycle.py" in plug, plug[:400]
+        assert ".claude" not in plug, "plugin paths rendered to .agents"
+        for verb in ("start-check", "prompt-hint", "session-end"):
+            assert verb in plug, f"plugin must wire {verb}"
+        # the native command: /amg autocompletes in OpenCode; $ARGUMENTS is its
+        # placeholder too; the Claude-only frontmatter/tail must not leak
+        cmd = (t / ".opencode/command/amg.md").read_text(encoding="utf-8")
+        assert "description:" in cmd and "$ARGUMENTS" in cmd, cmd[:200]
+        assert ".agents/skills" in cmd and ".claude" not in cmd, "command paths rendered"
+        assert "allowed-tools" not in cmd and "disable-model-invocation" not in cmd, \
+            "Claude-only frontmatter must not leak into the OpenCode command"
         assert not (t / ".agents/settings.json").exists() and not (t / ".agents/commands").exists()
-        # uninstall clears the native subagents as well
+        # uninstall clears the native subagents, the plugin, and the command
         I.main(["--target", str(t), "--env", "opencode", "--uninstall"])
         assert not list((t / ".opencode/agent").glob("amg-*.md")), "uninstall clears .opencode/agent"
-        print("PASS  install: --env opencode -> skills + .opencode/agent subagents + skill-aware block")
+        assert not (t / ".opencode/plugin/amg.js").exists(), "uninstall clears the plugin"
+        assert not (t / ".opencode/command/amg.md").exists(), "uninstall clears the command"
+        print("PASS  install: --env opencode -> skills + subagents + event plugin + /amg command")
     finally:
         shutil.rmtree(t, ignore_errors=True)
 
@@ -384,7 +427,12 @@ def test_qwen_env():
         assert "effort:" not in head and "model:" not in head, \
             "effort and an alias model dropped for Qwen"
         assert ".qwen/amg" in agent and ".claude" not in agent, "prompt rendered to .qwen"
-        assert not (t / ".qwen/commands").exists(), "the /amg command stays Claude-Code-only"
+        # the native command: markdown (Qwen's recommended format; TOML is deprecated
+        # upstream) with {{args}} substitution instead of $ARGUMENTS
+        qcmd = (t / ".qwen/commands/amg.md").read_text(encoding="utf-8")
+        assert "description:" in qcmd and "{{args}}" in qcmd, qcmd[:200]
+        assert "$ARGUMENTS" not in qcmd, "Qwen commands substitute {{args}}, not $ARGUMENTS"
+        assert ".qwen/skills" in qcmd and ".claude" not in qcmd, "command paths rendered"
         # a real (non-alias) model id passes through into the Qwen agent frontmatter
         cfgf = t / ".qwen/amg/config.yml"
         cfgf.write_text(re.sub(r"(?m)^  module_summary:.*$",
@@ -393,7 +441,9 @@ def test_qwen_env():
         I.main(["--target", str(t), "--env", "qwen", "--no-verify"])
         head2 = (t / ".qwen/agents/amg-builder.md").read_text(encoding="utf-8").split("---")[1]
         assert "model: qwen3-coder-plus" in head2, head2
-        print("PASS  install: --env qwen -> .qwen/QWEN.md preset, hooks merged, sanitized native agents")
+        I.main(["--target", str(t), "--env", "qwen", "--uninstall"])
+        assert not (t / ".qwen/commands/amg.md").exists(), "uninstall clears the qwen command"
+        print("PASS  install: --env qwen -> .qwen preset, hooks merged, sanitized agents, /amg command")
     finally:
         shutil.rmtree(t, ignore_errors=True)
 

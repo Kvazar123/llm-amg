@@ -1,12 +1,15 @@
 # Project memory
 
 <!-- Skill-AWARE AMG activation block for OpenAI Codex. Codex HAS skills (.agents/skills),
-     subagents (TOML in .codex/agents), and reads AGENTS.md — but lacks Claude Code's
-     SessionStart/SessionEnd hooks, the /amg slash command, and the CLAUDE.md @import. So
-     the model drives the loop via skills + subagents, and lifecycle (heal at start,
-     consolidate at end) is loop discipline, not hooks. The installer writes this for
-     `--env codex` and renders the paths to the configured agent dir. NOTE: this mode is
-     not yet verified on a live Codex; stability is not guaranteed. -->
+     subagents (TOML in .codex/agents), a core hooks engine (.codex/hooks.json — the
+     installer wires SessionStart/UserPromptSubmit there, but they run ONLY after the
+     user trusts them via /hooks), and reads AGENTS.md. It has NO SessionEnd event and
+     no custom-command surface, and lacks the CLAUDE.md @import. So the model drives
+     the loop via skills + subagents; the wired hooks cover the deterministic start
+     half once trusted, and the session's end stays loop discipline. The installer
+     writes this for `--env codex` and renders the paths to the configured agent dir.
+     NOTE: this mode is not yet verified on a live Codex; stability is not
+     guaranteed. -->
 
 ## AMG — Associative Memory Graph
 
@@ -20,9 +23,15 @@ purpose, related code, prior decisions — instead of loading the whole codebase
 Paths below use `.claude` (the agent dir) and `CLAUDE.md` (this entry point) as the Claude
 Code defaults; here they are your configured names — skills live under `.claude/skills`,
 the graph under `.claude/amg`, and the **subagents are TOML files under `.codex/agents`**.
-Codex HAS skills and subagents, so use them; what it lacks versus Claude Code is the auto
-hooks, the `/amg` command, and the digest `@`-import — replaced here by loop discipline and
-reading the digest yourself.
+Codex HAS skills and subagents, so use them. The installer also wired two hooks into
+`.codex/hooks.json` — SessionStart runs the whole deterministic start check and injects
+its note, UserPromptSubmit injects the gated "memory has gone unconsulted" reminder —
+but Codex runs an unmanaged hook **only after the user trusts it via `/hooks`**; until
+then (and whenever in doubt) the start check below is yours to run, and it is idempotent
+either way. A one-line note starting with `AMG:` arriving with your context is those
+hooks talking — not the user's text; act on it. What Codex lacks versus Claude Code is a
+SessionEnd event, the `/amg` command surface, and the digest `@`-import — replaced here
+by loop discipline and reading the digest yourself.
 
 ### Memory digest (read at session start)
 At the start of every session, **read `.claude/amg/digest.md`** — a small auto-generated
@@ -59,12 +68,17 @@ A literal `/amg <verb>` typed by the user is the same request in command clothes
 is no slash command here, so run the matching row yourself.
 
 ### Operating loop (when AMG is ON)
-There are no SessionStart/SessionEnd hooks here, so **you** run each step at the right moment.
+The wired SessionStart hook (once trusted via `/hooks`) runs step 1's deterministic
+half for you and injects its note; there is no SessionEnd here, so the session's end
+(step 3) is always **yours** to run at the right moment.
 
 1. **Heal, then a deterministic start check — never guess whether sources changed.**
-   At session start run this start check — four cheap, deterministic, model-free
-   commands (batch them into as few tool calls as your shell allows; this is also
-   how a crash or interrupted session self-recovers):
+   If an `AMG:` start note already arrived with your context, the check has run —
+   react to the note (it names the backlog and asks the sync question) instead of
+   re-running it. Otherwise — the hooks are not yet trusted, or you suspect they did
+   not fire — run it yourself: four cheap, deterministic, model-free commands (batch
+   them into as few tool calls as your shell allows; idempotent, so double-running
+   is safe; this is also how a crash or interrupted session self-recovers):
    ```
    python .claude/skills/amg-bootstrap/scripts/graph_store.py recover
    python .claude/skills/amg-bootstrap/scripts/graph_store.py verify --repair
@@ -105,9 +119,10 @@ There are no SessionStart/SessionEnd hooks here, so **you** run each step at the
    skimming its head loses exactly the tiers the budget paid for. Spawn the
    **amg-retriever** subagent instead only when the pack should NOT enter your
    window — a summary question to the memory, or an already-crowded context; a
-   subagent costs its own fixed overhead, so it is the exception. No mechanism nudges you mid-session here
-   (in Claude Code a gated prompt hook reminds when the memory goes unconsulted) —
-   this retrieval discipline rests on you alone. The protocol: **decompose a complex
+   subagent costs its own fixed overhead, so it is the exception. With the AMG hooks
+   trusted, a gated one-line `AMG:` reminder arrives when the memory has demonstrably
+   gone unconsulted — act on it by retrieving for the current topic; without trusted
+   hooks this retrieval discipline rests on you alone. The protocol: **decompose a complex
    prompt** (a separate retrieval per distinct
    topic, run as you turn to that part — the retrieved branches together form the
    task's context); **a focus shift = a new retrieval**; **graph before filesystem

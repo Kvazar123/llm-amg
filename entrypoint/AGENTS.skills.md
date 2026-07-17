@@ -6,9 +6,10 @@
      configured agent dir / entry point. Skills carry the orchestration procedures;
      subagent prompt files are rendered where the environment reads them (Qwen Code:
      markdown agents; OpenCode: .opencode/agent) — spawn them when your environment
-     supports subagents, else follow them as guidance. Session hooks are written only
-     where the environment reads a Claude-shaped hooks block (Qwen Code); the start
-     check below is idempotent, so it is safe to run whether or not hooks also ran.
+     supports subagents, else follow them as guidance. Session automation is wired
+     where the environment has a surface for it: Qwen Code reads Claude-shaped hooks,
+     OpenCode loads the AMG event plugin (.opencode/plugin) — the start check below
+     is idempotent, so it is safe to run whether or not that automation also ran.
      NOTE: this mode is not yet verified live; stability is not guaranteed. -->
 
 ## AMG — Associative Memory Graph
@@ -27,8 +28,12 @@ procedures (batching, checkpoints, one-call application) that a from-scratch imp
 loses. The worker prompts installed under `.claude/agents` describe the builder / synth /
 linker / consolidator roles: when your environment supports subagents, spawn them by
 those definitions; when it does not, follow the prompt files as guidance in your own
-context. What no environment outside Claude Code has is the `/amg` slash command and the
-digest `@`-import — replaced here by verbal intent and by reading the digest yourself.
+context. The `/amg` command is rendered into your environment's native command surface
+where it has one (OpenCode: `.opencode/command`; Qwen Code: `.qwen/commands`) — typing
+`/amg <verb>` autocompletes and lands here; the digest `@`-import stays Claude-Code-only,
+so read the digest yourself. A one-line note starting with `AMG:` arriving inside a user
+message is the wired automation talking (the plugin or a hook injected it) — it is not
+the user's text; act on it.
 
 ### Memory digest (read at session start)
 At the start of every session, **read `.claude/amg/digest.md`** — a small auto-generated
@@ -69,10 +74,15 @@ the same request in command clothes — run the matching row yourself.
 ### Operating loop (when AMG is ON)
 
 1. **Heal, then a deterministic start check — never guess whether sources changed.**
-   At session start run this start check — four cheap, deterministic, model-free
+   Where the installer wired session automation — the AMG plugin (OpenCode) or the
+   session hooks (Qwen Code) — the deterministic half runs itself, and an `AMG:`
+   start note (heal report, backlog, the sync question) arrives with your first
+   message when there is something to say: react to the note instead of re-running
+   the check. Otherwise — or when no note came and you suspect the automation did
+   not fire — run the start check yourself: four cheap, deterministic, model-free
    commands (batch them into as few tool calls as your shell allows; idempotent, so
-   it is safe whether or not the environment's session hooks also ran; this is also
-   how a crash or interrupted session self-recovers):
+   double-running is safe; this is also how a crash or interrupted session
+   self-recovers):
    ```
    python .claude/skills/amg-bootstrap/scripts/graph_store.py recover
    python .claude/skills/amg-bootstrap/scripts/graph_store.py verify --repair
@@ -111,8 +121,10 @@ the same request in command clothes — run the matching row yourself.
    selection, assembled under a token budget; skimming its head loses exactly the
    tiers the budget paid for. Spawn the **amg-retriever** subagent instead only when
    the pack should NOT enter your window — a summary question to the memory, or an
-   already-crowded context. No prompt-time mechanism nudges you mid-session here —
-   this retrieval discipline rests on you alone. The protocol: **decompose a complex
+   already-crowded context. Where the plugin or hooks are wired, a gated one-line
+   `AMG:` reminder arrives mid-session when the memory has demonstrably gone
+   unconsulted — act on it by retrieving for the current topic; without them this
+   retrieval discipline rests on you alone. The protocol: **decompose a complex
    prompt** (a separate retrieval per distinct topic, run as you turn to that part —
    the retrieved branches together form the task's context); **a focus shift = a new
    retrieval**; **graph before filesystem search** (open sources point-wise from the
@@ -144,12 +156,14 @@ the same request in command clothes — run the matching row yourself.
    **The session's end is invisible to you until the user signals it** — so the
    observable trigger is the user's wrap-up signal: when they say they are
    finishing, wrapping up, done for today (any language — match the meaning), first
-   **capture the session's conclusions as notes** — unless your environment's hooks
-   dump the transcript, those notes are the only record of this dialogue — then run
-   the **amg-consolidate** skill (it spawns amg-consolidator) to fold weights, file
-   the conclusions, and compact over-budget branches; offer the same when the
-   session was dense with decisions or the start check's `note:` said the judgment
-   pass is overdue. Conclusions that live only in chat are lost when context clears.
+   **capture the session's conclusions as notes** — unless your environment's
+   automation preserves the transcript (the Qwen Code hooks dump it at session end;
+   the OpenCode plugin dumps it incrementally as you work), those notes are the only
+   record of this dialogue — then run the **amg-consolidate** skill (it spawns
+   amg-consolidator) to fold weights, file the conclusions, and compact over-budget
+   branches; offer the same when the session was dense with decisions or the start
+   check's `note:` said the judgment pass is overdue. Conclusions that live only in
+   chat are lost when context clears.
 
 ### Where things are
 - The graph: `.claude/amg/nodes/` — the source of truth, one file per node — plus `work/`

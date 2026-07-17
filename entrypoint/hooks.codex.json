@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/skills/amg-bootstrap/scripts/lifecycle.py start-check --hook-json",
+            "timeout_sec": 180
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/skills/amg-bootstrap/scripts/lifecycle.py prompt-hint --hook-json",
+            "timeout_sec": 30
+          }
+        ]
+      }
+    ]
+  }
+}
