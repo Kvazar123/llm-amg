@@ -4,6 +4,26 @@ All notable changes to AMG are documented in this file. Format: [Keep a Changelo
 
 ## [Unreleased]
 
+## [1.15.0] — 2026-07-17
+
+The second mid-stage field snapshot of Stage 23: the dev half of the live-environment group — event-driven session automation for every environment that exposes a surface for it — ships here, and the stage's live runs install this engine. MINOR: backward-compatible engine, installer, prompt, and doc additions; no schema or config-contract break.
+
+### Added
+- **The OpenCode event plugin** (`.opencode/plugin/amg.js`, rendered by `--env opencode`; `~/.opencode/plugin/` under a global install): `session.created` → the start check, each user message → the gated "memory unconsulted" reminder (both injected as synthetic chat parts), `session.idle` → a throttled `session-end` with an **incremental transcript dump** (a session-stable filename rewritten at quiet moments — a hard kill loses at most the tail since the last idle) and usage attribution from the edit/write tool events; subagent child sessions are filtered by `parentID`. All logic stays in `lifecycle.py`; the JS only routes events and marshals data.
+- **`lifecycle.py start-check`** — the whole deterministic start routine as one entry point for event surfaces: heal + digest + the free reconcile half (`plan`) + the sync question under the sync-defer cadence (×1.5/+50 — now code, not block prose). The `--hook-json` flag wraps notes in the advanced hook-output JSON (`hookSpecificOutput.additionalContext`) — the shape Claude Code defines and Codex requires (Codex ignores plain hook stdout).
+- **Codex hooks** (`--env codex`): `entrypoint/hooks.codex.json` merges into `.codex/hooks.json` — `SessionStart` runs the start check, `UserPromptSubmit` the gated reminder (handlers keyed by `timeout_sec`). Codex runs unmanaged hooks **only after the user trusts them via `/hooks`** — the install flow now ends with that step, and a reinstall that changes a hook re-requires the review.
+- **The `/amg` command on native command surfaces**: `.opencode/command/amg.md` (`$ARGUMENTS`) and `.qwen/commands/amg.md` (`{{args}}`; Qwen's TOML command format is deprecated upstream), so `/amg` autocompletes there. Current Codex has no custom-command surface at all (verified across the whole core) — its discoverable entry stays the skills popup.
+- **The environment registry** (`EnvProfile` / `ENVS`): everything an install mode differs by is one declarative profile — presets, block template, hooks carrier, command surface with its argument placeholder, plugin destination, subagent format, fork shipping, the global entry; install/uninstall/CLI presets are generic executors, and uninstall sweeps every profile's destinations regardless of the `--env` passed. Supporting a new environment is one registry entry.
+- **Per-environment global entry** (`global_entry`): a global install puts the activation block where each environment actually reads user-level instructions — `~/.claude/CLAUDE.md` (INSTALL.md promised it all along; the code used to write `~/CLAUDE.md`), `~/.codex/AGENTS.md` (live confirmation pending), `~/.config/opencode/AGENTS.md`, `~/.qwen/QWEN.md` — none of them reliably reads a home-root entry file.
+
+### Changed
+- The prompt-hint "consulted recently" gate reads the freshest of the pack log and the consumption stamp a mid-session consumer leaves behind (`work/pack-log-stamp`), so the OpenCode idle dump does not re-arm the reminder; hook-driven lifecycle commands take the project root from the hook payload's `cwd`.
+- Docs: the five-environment matrix, the READMEs' "modes and control" and "saving sessions" sections rewritten for the event-driven environments; THEORY §14.2 now states the measured RAG contrast — similarity is not relation (about a quarter of pairs above cosine 0.8 confirmed as genuinely related; 60–70% of similarity-nominated candidates rejected by judgment); the OpenCode "untested" caveat softened (the full cycle is live-confirmed; the fresh plugin and command await theirs).
+
+### Fixed
+- Environment verdicts re-verified against current primary sources: OpenCode has no conversation-inheriting fork (its task tool hands a child only the prompt) and Qwen's fork still cannot feed results back — the session-aware consult stays Claude-Code-only for now; **Codex's multi-agent v2 layer, though, spawns full-history forks with an inter-agent mailbox back to the parent — a live-run candidate for wiring the consult there**.
+- The orphaned `_is_claude_code` helper removed from the installer.
+
 ## [1.14.0] — 2026-07-15
 
 A field snapshot of Stage 23 (multi-environment portability + field fixes), cut mid-stage on purpose: the stage's live environment tests install this engine into Codex / OpenCode / Qwen Code projects, and the new `/amg version` must identify what those installs actually run. The stage itself stays open (live runs, the auto-confirm linking measurement, closure docs); its closing session will release the next MINOR. MINOR: backward-compatible engine, installer, prompt, and doc additions; no schema or config-contract break.
