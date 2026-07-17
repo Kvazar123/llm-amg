@@ -14,7 +14,9 @@ index a whole project.
 
 Local vs global engine; the graph is ALWAYS local:
   local  : engine -> <target>/<agent_dir>/{skills,agents}; block -> <target>/<entrypoint>
-  global : engine -> ~/<agent_dir>/{skills,agents};        block -> ~/<entrypoint>, with
+  global : engine -> ~/<agent_dir>/{skills,agents};        block -> the environment's
+           USER-LEVEL entry (EnvProfile.global_entry: ~/.claude/CLAUDE.md,
+           ~/.codex/AGENTS.md, ~/.config/opencode/AGENTS.md, ~/.qwen/QWEN.md), with
            ABSOLUTE engine paths in it. Each project still gets its own local
            <target>/<agent_dir>/amg graph + config.yml; graphs are never shared.
 
@@ -173,6 +175,12 @@ class EnvProfile:
     subagents: str = "copies"
     native_agents: Optional[Tuple[str, str]] = None   # (dir, glob) of native renders
     ships_fork: bool = False              # amg-retriever-fork rides only where fork exists
+    # Where the environment reads USER-LEVEL instructions — the global install puts
+    # the activation block THERE, not at ~/<entrypoint>: none of the known
+    # environments reliably walks past a project root into the home directory
+    # (verified per environment; see 12-install). None = home/<entrypoint> (the
+    # only guess available for an unknown environment).
+    global_entry: Optional[str] = None    # home-relative; "{agent_dir}" substituted
     note: str = ""                        # the per-environment line of the install report
 
 
@@ -180,11 +188,13 @@ ENVS: Dict[str, EnvProfile] = {
     "claude-code": EnvProfile(
         ".claude", "CLAUDE.md", "CLAUDE.md", "skill-based",
         hooks_template="settings.json", hooks_dest="{agent_dir}/settings.json",
-        command_dest="{agent_dir}/commands/amg.md", ships_fork=True),
+        command_dest="{agent_dir}/commands/amg.md", ships_fork=True,
+        global_entry="{agent_dir}/CLAUDE.md"),
     "codex": EnvProfile(
         ".agents", "AGENTS.md", "AGENTS.codex.md", "skill-aware codex",
         hooks_template="hooks.codex.json", hooks_dest=".codex/hooks.json",
         subagents="codex-toml", native_agents=(".codex/agents", "amg-*.toml"),
+        global_entry=".codex/AGENTS.md",
         note=("  env     codex (skill-aware): skills + TOML subagents; hooks in "
               ".codex/hooks.json run ONLY after you open /hooks in Codex and trust "
               "the AMG hooks (Codex reviews unmanaged hooks; a reinstall that "
@@ -196,6 +206,7 @@ ENVS: Dict[str, EnvProfile] = {
         command_dest=".opencode/command/amg.md", command_full=False,
         plugin_dest=".opencode/plugin/amg.js",
         subagents="copies+opencode", native_agents=(".opencode/agent", "amg-*.md"),
+        global_entry=".config/opencode/AGENTS.md",
         note=("  env     opencode (skill-aware): OpenCode discovers the amg-* skills "
               "under {agent_dir}/skills natively; subagents rendered to "
               ".opencode/agent; the AMG plugin in .opencode/plugin replaces session "
@@ -206,6 +217,7 @@ ENVS: Dict[str, EnvProfile] = {
         hooks_template="settings.json", hooks_dest="{agent_dir}/settings.json",
         command_dest="{agent_dir}/commands/amg.md", command_args="{{args}}",
         command_full=False, subagents="qwen",
+        global_entry="{agent_dir}/QWEN.md",
         note=("  env     qwen (skill-aware): skills in {agent_dir}/skills, subagents "
               "in {agent_dir}/agents, session hooks merged into "
               "{agent_dir}/settings.json, the /amg command in {agent_dir}/commands; "
@@ -1016,9 +1028,17 @@ def install(target: Path, scope: str, agent_dir: str, entrypoint: str,
     engine_root = Path.home() if (scope == "global" or project_only) else target
     engine_agent_dir = engine_root / agent_dir
     graph_agent_dir = target / agent_dir                         # the graph is ALWAYS local
-    entry_path = engine_root / entrypoint
     kind = _env_kind(env)
     prof = ENVS[kind]
+    # A LOCAL block sits at the project's entry point; a GLOBAL one goes where the
+    # environment actually reads user-level instructions (~/.claude/CLAUDE.md,
+    # ~/.codex/AGENTS.md, ~/.config/opencode/AGENTS.md, ~/.qwen/QWEN.md) — a file at
+    # the home ROOT is read only when a project happens to live under it, which no
+    # profile relies on.
+    if scope == "global" and prof.global_entry:
+        entry_path = engine_root / prof.global_entry.format(agent_dir=agent_dir)
+    else:
+        entry_path = engine_root / entrypoint
 
     if project_only:
         # Add a project to an EXISTING (usually global) install: only the local config +
@@ -1139,9 +1159,25 @@ def uninstall(target: Path, agent_dir: str, entrypoint: str,
     engine_agent_dir = engine_root / agent_dir
     entry_path = engine_root / entrypoint
 
-    # 1. strip the activation block, keep the user's content
-    if entry_path.exists():
+    # 1. strip the activation block, keep the user's content. Under --scope global
+    # every profile's user-level entry is swept too (plus the legacy ~/<entrypoint>
+    # spot older installs used) — same rule as the artifacts below: removal must not
+    # depend on remembering which mode installed the block.
+    # A "{agent_dir}" placeholder is expanded BOTH with each profile's own preset
+    # and with the agent dir passed to this run: the sweep must reach ~/.qwen/QWEN.md
+    # even when the uninstall was invoked as --env opencode, and a custom --agent-dir
+    # must still be honored for the current environment.
+    entry_candidates = [engine_root / entrypoint]
+    if scope == "global":
+        entry_candidates += [engine_root / p.global_entry.format(agent_dir=ad)
+                             for p in ENVS.values() if p.global_entry
+                             for ad in (p.agent_dir, agent_dir)]
+    for entry_path in dict.fromkeys(entry_candidates):
+        if not entry_path.exists():
+            continue
         text = entry_path.read_text(encoding="utf-8")
+        if BEGIN not in text:
+            continue
         new = re.sub(re.escape(BEGIN) + r".*?" + re.escape(END) + r"\n?", "", text, flags=re.S)
         entry_path.write_text(new.rstrip() + "\n" if new.strip() else "", encoding="utf-8")
         print(f"  block   removed from {entry_path}")
@@ -1161,14 +1197,16 @@ def uninstall(target: Path, agent_dir: str, entrypoint: str,
                     f.unlink()
         for rel in (prof.command_dest, prof.plugin_dest):
             if rel:
-                p = engine_root / rel.format(agent_dir=agent_dir)
-                if p.exists():
-                    p.unlink()
+                for ad in (prof.agent_dir, agent_dir):
+                    p = engine_root / rel.format(agent_dir=ad)
+                    if p.exists():
+                        p.unlink()
     print(f"  engine  amg-* skills/agents/commands removed from {engine_agent_dir}")
     # 3. drop AMG hooks (matched by the lifecycle.py signature) from every profile's
     # hooks carrier, keeping foreign entries
-    hook_files = {engine_root / prof.hooks_dest.format(agent_dir=agent_dir)
-                  for prof in ENVS.values() if prof.hooks_dest}
+    hook_files = {engine_root / prof.hooks_dest.format(agent_dir=ad)
+                  for prof in ENVS.values() if prof.hooks_dest
+                  for ad in (prof.agent_dir, agent_dir)}
     for settings in sorted(hook_files):
         if not settings.exists():
             continue

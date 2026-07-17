@@ -75,7 +75,7 @@ Key flags: `--scope local|global`; `--env claude-code|codex|opencode|qwen|generi
 | | Local | Global |
 |---|---|---|
 | Engine (`skills/`, `agents/`) | `<project>/.claude/` | `~/.claude/` (one for all projects) |
-| Activation block | `<project>/CLAUDE.md` | `~/.claude/CLAUDE.md`, with an **absolute** engine path |
+| Activation block | `<project>/CLAUDE.md` | the environment's **user-level entry**, with an **absolute** engine path: `~/.claude/CLAUDE.md`; Codex `~/.codex/AGENTS.md`; OpenCode `~/.config/opencode/AGENTS.md`; Qwen Code `~/.qwen/QWEN.md`; an unknown environment `~/AGENTS.md` |
 | Graph, `config.yml` | `<project>/.claude/amg/` | **also** `<project>/.claude/amg/` — always local |
 
 With a global install the engine is placed once, and every new project is connected **by its local config alone** — no engine copying:

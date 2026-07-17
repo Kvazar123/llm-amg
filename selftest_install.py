@@ -164,7 +164,10 @@ def test_global():
         I.main(["--target", str(t), "--scope", "global", "--mirror", "src",
                 "--set-global", "retrieval.embeddings.enabled=auto", "--no-verify"])
         assert (home / ".claude/skills/amg-bootstrap/scripts/graph_store.py").exists(), "engine in HOME"
-        entry = (home / "CLAUDE.md").read_text(encoding="utf-8")
+        # the global block lands at the ALWAYS-LOADED user memory (~/.claude/CLAUDE.md),
+        # not at the home root, which Claude Code reads only for projects under it
+        entry = (home / ".claude/CLAUDE.md").read_text(encoding="utf-8")
+        assert not (home / "CLAUDE.md").exists(), "no block at the home root anymore"
         assert (home / ".claude").as_posix() + "/skills" in entry, "absolute engine path in block"
         assert "@.claude/amg/digest.md" not in entry, "global @digest import replaced with a note"
         # the GRAPH stays local; HOME now carries the machine-wide DEFAULTS config
@@ -448,6 +451,68 @@ def test_qwen_env():
         shutil.rmtree(t, ignore_errors=True)
 
 
+def test_global_envs():
+    """A GLOBAL install must land the block where each environment actually reads
+    user-level instructions (none of them reliably walks past a project root into
+    the home directory), and the per-env artifacts in the user-level spots the
+    environment discovers: ~/.opencode/{plugin,command,agent}, ~/.codex/hooks.json,
+    ~/.qwen/{commands,settings.json}. Uninstall sweeps all of it."""
+    home = Path(tempfile.mkdtemp(prefix="amg-ghome-"))
+    targets = {e: Path(tempfile.mkdtemp(prefix=f"amg-g{e}-")) for e in ("opencode", "codex", "qwen")}
+    saved = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
+    try:
+        os.environ["HOME"] = str(home)
+        os.environ["USERPROFILE"] = str(home)
+        # --- opencode: entry in the XDG config dir; plugin/command/agents in ~/.opencode
+        I.main(["--target", str(targets["opencode"]), "--scope", "global",
+                "--env", "opencode", "--mirror", "src", "--no-verify"])
+        entry = (home / ".config/opencode/AGENTS.md").read_text(encoding="utf-8")
+        assert I.BEGIN in entry and (home / ".agents").as_posix() + "/skills" in entry, \
+            "opencode global block at ~/.config/opencode/AGENTS.md with absolute engine paths"
+        assert not (home / "AGENTS.md").exists(), "no block at the home root"
+        plug = (home / ".opencode/plugin/amg.js").read_text(encoding="utf-8")
+        assert (home / ".agents").as_posix() + "/skills/amg-bootstrap/scripts/lifecycle.py" in plug, \
+            "global plugin shells the ABSOLUTE engine path"
+        assert '".agents/amg/config.yml"' in plug, \
+            "the plugin's project gate stays RELATIVE (joined with each project dir)"
+        assert (home / ".opencode/command/amg.md").exists()
+        assert (home / ".opencode/agent/amg-builder.md").exists()
+        # --- codex: entry + hooks in ~/.codex
+        I.main(["--target", str(targets["codex"]), "--scope", "global",
+                "--env", "codex", "--mirror", "src", "--no-verify"])
+        assert I.BEGIN in (home / ".codex/AGENTS.md").read_text(encoding="utf-8"), \
+            "codex global block at ~/.codex/AGENTS.md"
+        hj = json.loads((home / ".codex/hooks.json").read_text(encoding="utf-8"))
+        cmds = [h["command"] for ev in hj["hooks"].values() for e in ev for h in e["hooks"]]
+        assert any("start-check --hook-json" in c and (home / ".agents").as_posix() in c
+                   for c in cmds), "global codex hooks shell the absolute engine path"
+        # --- qwen: entry + command + hooks in ~/.qwen
+        I.main(["--target", str(targets["qwen"]), "--scope", "global",
+                "--env", "qwen", "--mirror", "src", "--no-verify"])
+        assert I.BEGIN in (home / ".qwen/QWEN.md").read_text(encoding="utf-8"), \
+            "qwen global block at ~/.qwen/QWEN.md"
+        assert not (home / "QWEN.md").exists(), "no block at the home root"
+        assert (home / ".qwen/commands/amg.md").exists()
+        assert (home / ".qwen/settings.json").exists()
+        # --- uninstall (global) sweeps every profile's user-level entry and artifacts
+        I.main(["--target", str(targets["opencode"]), "--scope", "global",
+                "--env", "opencode", "--uninstall"])
+        assert I.BEGIN not in (home / ".config/opencode/AGENTS.md").read_text(encoding="utf-8")
+        assert not (home / ".opencode/plugin/amg.js").exists()
+        assert I.BEGIN not in (home / ".codex/AGENTS.md").read_text(encoding="utf-8"), \
+            "the global uninstall sweep strips every profile's entry"
+        assert I.BEGIN not in (home / ".qwen/QWEN.md").read_text(encoding="utf-8"), \
+            "the sweep expands {agent_dir} with each profile's OWN preset (.qwen), not the current one"
+        assert not (home / ".qwen/commands/amg.md").exists(), "the qwen command swept too"
+        print("PASS  install: global installs land at each env's user-level entry; uninstall sweeps them")
+    finally:
+        for k, v in saved.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+        shutil.rmtree(home, ignore_errors=True)
+        for d in targets.values():
+            shutil.rmtree(d, ignore_errors=True)
+
+
 def test_models_render():
     t = Path(tempfile.mkdtemp(prefix="amg-inst-models-"))
     try:
@@ -550,6 +615,7 @@ if __name__ == "__main__":
     test_codex_env()
     test_opencode_env()
     test_qwen_env()
+    test_global_envs()
     test_models_render()
     test_nested_set_and_absorb_once()
     test_uninstall()
