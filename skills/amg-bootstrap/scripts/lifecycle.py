@@ -29,6 +29,13 @@ The MANUAL commands, exposed as the `/amg <sub>` slash command (and reachable by
 verbal intent through the activation block):
 
   on / off   : flip `active` in config.yml (turn AMG on/off for this project).
+  start-check: the WHOLE deterministic start routine as one entry point — heal +
+               digest (session-start) + the free reconcile half (plan) + the sync
+               question under the deferral cadence. Built for event surfaces that
+               can inject context but have no block-driven model half at session
+               start: the OpenCode plugin and the Codex SessionStart hook run it and
+               inject its printed note. Claude Code keeps its split on purpose (the
+               hook heals; the model runs `plan` per the block).
   repair     : recover + verify --repair + the store invariant audit (heal on demand;
                the manual analog of the session-start hook — and it runs regardless
                of the automation gate; the audit half only reports, with the full
@@ -49,10 +56,18 @@ CLI:
   python lifecycle.py session-start|session-end     [<project_root>] [--root <agent_dir>]
   python lifecycle.py status|repair|on|off          [<project_root>] [--root <agent_dir>]
   python lifecycle.py version|help|sync-defer       [<project_root>] [--root <agent_dir>]
-  python lifecycle.py prompt-hint                   [<project_root>] [--root <agent_dir>]
+  python lifecycle.py start-check|prompt-hint       [<project_root>] [--root <agent_dir>]
   session-end also accepts the hook's JSON on stdin, or --transcript <path> to dump a
   session manually in an environment without the SessionEnd hook; prompt-hint reads
-  the UserPromptSubmit payload (the `prompt` field) the same way.
+  the UserPromptSubmit payload (the `prompt` field) the same way. A session-end stdin
+  payload with `"format": "opencode"` carries the transcript INLINE (the OpenCode
+  plugin fetches the messages over the SDK and pipes them) plus the session's edited
+  files; the dump then lands under a session-stable filename, so each re-dump
+  overwrites the same file — an incremental, crash-proof transcript.
+  `--hook-json` on start-check / prompt-hint wraps the note in the advanced
+  hook-output JSON (`hookSpecificOutput.additionalContext`) — the shape Claude Code
+  defines and Codex requires (Codex parses hook stdout as JSON only; plain text is
+  ignored there, unlike Claude Code).
 
 The graph root is <agent_dir>/amg, resolved by graph_store.resolve_amg_root (the same
 chain as reconcile/consolidate/notes).
@@ -60,6 +75,7 @@ chain as reconcile/consolidate/notes).
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import time
@@ -300,6 +316,127 @@ def _render_transcript(transcript_path: Path) -> Optional[Dict[str, Any]]:
             "edited": edited}
 
 
+def _render_transcript_opencode(messages: List[Any]) -> Optional[Dict[str, Any]]:
+    """Parse an OpenCode message list (the SDK's `session.messages` response, piped in
+    by the AMG plugin) into the same role-marked markdown body `_render_transcript`
+    produces for Claude Code — one renderer per transcript format, one dump format.
+    Format parsers live HERE deliberately: the alternative — each environment's
+    adapter pre-chewing a neutral format — would push the storage policy (thinking
+    is never stored; synthetic plumbing is not dialogue) into per-environment shell
+    and JS code. Two parsers sit fine in this file; a third format graduates them
+    into their own module.
+
+    Keeps user/assistant TEXT parts; skips `synthetic` and `ignored` parts (plumbing:
+    OpenCode's auto-continue turns and AMG's own injected notes must not become
+    memory); skips `reasoning` parts (private thinking, never stored — the same rule
+    as Claude Code's `thinking` blocks); counts `tool` and `file` parts as numbered
+    attachment markers; every other part kind (step-start/step-finish/snapshot/patch)
+    is turn plumbing and is dropped silently."""
+    out: List[str] = []
+    turns = 0
+    attach_seq = 0
+    pending: List[str] = []
+    started_ms: Optional[float] = None
+    ended_ms: Optional[float] = None
+
+    def flush_attach() -> None:
+        nonlocal attach_seq
+        for label in pending:
+            attach_seq += 1
+            out.append(session_attachment_marker(attach_seq, label))
+        pending.clear()
+
+    for entry in messages:
+        if not isinstance(entry, dict):
+            continue
+        info = entry.get("info")
+        parts = entry.get("parts")
+        if not isinstance(info, dict) or not isinstance(parts, list):
+            continue
+        role = info.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        texts: List[str] = []
+        att: List[str] = []
+        for p in parts:
+            if not isinstance(p, dict):
+                continue
+            pt = p.get("type")
+            if pt == "text":
+                if p.get("synthetic") or p.get("ignored"):
+                    continue
+                t = str(p.get("text") or "").strip()
+                if t:
+                    texts.append(t)
+            elif pt == "reasoning":
+                continue                       # cut raw model reasoning
+            elif pt == "tool":
+                att.append(f"tool call ({p.get('tool') or 'tool'})")
+            elif pt == "file":
+                att.append("file")
+        ts = (info.get("time") or {}).get("created") if isinstance(info.get("time"), dict) else None
+        if isinstance(ts, (int, float)):
+            started_ms = ts if started_ms is None else started_ms
+            ended_ms = ts
+        joined = "\n\n".join(texts).strip()
+        if joined:
+            flush_attach()
+            out.append(session_role_marker("Assistant" if role == "assistant" else "Human"))
+            out.append(joined)
+            turns += 1
+        pending.extend(att)
+    flush_attach()
+    if turns == 0:
+        return None
+
+    def _iso(ms: Optional[float]) -> Optional[str]:
+        return (time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ms / 1000.0))
+                if isinstance(ms, (int, float)) else None)
+
+    return {"markdown": "\n\n".join(out).rstrip() + "\n", "turns": turns,
+            "attachments": attach_seq, "started": _iso(started_ms), "ended": _iso(ended_ms)}
+
+
+def _dump_session_opencode(project_root: Path, amg: Path, cfg: Dict[str, Any],
+                           payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Write the OpenCode transcript under a SESSION-STABLE filename and overwrite it
+    on every call — the incremental dump. The plugin re-dumps on idle (throttled), so
+    a crash at any moment costs at most the tail since the last idle; the dated
+    collision suffix of `_dump_session` is deliberately absent here, because landing
+    on the SAME file is the point (reconciliation then re-syncs the changed turns
+    instead of ingesting a duplicate session). The name derives from the session's
+    creation time plus an id tail, so it survives plugin restarts."""
+    rendered = _render_transcript_opencode(payload.get("messages") or [])
+    if rendered is None:
+        return {"skipped": "empty or unreadable transcript"}
+    sessions = session_dir(project_root, cfg, amg)
+    if sessions is None:
+        return {"skipped": "no sessions dir"}
+    sid = str(payload.get("session_id") or "session")
+    tail = re.sub(r"[^A-Za-z0-9]+", "", sid)[-6:] or "oc"
+    created = payload.get("created_ms")
+    stamp = (time.strftime("%Y-%m-%d-%H%M", time.localtime(float(created) / 1000.0))
+             if isinstance(created, (int, float)) else time.strftime("%Y-%m-%d-%H%M"))
+    target = sessions / f"{stamp}-{tail}.md"
+    fm: Dict[str, object] = {
+        "session": target.stem, "source": f"opencode:{sid}",
+        "reason": str(payload.get("reason") or "idle"), "turns": rendered["turns"],
+        "attachments": rendered["attachments"]}
+    if rendered["started"]:
+        fm["started"] = rendered["started"]
+    if rendered["ended"]:
+        fm["ended"] = rendered["ended"]
+    body = ("---\n" + yaml.safe_dump(fm, sort_keys=False, allow_unicode=True).strip()
+            + "\n---\n\n" + rendered["markdown"])
+    sessions.mkdir(parents=True, exist_ok=True)
+    gs.atomic_write_text(target, body)
+    try:
+        rel = target.relative_to(amg).as_posix()
+    except ValueError:
+        rel = str(target)
+    return {"file": rel, "turns": rendered["turns"], "attachments": rendered["attachments"]}
+
+
 def _dump_session(project_root: Path, amg: Path, cfg: Dict[str, Any],
                   transcript_path: Optional[str], reason: Optional[str]) -> Dict[str, Any]:
     """Render the session transcript and write it to <store>/sessions as a dated dump
@@ -339,7 +476,7 @@ def _dump_session(project_root: Path, amg: Path, cfg: Dict[str, Any],
 
 
 def _record_usage(project_root: Path, amg: Path, edited_raw: List[str],
-                  reason: Optional[str]) -> Dict[str, Any]:
+                  reason: Optional[str], leave_stamp: bool = False) -> Dict[str, Any]:
     """USAGE provenance. Cross the files edited this session (from the
     transcript's edit/write tool calls) with the nodes the retrieval packs pointed at
     (work/pack-log.jsonl, written by retrieve) and append the USED nodes + a coarse outcome
@@ -361,12 +498,25 @@ def _record_usage(project_root: Path, amg: Path, edited_raw: List[str],
         return {"skipped": "no pack log this session"}
     try:
         lines = pack_log.read_text(encoding="utf-8").splitlines()
+        consumed_mtime = pack_log.stat().st_mtime
     except OSError:
         return {"skipped": "pack log unreadable"}
     try:                                       # session-scoped: consume it once read
         pack_log.unlink()
     except OSError:
         pass
+    if leave_stamp:
+        # A MID-SESSION consumer (the OpenCode idle dump) eats the log while the
+        # session — and its window, which still holds the pack — lives on. The stamp
+        # preserves the last consultation's time for the prompt-hint gate; the true
+        # end-of-session consumer (the Claude Code hook) leaves no stamp, so a new
+        # session there still reads as "not consulted yet".
+        try:
+            stamp = amg / "work" / "pack-log-stamp"
+            stamp.touch()
+            os.utime(stamp, (consumed_mtime, consumed_mtime))
+        except OSError:
+            pass
     if not edited_raw:
         return {"used": 0, "note": "no edits to attribute"}
 
@@ -439,7 +589,8 @@ def session_start(project_root: Path, amg: Path) -> Dict[str, Any]:
 
 
 def session_end(project_root: Path, amg: Path, transcript_path: Optional[str] = None,
-                reason: Optional[str] = None) -> Dict[str, Any]:
+                reason: Optional[str] = None,
+                payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     cfg = _read_config(amg)
     if not (_is_active(cfg) and _automation_on(cfg)):
         return {"skipped": "amg inactive or automation off"}
@@ -447,11 +598,21 @@ def session_end(project_root: Path, amg: Path, transcript_path: Optional[str] = 
     # session's outcome (work/usage.log) is available to the fold. The improved Hebbian
     # rule reinforces co-used edges from usage.log (consuming it when apply_hebbian is on);
     # with the default apply_hebbian off the fold leaves usage.log untouched (it accrues).
-    session = _dump_session(project_root, amg, cfg, transcript_path, reason)
-    # Attribute usage: the files this session edited (popped off the dump result so the
-    # long list does not bloat the return) crossed with the packs retrieve logged.
-    edited = session.pop("edited", []) if isinstance(session, dict) else []
-    usage = _record_usage(project_root, amg, edited, reason)
+    if payload is not None and payload.get("format") == "opencode":
+        # The OpenCode plugin runs this REPEATEDLY (throttled, on session.idle), not
+        # once at session end: the transcript overwrites its stable file, the edited
+        # files arrive in the payload (there is no transcript-side tool log to mine),
+        # and the consumed pack log leaves a stamp so the mid-session hint gate stays
+        # honest between dumps.
+        session: Dict[str, Any] = _dump_session_opencode(project_root, amg, cfg, payload)
+        edited = [str(p) for p in (payload.get("edited_files") or [])]
+        usage = _record_usage(project_root, amg, edited, reason, leave_stamp=True)
+    else:
+        session = _dump_session(project_root, amg, cfg, transcript_path, reason)
+        # Attribute usage: the files this session edited (popped off the dump result so
+        # the long list does not bloat the return) crossed with the packs retrieve logged.
+        edited = session.pop("edited", []) if isinstance(session, dict) else []
+        usage = _record_usage(project_root, amg, edited, reason)
     try:
         weights = co.fold_weights(project_root, amg)
     except gs.StoreLockError as exc:         # shared folder: another writer holds the lock
@@ -461,6 +622,68 @@ def session_end(project_root: Path, amg: Path, transcript_path: Optional[str] = 
     digest = co.write_digest(project_root, amg)
     return {"action": "session-end", "weights": weights, "digest": digest,
             "session": session, "usage": usage}
+
+
+def start_check(project_root: Path, amg: Path) -> Dict[str, Any]:
+    """The whole deterministic start-of-session routine as ONE entry point: heal +
+    digest (session_start), then the free reconcile half (`plan` — the structural
+    skeleton re-sync), then the sync question composed under the deferral cadence.
+
+    Built for event surfaces that can inject context but have no block-driven model
+    step at session start — the OpenCode plugin (session.created) and the Codex
+    SessionStart hook run it and inject the printed note. Field evidence forced the
+    move: on weak models the block's "run the start check first" imperative was
+    skipped even when stated three times, so the deterministic half now runs itself
+    and only the DECISION (sync now or defer) is put in front of the model. Claude
+    Code deliberately keeps its split (the hook heals; the model runs `plan` per the
+    block) — this verb changes nothing there.
+
+    The note follows the blocks' cadence: with a recorded deferral the question is
+    re-raised only once the backlog has grown noticeably (≥ ×1.5 or +50 units);
+    until then the deferral stands silently. All clean → no note at all (the same
+    no-noise rule as the hooks')."""
+    base = session_start(project_root, amg)
+    if base.get("skipped"):
+        return base
+    notes: List[str] = [base["note"]] if base.get("note") else []
+    out: Dict[str, Any] = {**base, "action": "start-check"}
+    try:
+        summary = rc.plan(project_root, amg)
+    except gs.StoreLockError as exc:       # shared folder: skip, the next start covers it
+        out["plan"] = {"skipped": "another writer holds the lock", "lock_note": str(exc)}
+        if notes:
+            out["note"] = " ".join(notes)
+        return out
+    out["plan"] = {k: summary.get(k, 0) for k in
+                   ("added", "changed", "deleted", "queued_for_semantic")}
+    queued = int(summary.get("queued_for_semantic") or 0)
+    if queued:
+        deferred = _sync_deferred(amg)
+        base_q = int(deferred.get("queued") or 0) if deferred else 0
+        if not base_q or queued >= max(base_q * 1.5, base_q + 50):
+            diff = ", ".join(f"{summary.get(k, 0)} {k}" for k in ("added", "changed", "deleted")
+                             if summary.get(k))
+            notes.append(
+                f"AMG: sources changed{' (' + diff + ')' if diff else ''} — {queued} unit(s) "
+                "await semantic enrichment. Ask the user: sync the semantic layer now "
+                "(the amg-bootstrap flow / `/amg sync`), or defer? On a defer, record it "
+                "with `lifecycle.py sync-defer` so later sessions stop re-asking.")
+    if notes:
+        out["note"] = " ".join(notes)
+    return out
+
+
+def _hook_json_wire(event: str, note: Optional[str]) -> Optional[str]:
+    """Wrap a note in the advanced hook-output JSON
+    (`hookSpecificOutput.additionalContext`) — the format Claude Code defines for
+    its hooks and Codex adopted verbatim. The difference is tolerance, not shape:
+    Claude Code also injects bare stdout, while Codex parses stdout strictly as
+    JSON and ignores plain text — so the JSON wire is what a Codex hook must emit.
+    No note -> None (print nothing; empty stdout is a clean no-op everywhere)."""
+    if not note:
+        return None
+    return json.dumps({"hookSpecificOutput": {
+        "hookEventName": event, "additionalContext": note}}, ensure_ascii=False)
 
 
 # The mid-session reminder is GATED, never a per-prompt tax. Field evidence: the
@@ -495,8 +718,14 @@ def prompt_hint(amg: Path, prompt: str) -> Optional[str]:
     try:
         if stamp.exists() and now - stamp.stat().st_mtime < _HINT_COOLDOWN_S:
             return None
-        pack_log = amg / "work" / "pack-log.jsonl"
-        age = (now - pack_log.stat().st_mtime) if pack_log.exists() else None
+        # "Consulted this session" is the freshest of the live pack log and the
+        # consumption stamp a mid-session consumer leaves behind (the OpenCode idle
+        # dump eats the log while the window still holds the pack; without the stamp
+        # the hint would re-fire right after every dump).
+        marks = [p.stat().st_mtime
+                 for p in (amg / "work" / "pack-log.jsonl", amg / "work" / "pack-log-stamp")
+                 if p.exists()]
+        age = (now - max(marks)) if marks else None
     except OSError:
         return None                        # unreadable state: stay silent, never block
     if age is not None and age < _HINT_PACK_STALE_S:
@@ -893,8 +1122,23 @@ def main(argv: List[str]) -> int:
         i = args.index("--transcript")
         cli_transcript = args[i + 1]
         del args[i:i + 2]
+    hook_json = "--hook-json" in args    # emit the advanced hook JSON (Codex requires it)
+    if hook_json:
+        args.remove("--hook-json")
     cmd = args[0] if args else "help"
-    root = Path(args[1]).resolve() if len(args) > 1 else Path.cwd()
+    # Hook-driven commands read the event payload once; its `cwd` names the project
+    # more reliably than the process cwd (Codex documents cwd in the payload, and a
+    # hook is not guaranteed to spawn at the project root). An explicit positional
+    # root still wins.
+    payload: Dict[str, Any] = (_load_stdin_payload()
+                               if cmd in ("session-start", "session-end",
+                                          "start-check", "prompt-hint") else {})
+    if len(args) > 1:
+        root = Path(args[1]).resolve()
+    elif payload.get("cwd"):
+        root = Path(str(payload["cwd"])).resolve()
+    else:
+        root = Path.cwd()
     amg = gs.resolve_amg_root(cli_root, root)
 
     if cmd == "session-start":
@@ -902,15 +1146,22 @@ def main(argv: List[str]) -> int:
         if res.get("note"):
             print(res["note"])     # inject context ONLY when an unclean shutdown was healed
         return 0                   # clean start (or AMG off): stay silent, no per-session noise
+    if cmd == "start-check":
+        note = start_check(root, amg).get("note")
+        wired = _hook_json_wire("SessionStart", note) if hook_json else note
+        if wired:
+            print(wired)           # the event surface injects this into the session
+        return 0                   # all clean: silence, whatever the wire
     if cmd == "session-end":
-        payload = _load_stdin_payload()
         tp = cli_transcript or payload.get("transcript_path")
         print(json.dumps(session_end(root, amg, transcript_path=tp,
-                                     reason=payload.get("reason")), indent=2)); return 0
+                                     reason=payload.get("reason"),
+                                     payload=payload), indent=2)); return 0
     if cmd == "prompt-hint":
-        note = prompt_hint(amg, str(_load_stdin_payload().get("prompt") or ""))
-        if note:
-            print(note)    # UserPromptSubmit: stdout is injected as context
+        note = prompt_hint(amg, str(payload.get("prompt") or ""))
+        wired = _hook_json_wire("UserPromptSubmit", note) if hook_json else note
+        if wired:
+            print(wired)   # UserPromptSubmit: stdout is injected as context
         return 0           # silence on every gated-out prompt (zero tokens)
     if cmd == "repair":
         res = repair(root, amg)

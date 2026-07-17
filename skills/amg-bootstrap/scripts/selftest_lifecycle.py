@@ -15,6 +15,11 @@ Checks:
   8. unclean  : session-start reports a healed stale lock, then stays silent.
   9. hint     : prompt-hint fires only past ALL gates (active+automation, task-shaped
                 prompt, cooldown, pack log absent/stale); a quiet prompt gets nothing.
+ 10. start-check: the one-call start routine for event surfaces (plan + sync question
+                under the deferral cadence; the advanced hook-JSON wire for Codex).
+ 11. oc-end   : the OpenCode session-end payload — an incremental dump under a
+                session-stable filename, thinking/synthetic parts cut, usage from the
+                payload's edited files, the pack-log consumption stamp.
 
 Run:  python selftest_lifecycle.py
 """
@@ -194,6 +199,100 @@ def case_prompt_hint() -> None:
         shutil.rmtree(proj, ignore_errors=True)
 
 
+def case_start_check() -> None:
+    """start-check = the whole deterministic start routine as one entry point for
+    event surfaces (the OpenCode plugin, the Codex SessionStart hook): heal + digest
+    + the free reconcile half (plan) + the sync question under the deferral cadence.
+    The note asks about a fresh backlog, falls silent while a recorded deferral
+    stands, and wraps into the advanced hook JSON on demand (the wire Codex
+    requires; Claude Code accepts the same shape)."""
+    proj = setup_project()
+    try:
+        amg = amg_root(proj)
+        res = LC.start_check(proj, amg)
+        assert res.get("action") == "start-check", res
+        assert res["plan"]["queued_for_semantic"] >= 1, res["plan"]
+        note = res.get("note") or ""
+        assert "await semantic enrichment" in note and "sync-defer" in note, note
+
+        LC.sync_defer(amg)                       # the user defers at this backlog
+        res2 = LC.start_check(proj, amg)
+        assert "note" not in res2, f"a standing deferral must silence the question: {res2}"
+
+        wire = LC._hook_json_wire("SessionStart", note)
+        assert wire is not None
+        parsed = json.loads(wire)
+        assert parsed["hookSpecificOutput"]["hookEventName"] == "SessionStart", parsed
+        assert parsed["hookSpecificOutput"]["additionalContext"] == note, parsed
+        assert LC._hook_json_wire("UserPromptSubmit", None) is None, "no note -> no wire"
+        print("PASS  start-check: heal+plan+sync question; deferral cadence; hook-JSON wire")
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+
+def case_session_end_opencode() -> None:
+    """The OpenCode payload path: an inline transcript (SDK messages) lands under a
+    SESSION-STABLE filename and each re-dump overwrites it (the incremental dump);
+    synthetic/ignored/reasoning parts never reach the file; tool parts become
+    attachment markers; the payload's edited files feed usage attribution, and the
+    consumed pack log leaves the stamp that keeps the mid-session hint gate honest."""
+    proj = setup_project()
+    try:
+        amg = amg_root(proj)
+
+        def msg(role, text, extra_parts=()):
+            return {"info": {"role": role, "time": {"created": 1752700000000}},
+                    "parts": [{"type": "text", "text": text}, *extra_parts]}
+
+        messages = [
+            msg("user", "how does charge work?"),
+            {"info": {"role": "user", "time": {"created": 1752700001000}},
+             "parts": [{"type": "text", "text": "AMG: injected note",
+                        "synthetic": True}]},           # our own injection: not dialogue
+            msg("assistant", "It returns the card.",
+                extra_parts=({"type": "reasoning", "text": "секретный черновик"},
+                             {"type": "tool", "tool": "read"})),
+        ]
+        payload = {"format": "opencode", "session_id": "ses_abc123XY",
+                   "created_ms": 1752700000000, "reason": "idle",
+                   "messages": messages, "edited_files": []}
+        res = LC.session_end(proj, amg, payload=payload)
+        dump = res["session"]
+        assert dump.get("turns") == 2, dump                  # synthetic-only msg dropped
+        f = amg / dump["file"]
+        assert f.exists() and "123XY" in f.name, f
+        text = f.read_text(encoding="utf-8")
+        assert "how does charge work?" in text and "It returns the card." in text
+        assert "injected note" not in text, "synthetic parts must not reach the dump"
+        assert "секретный черновик" not in text, "reasoning is never stored"
+        assert "== Attachment 1: tool call (read) ==" in text, text
+
+        messages.append(msg("user", "and refunds?"))         # the dialogue grows
+        res2 = LC.session_end(proj, amg, payload=payload)
+        assert res2["session"]["file"] == dump["file"], "re-dump must land on the SAME file"
+        assert res2["session"]["turns"] == 3, res2["session"]
+        assert "and refunds?" in f.read_text(encoding="utf-8")
+        assert len(list(f.parent.glob("*.md"))) == 1, "no dated duplicates"
+
+        # usage attribution from the payload's edited files + the pack-log stamp
+        (amg / "work").mkdir(exist_ok=True)
+        (amg / "work" / "pack-log.jsonl").write_text(json.dumps(
+            {"pack": [{"id": "code:src/app.py::charge", "source_path": "src/app.py"}]})
+            + "\n", encoding="utf-8")
+        payload["edited_files"] = [str(proj / "src" / "app.py")]
+        res3 = LC.session_end(proj, amg, payload=payload)
+        assert res3["usage"].get("used") == 1, res3["usage"]
+        assert (amg / "work" / "usage.log").exists()
+        assert (amg / "work" / "pack-log-stamp").exists(), \
+            "a mid-session consumer must leave the consumption stamp"
+        # the stamp keeps the hint gate honest: fresh stamp -> silence
+        assert LC.prompt_hint(amg, "x" * 250) is None, \
+            "a fresh consumption stamp must read as 'consulted recently'"
+        print("PASS  oc-end: stable-file incremental dump; thinking/synthetic cut; usage + stamp")
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
+
+
 def case_status(proj: Path) -> None:
     rc.plan(proj, amg_root(proj))            # populate nodes + the work queue
     d = LC.status(proj, amg_root(proj))
@@ -341,6 +440,8 @@ if __name__ == "__main__":
         case_gate()
         case_session_start(proj)
         case_session_end(proj)
+        case_start_check()
+        case_session_end_opencode()
         case_status(proj)
         case_version_and_help()
         case_sync_defer(proj)
