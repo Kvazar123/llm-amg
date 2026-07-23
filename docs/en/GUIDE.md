@@ -1,5 +1,9 @@
 # The AMG user guide
 
+> [DONATE - Become a sponsor](https://donate.trybit.com/OBWAHQDQ)
+
+> Or share the project link with your friends and colleagues. Any help, any discussion on the Internet shows that the effort spent on creating and developing AMG was well worth it. The author thanks you for your support.
+
 This is the practical guide: how to use every AMG capability — what runs on its own, what gets checked after failures, and what can be run by hand. The theoretical grounding is in the [theory](./THEORY.md); how the system is built inside (the code, functions, prompts) — in the [architecture documentation](./architecture/README.md); this guide is about using it.
 
 AMG (Associative Memory Graph) is persistent associative memory for the model: a typed graph with hierarchical summaries and retrieval by spreading activation, living in `.claude/amg/`. It lets you work on a part of the project in a clean context window while still seeing the strategic surround — the purpose, the related code, the earlier decisions — instead of loading the whole project.
@@ -534,3 +538,5 @@ The mode is deliberately light, so it has deliberate limits — almost all about
 - [The architecture documentation](./architecture/README.md) — how the system is built in code: the files, functions, prompts.
 - This guide — how to use every capability.
 - [INSTALL.md](../../INSTALL.md) (at the repository root) — installing via the model or by command, reinstall, uninstall.
+
+> [DONATE - Become a sponsor.](https://donate.trybit.com/OBWAHQDQ) Or share the project link with your friends and colleagues. This will be of great help in the development of the project. Any feedback is welcome.

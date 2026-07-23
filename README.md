@@ -6,10 +6,6 @@
 
 ⚠️ **FULLY TESTED ON CLAUDE CODE; OPENCODE CONFIRMED ON LIVE RUNS.** The installer sets the memory up per environment, each with its own mode: **OpenCode** — the full memory cycle; **Codex** (skills + TOML subagents + hooks via `/hooks`), **Qwen Code** (skills + subagents + session hooks), and **any unknown AGENTS.md environment** (`generic`, a portable skill-less block).
 
-> [DONATE - Become a sponsor](https://donate.trybit.com/HNCCLOQY)
-
-> Or share the project link with your friends. Any help shows that the effort spent on creating and developing AMG was well worth it. The author thanks you for your support.
-
 <div align="center">
 
 [<img src="docs/images/img1.png" width="400"/>](docs/images/img1.png) &nbsp;&nbsp;&nbsp;&nbsp; [<img src="docs/images/img2.png" width="400"/>](docs/images/img2.png)
@@ -17,6 +13,10 @@
 [<img src="docs/images/img3.png" width="400"/>](docs/images/img3.png) &nbsp;&nbsp;&nbsp;&nbsp; [<img src="docs/images/img4.png" width="400"/>](docs/images/img4.png)
 
 </div>
+
+> [DONATE - Become a sponsor](https://donate.trybit.com/OBWAHQDQ)
+
+> Or share the project link with your friends and colleagues. Any help, any discussion on the Internet shows that the effort spent on creating and developing AMG was well worth it. The author thanks you for your support.
 
 ## What it is
 
@@ -337,4 +337,4 @@ AMG is licensed under the **PolyForm Strict License 1.0.0**: noncommercial use i
 - [Install](INSTALL.md) — install with the installer (model-driven or by command), reinstall, uninstall.
 - [Roadmap](docs/en/architecture/11-roadmap.md) — what's implemented and what's ahead.
 
-> [DONATE - Become a sponsor.](https://donate.trybit.com/HNCCLOQY) Or share the project link with your friends. This will be of great help in the development of the project.
+> [DONATE - Become a sponsor.](https://donate.trybit.com/OBWAHQDQ) Or share the project link with your friends and colleagues. This will be of great help in the development of the project. Any feedback is welcome.
